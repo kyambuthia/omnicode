@@ -320,13 +320,50 @@ class Integration(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.requests[-1][0]["messages"]), 1)
         self.assertIn("conversation cleared", result.stdout)
+        # When tool calls completed before a turn failure, retain a summary instead of wiping history.
+        self.requests.clear()
+        def partial(_):
+            if len(self.requests) == 1:
+                return tools(call("write", {"path": "kept.txt", "content": "ok"}))
+            if len(self.requests) == 2:
+                return (500, {})
+            return text("resumed")
+        self.reply = partial
+        result = self.run_agent(stdin="fix bug\ncontinue\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("completed work retained in summary", result.stdout)
+        self.assertIn("<summary>", self.requests[-1][0]["messages"][0]["content"])
+        self.assertIn("- tool write: kept.txt", self.requests[-1][0]["messages"][0]["content"])
 
     def test_loop_is_bounded(self):
-        self.reply = lambda _: tools(call("bash", {"cmd": "printf ok"}))
+        self.reply = lambda body: text("summary of progress") if "tools" not in body else tools(call("bash", {"cmd": "printf ok"}))
         result = self.run_agent("fix bug")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len(self.requests), 32)
+        # 4 windows of 32 tool turns + 3 compactions = 131 requests before TurnLimit.
+        self.assertEqual(len(self.requests), 32 * 4 + 3)
         self.assertIn("TurnLimit", result.stderr)
+        self.assertIn("3 compaction(s)", result.stdout)
+
+    def test_compaction_commands_and_tool_pair_preservation(self):
+        def reply(body):
+            if "tools" not in body:
+                return text("summary: inspected project and ran checks")
+            if len(self.requests) in (1, 3):
+                return tools(call("bash", {"cmd": "printf step"}))
+            return text("step complete")
+        self.reply = reply
+        result = self.run_agent(stdin="first step\nsecond step\n/context\n/compact focus on checks\n/context\nthird step\n/usage\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Context · 8/128 messages", result.stdout)
+        self.assertIn("Context compacted.", result.stdout)
+        self.assertIn("Context · 1/128 messages", result.stdout)
+        self.assertIn("1 compaction(s)", result.stdout)
+        summary_req = [r[0] for r in self.requests if "tools" not in r[0]][0]
+        self.assertEqual(summary_req["model"], "fast-test-model")
+        self.assertIn("Focus especially on: focus on checks", summary_req["messages"][-1]["content"])
+        final_msgs = self.requests[-1][0]["messages"]
+        self.assertIn("first step", final_msgs[0]["content"])
+        self.assertIn("<summary>\nsummary: inspected project and ran checks\n</summary>", final_msgs[0]["content"])
 
     def test_redirects_are_not_followed(self):
         # A redirect must not replay a request carrying credentials.
@@ -340,8 +377,14 @@ class Integration(unittest.TestCase):
         self.reply = lambda _: text("x" * (2 * 1024 * 1024))
         result = self.run_agent("list files")
         self.assertNotEqual(result.returncode, 0)
-        self.reply = lambda _: text("x" * (1024 * 1024 + 100))
-        result = self.run_agent(stdin="list files\nlist files\nlist files\n/q\n")
+        # Oversized history triggers automatic compaction first; if single prompt still exceeds 2 MiB, HistoryLimit fires.
+        self.requests.clear()
+        self.reply = lambda body: text("compact summary") if "tools" not in body else text("x" * (800 * 1024))
+        result = self.run_agent(stdin="step 1\nstep 2\nstep 3\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Context compacted.", result.stdout)
+        self.reply = lambda _: text("x" * (2047 * 1024))
+        result = self.run_agent(stdin="step 1\nstep 2\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("HistoryLimit", result.stdout)
 

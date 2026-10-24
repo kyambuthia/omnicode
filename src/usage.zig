@@ -12,6 +12,7 @@ pub const Usage = struct {
     missing: u64 = 0,
     unknown_cost: u64 = 0,
     estimated: u64 = 0,
+    compactions: u64 = 0,
     usd: f64 = 0,
 
     pub fn response(value: j.Value, route: Route) Usage {
@@ -60,7 +61,7 @@ pub const Usage = struct {
     }
 
     pub fn add(self: *Usage, other: Usage) void {
-        inline for (.{ "requests", "input", "output", "read", "write", "missing", "unknown_cost", "estimated" }) |field|
+        inline for (.{ "requests", "input", "output", "read", "write", "missing", "unknown_cost", "estimated", "compactions" }) |field|
             @field(self, field) +|= @field(other, field);
         self.usd += other.usd;
     }

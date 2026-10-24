@@ -14,6 +14,8 @@ const help =
     \\  /verbose on|off        Show full output for future tool calls
     \\  /status inline|title|off  Status line: provider, model, directory, local time
     \\  /usage                 Show cumulative usage (survives /c and model changes)
+    \\  /context               Show conversation message and byte budget
+    \\  /compact [focus]       Summarize older context on the fast model
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q or exit             Quit (Ctrl-D also exits)
@@ -102,7 +104,9 @@ fn run(init: std.process.Init) !void {
         var label: [256]u8 = undefined;
         const policy = if (route.provider == .anthropic) "auto" else if (mode == .free) "auto (free)" else "auto (cost-max)";
         const model_label = if (!automatic) route.model else if (status.lastModel().len == 0) policy else std.fmt.bufPrint(&label, "{s} → {s}", .{ policy, status.lastModel() }) catch policy;
-        try ui.statusBar(@tagName(route.provider), model_label, dir);
+        var ctx_buf: [32]u8 = undefined;
+        const ctx_label = if (agent.history.items.len == 0) "" else std.fmt.bufPrint(&ctx_buf, "{d}m", .{agent.history.items.len}) catch "";
+        try ui.statusBar(@tagName(route.provider), model_label, dir, ctx_label);
         try ui.prompt();
         const value = composer.read(init.io, ui, &input.interface) catch |err| {
             if (err == error.InputCancelled) continue;
@@ -115,6 +119,35 @@ fn run(init: std.process.Init) !void {
         if (std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "exit")) break;
         if (std.mem.eql(u8, line, "/usage")) {
             try ui.usageSummary(usage, "Session");
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/context")) {
+            const bytes = agent.historyBytes();
+            const msgs = agent.history.items.len;
+            const pct = @max((msgs * 100) / core.Agent.max_messages, (bytes * 100) / core.Agent.max_bytes);
+            var note_buf: [160]u8 = undefined;
+            try ui.note(std.fmt.bufPrint(&note_buf, "Context · {d}/{d} messages · {d}/{d} bytes ({d}% of limit)", .{
+                msgs, core.Agent.max_messages, bytes, core.Agent.max_bytes, pct,
+            }) catch "Context status");
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/compact") or std.mem.startsWith(u8, line, "/compact ")) {
+            if (agent.history.items.len == 0) {
+                try ui.note("Nothing to compact.");
+                continue;
+            }
+            const focus = if (line.len > 9) std.mem.trim(u8, line[9..], " \t") else "";
+            agent.compact(ui, null, if (focus.len > 0) focus else null) catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            var fresh = std.heap.ArenaAllocator.init(init.gpa);
+            agent.reallocate(fresh.allocator()) catch {
+                fresh.deinit();
+                continue;
+            };
+            arena.deinit();
+            arena = fresh;
             continue;
         }
         if (std.mem.eql(u8, line, "/details")) {
@@ -200,12 +233,22 @@ fn run(init: std.process.Init) !void {
             }
             agent.respond(line, ui) catch |err| {
                 try ui.errorMessage(err);
+                var fresh = std.heap.ArenaAllocator.init(init.gpa);
+                if (agent.retainCompletedWork(fresh.allocator()) catch false) {
+                    if (agent.reallocate(fresh.allocator())) |_| {
+                        arena.deinit();
+                        arena = fresh;
+                        try out.writeAll("  completed work retained in summary. Inspect tool effects before retrying.\n");
+                        continue;
+                    } else |_| {}
+                }
+                fresh.deinit();
                 try out.writeAll("  conversation cleared. Inspect completed tool effects before retrying.\n");
                 agent.history.clearRetainingCapacity();
                 // Reinitialize below so failed tool turns cannot poison later messages.
             };
             // Keep complete history after successful turns; reset after errors.
-            if (agent.history.items.len != 0 and agent.history.items.len <= 128) continue;
+            if (agent.history.items.len != 0 and agent.history.items.len <= core.Agent.max_messages) continue;
         }
         _ = arena.reset(.free_all);
         route.mode = mode;

@@ -88,7 +88,7 @@ pub const Ui = struct {
     }
 
     /// One dim line above the prompt (or the terminal title); interactive terminals only.
-    pub fn statusBar(ui: Ui, provider: []const u8, model: []const u8, dir: []const u8) !void {
+    pub fn statusBar(ui: Ui, provider: []const u8, model: []const u8, dir: []const u8, context: []const u8) !void {
         const s = ui.status orelse return;
         if (!ui.interactive or s.mode == .off) return;
         var time: [16]u8 = undefined;
@@ -96,6 +96,7 @@ pub const Ui = struct {
             .provider = provider,
             .model = model,
             .dir = dir,
+            .context = context,
             .time = s.clock.format(Io.Clock.real.now(ui.io).toSeconds(), &time),
         };
         if (s.mode == .title) {
@@ -278,6 +279,7 @@ pub const Ui = struct {
         if (usage.unknown_cost > 0 and usage.requests > usage.unknown_cost) try ui.out.writeAll(" subtotal");
         if (usage.unknown_cost > 0) try ui.out.print(" · cost unavailable for {d} response(s)", .{usage.unknown_cost});
         if (usage.missing > 0) try ui.out.print(" · token usage unavailable for {d} response(s)", .{usage.missing});
+        if (usage.compactions > 0) try ui.out.print(" · {d} compaction(s)", .{usage.compactions});
         try ui.out.print(" · {d} response(s)", .{usage.requests});
         try ui.style("\x1b[0m");
         try ui.out.writeByte('\n');

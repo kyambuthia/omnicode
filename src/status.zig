@@ -101,27 +101,30 @@ pub const Fields = struct {
     provider: []const u8,
     model: []const u8,
     dir: []const u8,
+    context: []const u8 = "",
     time: []const u8,
 };
 
-/// Fit fields into `width` columns: shrink directory, then model, then drop time, then directory.
+/// Fit fields into `width` columns: shrink directory, then model, then drop context, time, directory.
 pub fn render(out: *Io.Writer, width: usize, fields: Fields) !void {
     const sep = 3; // " · "
     const p = columns(fields.provider);
     var m = columns(fields.model);
     var d = columns(fields.dir);
+    var c = columns(fields.context);
     var t = columns(fields.time);
     const budget = width -| 2; // leading space plus one spare column to avoid auto-wrap
     const total = struct {
-        fn f(pp: usize, mm: usize, dd: usize, tt: usize) usize {
-            return pp + sep + mm + (if (dd > 0) sep + dd else 0) + (if (tt > 0) sep + tt else 0);
+        fn f(pp: usize, mm: usize, dd: usize, cc: usize, tt: usize) usize {
+            return pp + sep + mm + (if (dd > 0) sep + dd else 0) + (if (cc > 0) sep + cc else 0) + (if (tt > 0) sep + tt else 0);
         }
     }.f;
-    if (total(p, m, d, t) > budget) d = @min(d, @max(12, budget -| total(p, m, 0, t) -| sep));
-    if (total(p, m, d, t) > budget) m = @min(m, @max(16, budget -| total(p, 0, d, t)));
-    if (total(p, m, d, t) > budget) t = 0;
-    if (total(p, m, d, t) > budget) d = 0;
-    if (total(p, m, d, t) > budget) m = budget -| (p + sep);
+    if (total(p, m, d, c, t) > budget) d = @min(d, @max(12, budget -| total(p, m, 0, c, t) -| sep));
+    if (total(p, m, d, c, t) > budget) m = @min(m, @max(16, budget -| total(p, 0, d, c, t)));
+    if (total(p, m, d, c, t) > budget) c = 0;
+    if (total(p, m, d, c, t) > budget) t = 0;
+    if (total(p, m, d, c, t) > budget) d = 0;
+    if (total(p, m, d, c, t) > budget) m = budget -| (p + sep);
     try out.writeByte(' ');
     try fit(out, fields.provider, p, .end);
     try out.writeAll(" · ");
@@ -129,6 +132,10 @@ pub fn render(out: *Io.Writer, width: usize, fields: Fields) !void {
     if (d > 0) {
         try out.writeAll(" · ");
         try fit(out, fields.dir, d, .middle);
+    }
+    if (c > 0) {
+        try out.writeAll(" · ");
+        try fit(out, fields.context, c, .end);
     }
     if (t > 0) {
         try out.writeAll(" · ");
