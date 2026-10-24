@@ -125,7 +125,9 @@ class Integration(unittest.TestCase):
         results = {block["tool_use_id"]: block["content"]
                    for block in self.requests[-1][0]["messages"][-1]["content"]}
         self.assertIn("InvalidTimeout", results["invalid"])
-        self.assertIn("Timeout", results["timeout"])
+        self.assertIn("10ms deadline", results["timeout"])
+        self.assertNotIn("30s deadline", results["timeout"])
+        self.assertIn("integer from 1 to 300000", results["invalid"])
         self.assertEqual(results["ok"], "recovered")
         bash = next(tool for tool in self.requests[0][0]["tools"] if tool["name"] == "bash")
         self.assertEqual(bash["input_schema"]["properties"]["timeout_ms"]["maximum"], 300000)

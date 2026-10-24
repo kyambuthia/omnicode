@@ -179,7 +179,7 @@ pub const Agent = struct {
                         self.runReview(input, ui, &usage)
                     else
                         ui.work("Running tool...", tools.Context.run, .{ self.context, name, input })) catch |err|
-                        try formatToolError(a, err);
+                        try formatToolCallError(a, err, name, input);
                     // Invalid UTF-8 (e.g. binary output) must not corrupt JSON requests.
                     const raw_text = if (std.unicode.utf8ValidateSlice(result)) result else "error: NonUtf8Output";
                     const is_err = std.mem.startsWith(u8, raw_text, "error:");
@@ -642,7 +642,7 @@ pub const Agent = struct {
                         @as(anyerror![]const u8, error.NestedSubagent)
                     else
                         ui.work("Running subagent tool...", tools.Context.run, .{ child.context, name, input })) catch |err|
-                        try formatToolError(ca, err);
+                        try formatToolCallError(ca, err, name, input);
                     const text = if (std.unicode.utf8ValidateSlice(result)) result else "error: NonUtf8Output";
                     try child_ui.toolEnd(name, input, text, std.mem.startsWith(u8, text, "error:"), start);
                     try results.append(ca, try j.parse(ca, try j.encode(ca, .{
@@ -674,12 +674,21 @@ pub const Agent = struct {
     }
 };
 
+fn formatToolCallError(a: std.mem.Allocator, err: anyerror, name: []const u8, input: j.Value) ![]const u8 {
+    if (err == error.Timeout and std.mem.eql(u8, name, "bash")) {
+        const milliseconds = j.number(input, "timeout_ms", 30_000) catch 30_000;
+        return std.fmt.allocPrint(a, "error: Timeout (command exceeded {d}ms deadline; run a faster non-interactive command, narrow scope, or set timeout_ms up to 300000)", .{milliseconds});
+    }
+    return formatToolError(a, err);
+}
+
 fn formatToolError(a: std.mem.Allocator, err: anyerror) ![]const u8 {
     const hint: []const u8 = switch (err) {
         error.MatchNotFound => " (old text not found; use read with offset/limit to inspect exact current lines before calling edit)",
         error.AmbiguousMatch => " (old text matches multiple locations; include more surrounding context lines in old or set all=true)",
         error.StreamTooLong => " (output exceeded size limit; narrow path/glob pattern or filter command output with head/tail/grep)",
-        error.Timeout => " (command exceeded 30s deadline; run a faster non-interactive command or narrow scope)",
+        error.Timeout => " (operation exceeded its deadline; narrow scope or use a faster non-interactive command)",
+        error.InvalidTimeout => " (timeout_ms must be an integer from 1 to 300000; default is 30000)",
         error.FileNotFound => " (path not found; use glob to locate existing files)",
         else => "",
     };
@@ -1017,4 +1026,19 @@ test "child reports scrub secrets before truncation" {
     const overall = try synthesizeReviewVerdict(a, critic.text, "VERDICT: PASS", critic.passed);
     try std.testing.expect(std.mem.endsWith(u8, overall, "OVERALL VERDICT: FAIL"));
     try std.testing.expect(!(try agent.finishReport("VERDICT: PASS", false)).passed);
+}
+
+test "tool timeout hints report the selected command deadline" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "{}", "{\"timeout_ms\":10}", "{\"timeout_ms\":300000}" }, [_][]const u8{ "30000ms", "10ms", "300000ms" }) |raw, expected| {
+        const message = try formatToolCallError(a, error.Timeout, "bash", try j.parse(a, raw));
+        try std.testing.expect(std.mem.indexOf(u8, message, expected) != null);
+        try std.testing.expect(std.mem.indexOf(u8, message, "timeout_ms up to 300000") != null);
+    }
+    const other = try formatToolCallError(a, error.Timeout, "review", try j.parse(a, "{}"));
+    try std.testing.expect(std.mem.indexOf(u8, other, "30000") == null);
+    const invalid = try formatToolCallError(a, error.InvalidTimeout, "bash", try j.parse(a, "{}"));
+    try std.testing.expect(std.mem.indexOf(u8, invalid, "integer from 1 to 300000") != null);
 }
