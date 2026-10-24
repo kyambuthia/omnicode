@@ -180,6 +180,9 @@ Assistant text and tool previews redact registered values before terminal render
 `/details` retention redacts before truncation. Tool execution keeps the original
 arguments.
 
+Checklist replacements apply only after all items validate and fit the 4 KiB
+limit. A rejected replacement preserves the previous checklist.
+
 ## Terminal interface
 
 The terminal keeps a scrollable transcript, with model responses separated from
@@ -309,7 +312,7 @@ files immediately. Keep skills local and trusted.
 | `edit` | Exact nonempty string replacement; reject repeated matches unless `all=true` |
 | `glob` | `rg --files --glob`; respects ripgrep glob and ignore rules |
 | `grep` | Ripgrep regex search with line numbers; up to 50 matches per file |
-| `bash` | Execute through `sh -c`; returns stdout then stderr and reports nonzero exit |
+| `bash` | Execute through `sh -c`; optional `timeout_ms` from 1 to 300,000 (default 30,000); returns stdout then stderr and reports nonzero exit |
 | `skill` | Load an advertised project's skill body by name |
 | `todo` | Read or replace the session checklist (`items: [{task, done}]`); survives compaction and `/save` |
 | `task` | Delegate a sub-task to a depth-1 child agent (`mode: explore\|edit`, `tier: fast\|strong`); returns only its final report |
@@ -321,8 +324,10 @@ changes with Git. Symlinks are followed normally. Files and selected tool output
 are sent to your configured model provider.
 
 File reads/writes/edits are limited to 1 MiB; formatted reads and skill bodies
-to 64 KiB; command output to 64 KiB per stream. Commands have a 30-second deadline
-covering both output collection and process waiting; the direct child is killed
+to 64 KiB. Command output retains up to 64 KiB total, with collection capped
+at 256 KiB per stream. Commands have a 30-second default deadline (`bash` can
+request up to five minutes with `timeout_ms`), covering both output collection
+and process waiting; the direct child is killed
 on timeout or output overflow. This is not process-tree isolation: descendants
 may outlive it. HTTP requests have a 120-second deadline and a 2 MiB response
 limit. Redirects are disabled. Requests are limited to 2 MiB serialized history,

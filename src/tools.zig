@@ -13,7 +13,7 @@ const explore_tools =
 const edit_tools = explore_tools ++ ",\n" ++
     \\{"name":"write","description":"Create or overwrite a file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
     \\{"name":"edit","description":"Replace exact nonempty text; must be unique unless all=true","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
-    \\{"name":"bash","description":"Run shell command; 30s deadline, 64 KiB per output stream","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
+    \\{"name":"bash","description":"Run shell command; default 30s deadline, timeout_ms may request 1-300000ms, bounded output","input_schema":{"type":"object","properties":{"cmd":{"type":"string"},"timeout_ms":{"type":"integer","minimum":1,"maximum":300000}},"required":["cmd"]}},
     \\{"name":"todo","description":"Read or replace the session checklist that survives context compaction","input_schema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"task":{"type":"string"},"done":{"type":"boolean"}},"required":["task","done"]}}}}}
 ;
 
@@ -38,7 +38,8 @@ pub const Todo = struct {
         if (args != .object) return error.ExpectedObject;
         const list = args.object.get("items") orelse return if (self.len == 0) "(empty todo list)" else self.slice();
         if (list != .array or list.array.items.len > 64) return error.InvalidTodoList;
-        var w = Io.Writer.fixed(&self.text);
+        var next: [4096]u8 = undefined;
+        var w = Io.Writer.fixed(&next);
         for (list.array.items, 0..) |item, idx| {
             const task = try j.str(item, "task");
             if (task.len == 0 or std.mem.indexOfScalar(u8, task, '\n') != null) return error.InvalidTodoItem;
@@ -46,6 +47,7 @@ pub const Todo = struct {
             if (done_val != .bool) return error.ExpectedBoolean;
             w.print("{d}. [{s}] {s}\n", .{ idx + 1, if (done_val.bool) "x" else " ", task }) catch return error.StreamTooLong;
         }
+        @memcpy(self.text[0..w.end], next[0..w.end]);
         self.len = w.end;
         return if (self.len == 0) "(empty todo list)" else self.slice();
     }
@@ -119,7 +121,11 @@ pub const Context = struct {
             try c.dir.writeFile(c.io, .{ .sub_path = path, .data = replacement });
             return "ok";
         }
-        if (std.mem.eql(u8, name, "bash")) return c.command(&.{ "sh", "-c", try j.str(args, "cmd") }, false, 30_000);
+        if (std.mem.eql(u8, name, "bash")) {
+            const timeout = try j.number(args, "timeout_ms", 30_000);
+            if (timeout == 0 or timeout > 300_000) return error.InvalidTimeout;
+            return c.command(&.{ "sh", "-c", try j.str(args, "cmd") }, false, @intCast(timeout));
+        }
         const path = try j.optional(args, "path", ".");
         if (std.mem.eql(u8, name, "glob")) return c.command(&.{
             "rg",             "--no-config",   "--files",
@@ -368,4 +374,36 @@ test "commands bound runtime/output and report search misses" {
     try std.testing.expect(std.mem.startsWith(u8, capped, "HEAD:"));
     try std.testing.expect(std.mem.endsWith(u8, capped, ":TAIL"));
     try std.testing.expect(std.mem.indexOf(u8, capped, "[truncated middle") != null);
+}
+
+test "rejected checklist replacements preserve completed and pending items" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var todo: Todo = .{};
+    _ = try todo.update(try j.parse(a, "{\"items\":[{\"task\":\"keep completed work\",\"done\":true},{\"task\":\"keep pending work\",\"done\":false}]}"));
+    const original = try a.dupe(u8, todo.slice());
+    try std.testing.expectError(error.InvalidTodoItem, todo.update(try j.parse(a, "{\"items\":[{\"task\":\"overwrite\",\"done\":false},{\"task\":\"\",\"done\":false}]}")));
+    try std.testing.expectEqualStrings(original, todo.slice());
+    const oversized: [4096]u8 = @splat('x');
+    const overflow = try j.parse(a, try j.encode(a, .{ .items = .{ .{ .task = "overwrite", .done = false }, .{ .task = &oversized, .done = false } } }));
+    try std.testing.expectError(error.StreamTooLong, todo.update(overflow));
+    try std.testing.expectEqualStrings(original, todo.slice());
+    _ = try todo.update(try j.parse(a, "{\"items\":[]}"));
+    try std.testing.expectEqual(0, todo.len);
+}
+
+test "shell timeout overrides are validated before execution" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
+    for ([_]usize{ 0, 300001 }) |timeout| {
+        const args = try j.parse(c.a, try j.encode(c.a, .{ .cmd = "touch marker", .timeout_ms = timeout }));
+        try std.testing.expectError(error.InvalidTimeout, c.run("bash", args));
+    }
+    try std.testing.expectError(error.FileNotFound, c.readFile("marker"));
+    try std.testing.expectError(error.Timeout, c.run("bash", try j.parse(c.a, "{\"cmd\":\"exec sleep 1\",\"timeout_ms\":10}")));
+    try std.testing.expectEqualStrings("ok", try c.run("bash", try j.parse(c.a, "{\"cmd\":\"printf ok\",\"timeout_ms\":300000}")));
 }

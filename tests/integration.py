@@ -37,6 +37,31 @@ def model(id, prompt="0.000001", completion="0.000002", **pricing):
 
 
 class Integration(unittest.TestCase):
+    def test_shell_timeout_and_failed_checklist_recovery(self):
+        def reply(_):
+            if len(self.requests) == 1:
+                return tools(call("todo", {"items": [{"task": "preserve this", "done": True}]}))
+            if len(self.requests) == 2:
+                return tools(call("todo", {"items": [{"task": "overwrite", "done": False},
+                                                      {"task": "", "done": False}]}))
+            if len(self.requests) == 3:
+                return tools(call("bash", {"cmd": "touch forbidden", "timeout_ms": 300001}, "invalid"),
+                             call("bash", {"cmd": "exec sleep 1", "timeout_ms": 10}, "timeout"),
+                             call("bash", {"cmd": "printf recovered", "timeout_ms": 300000}, "ok"))
+            return text("finished")
+        self.reply = reply
+        result = self.run_agent(stdin="verify work\n/todo\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1. [x] preserve this", result.stdout)
+        self.assertFalse((self.cwd / "forbidden").exists())
+        results = {block["tool_use_id"]: block["content"]
+                   for block in self.requests[-1][0]["messages"][-1]["content"]}
+        self.assertIn("InvalidTimeout", results["invalid"])
+        self.assertIn("Timeout", results["timeout"])
+        self.assertEqual(results["ok"], "recovered")
+        bash = next(tool for tool in self.requests[0][0]["tools"] if tool["name"] == "bash")
+        self.assertEqual(bash["input_schema"]["properties"]["timeout_ms"]["maximum"], 300000)
+
     def test_terminal_redacts_provider_text_and_tool_previews(self):
         secret = "vault-secret-demo-998"
         (self.cwd / "edit-me").write_text(secret)
