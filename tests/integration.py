@@ -292,7 +292,9 @@ class Integration(unittest.TestCase):
                 self.assertNotIn("\x1b[?1049h", output)
                 if no_color: self.assertNotIn("\x1b", output)
                 else:
-                    self.assertIn("\x1b[1;36m", output)
+                    self.assertIn("\x1b[1m", output)
+                    self.assertIn("\x1b[2m", output)
+                    self.assertNotIn("\x1b[1;36m", output)
                     self.assertIn("\x1b[2K", output)
 
     def test_offline_commands_and_missing_key(self):

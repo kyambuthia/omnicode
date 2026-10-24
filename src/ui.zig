@@ -49,7 +49,7 @@ pub const Ui = struct {
     }
 
     pub fn banner(ui: Ui, provider: []const u8, cwd: []const u8) !void {
-        try ui.style("\x1b[1;36m");
+        try ui.style("\x1b[1m");
         try ui.out.writeAll("\n  omnicode\n");
         try ui.style("\x1b[0m");
         try ui.out.writeAll("  ");
@@ -60,7 +60,7 @@ pub const Ui = struct {
     }
 
     pub fn prompt(ui: Ui) !void {
-        try ui.style("\x1b[1;36m");
+        try ui.style("\x1b[1m");
         try ui.out.writeAll("› ");
         try ui.style("\x1b[0m");
         try ui.out.flush();
@@ -75,11 +75,13 @@ pub const Ui = struct {
     }
 
     pub fn route(ui: Ui, provider: []const u8, model: []const u8) !void {
+        try ui.style("\x1b[2m");
         try ui.out.writeAll("\n[");
         try ui.safe(provider, 24);
         try ui.out.writeAll(" / ");
         try ui.safe(model, 120);
         try ui.out.writeAll("]\n");
+        try ui.style("\x1b[0m");
         try ui.out.flush();
     }
 
@@ -120,7 +122,7 @@ pub const Ui = struct {
     }
 
     pub fn message(ui: Ui, text: []const u8) !void {
-        try ui.style("\x1b[1;36m");
+        try ui.style("\x1b[1m");
         try ui.out.writeAll("\n● Assistant\n");
         try ui.style("\x1b[0m");
         var lines = std.mem.splitScalar(u8, text, '\n');
@@ -169,7 +171,7 @@ pub const Ui = struct {
     }
 
     pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp) !void {
-        try ui.style(if (failed) "\x1b[31m" else "\x1b[32m");
+        try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
         try ui.out.print("  {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
         try ui.elapsed(start);
         try ui.out.writeByte('\n');
