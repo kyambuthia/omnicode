@@ -29,6 +29,21 @@ export OPENROUTER_API_KEY='your-key'
 Use `zig build run -- 'your task'` during development. `--help` and `--skills`
 work without a key or network connection. Do not put API keys in tracked files.
 
+```text
+omnicode [--free|--cost-max] [--verbose] [--] [prompt ...]
+omnicode --skills | --help
+```
+
+| Option | Effect |
+|---|---|
+| `--cost-max` | Default. Pick the cheapest suitable model from the live OpenRouter catalog |
+| `--free` | Only zero-price OpenRouter tool models; forces OpenRouter and rejects paid overrides |
+| `--verbose` | Full tool output instead of compact previews |
+| `--` | Treat every following argument literally as prompt text (e.g. `-- --help me`) |
+
+`--free` and `--cost-max` together is an error (`ConflictingOptions`); other
+unknown `--` options are rejected (`UnknownOption`).
+
 ## Minimal automatic router
 
 Each user prompt selects **fast** or **strong** once; all tool calls and API
@@ -44,17 +59,37 @@ beyond those keywords; override the model for ambiguous work.
 
 | Variable | Meaning / default |
 |---|---|
-| `PROVIDER` | `anthropic` or `openrouter`; otherwise OpenRouter when its key is set, Anthropic otherwise |
-| `MODEL` | Strong model: `claude-haiku-4-5` or `openai/gpt-4.1-mini` |
-| `FAST_MODEL` | Fast model: `claude-haiku-4-5` or `openai/gpt-4.1-nano` |
+| `PROVIDER` | `anthropic` or `openrouter`; otherwise OpenRouter when its key is set, Anthropic otherwise. `--free` forces `openrouter` |
+| `MODEL` | Strong model. Default: `claude-haiku-4-5` (Anthropic) or catalog-selected (OpenRouter) |
+| `FAST_MODEL` | Fast model. Default: `claude-haiku-4-5` (Anthropic) or catalog-selected (OpenRouter) |
 | `ANTHROPIC_API_KEY` | Key for direct Anthropic requests |
 | `OPENROUTER_API_KEY` | Key for OpenRouter requests |
 | `API_URL` | Optional **complete Messages endpoint URL**, primarily for local testing |
+| `MODELS_URL` | Optional OpenRouter model catalog URL (public metadata; the API key is never sent to it) |
 
-Defaults favor economical tool-capable models. OpenRouter lookup/development
-routes use GPT-4.1 Nano/Mini; direct Anthropic uses Haiku 4.5 for both tiers.
-`MODEL`, `FAST_MODEL`, and `/model PROVIDER MODEL` retain explicit control.
-The default OpenRouter pair passed live read/edit/command round trips.
+### Live catalog selection (OpenRouter)
+
+With OpenRouter, each user turn first refreshes the public model catalog
+(`/api/v1/models?supported_parameters=tools&sort=agentic-high-to-low`, 15 s
+timeout, 8 MiB limit). Candidates must:
+
+- advertise `tools` support and `text` output,
+- have a context length of at least 32,768 tokens and allow at least 8,192 completion tokens,
+- have parseable, finite, non-negative prices,
+- be a concrete model: `openrouter/*` routers, `~` aliases and `:variant` IDs are
+  excluded, except `:free`.
+
+The score is `request + 1000 × (input + output × w)` USD, where `w` is 3 for
+development (strong) turns and 1 for lookups. In `--cost-max` mode only the first
+16 (strong) or 32 (fast) eligible models in the catalog's agentic ranking are
+considered, so the cheapest model is chosen among reasonably capable ones. `--free`
+searches the whole catalog for models whose every listed price is zero, and the
+request adds a zero `max_price` provider constraint.
+
+`MODEL`/`FAST_MODEL` (or `/model openrouter ID`) pin a specific catalog ID; it
+must still pass the checks above, and in `--free` mode a paid ID fails with
+`PaidModelInFreeMode`. The chosen model and its catalog rates are printed per turn.
+Direct Anthropic does not use the catalog: Haiku 4.5 serves both tiers unless overridden.
 
 Model IDs must match the selected provider and support tools. An explicit
 provider takes precedence over key-based selection. There is no silent provider
@@ -132,25 +167,20 @@ returned API response, including tool continuations and rejected truncated repli
 `/usage` shows totals for the current process; `/c` and model changes preserve them.
 Input and cache counts are shown separately as reported by the Messages endpoint.
 
-Provider `usage.cost` takes precedence and is labeled `reported`. Otherwise,
-known default model rates produce a labeled `estimated` amount. Unknown prices or
-missing usage are explicitly unavailable; a partial known cost is labeled a
-subtotal. Requests that fail before a parseable response cannot contribute usage.
-Totals are in memory and are not an account-wide billing ledger.
+Provider `usage.cost` takes precedence and is labeled `reported`. Otherwise, the
+rates fetched from the OpenRouter catalog for the selected model produce a labeled
+`estimated` amount (input, output, cache read, 5-minute/1-hour cache write, and
+per-request fee). Unknown prices or missing usage are explicitly unavailable; a
+partial known cost is labeled a subtotal. Requests that fail before a parseable
+response cannot contribute usage. Totals are in memory and are not an
+account-wide billing ledger.
 
-Fallback rates checked on 2026-10-24, USD per million tokens:
-
-| Model | Input | Output | Cache read | Cache write (5 min / 1 hour) |
-|---|---:|---:|---:|---:|
-| GPT-4.1 Nano | $0.10 | $0.40 | — | — |
-| GPT-4.1 Mini | $0.40 | $1.60 | — | — |
-| Claude Haiku 4.5 | $1.00 | $5.00 | $0.10 | $1.25 / $2.00 |
-
-For translated OpenAI cache usage, fallback cost stays unavailable unless the
-provider reports it; this avoids assuming that upstream cache counters share
-Anthropic's billing semantics. Rates are deliberately a small static table, so
-estimates may differ from future prices or negotiated rates. They exclude taxes
-and fees. No extra billing requests or pricing dependencies are added.
+There is no static price table. Direct Anthropic requests have no catalog rates,
+so their cost is unavailable unless the endpoint reports it. Estimates are also
+withheld when the catalog marks a model's rates as variable (`overrides`), or
+when a non-`anthropic/` OpenRouter model reports cache tokens, since upstream
+cache counters may not share Anthropic's billing semantics. Estimates exclude
+taxes, fees and negotiated discounts.
 
 References: [OpenRouter usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting),
 [Messages schema](https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-a-message),
@@ -214,6 +244,12 @@ Non-UTF-8 tool output is returned as a tool error. An API/turn failure clears
 REPL history; already completed file/process effects remain, so inspect them
 before retrying. Sessions are in memory only; there is no streaming or automatic
 context compaction. Limits count bytes, not model tokens.
+
+Hitting the 32-call turn limit or the 128-message/2 MiB history limit reports
+`TurnLimit`/`HistoryLimit` ("Conversation limit reached") and discards the whole
+conversation, including the work done in that turn. Long agentic tasks should be
+split into smaller prompts. Subagents and compaction, which would remove this
+limitation, are proposed in [ROADMAP.md](ROADMAP.md#proposed-subagents-and-compaction).
 
 ## Verification
 

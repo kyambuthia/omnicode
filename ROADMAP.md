@@ -162,3 +162,237 @@ restoration both during API requests and after exit. Terminal sequences follow
 Live Nano read round trip: 617 input tokens, 37 output tokens, two responses,
 $0.00007650 reported by OpenRouter. Session totals remained intact after `/c`.
 See README for pricing sources and estimation limits.
+
+## Live catalog routing (completed)
+
+Supersedes the static GPT-4.1 Nano/Mini defaults and fallback price table above.
+
+- [x] Shared bounded JSON transport (`http.zig`) for inference and model metadata.
+- [x] OpenRouter models are selected per turn from the live public catalog: tool
+  support, text output, ≥32k context, ≥8k completion, concrete IDs only. The
+  ranked pool is capped at 16 (development) / 32 (lookup) candidates under `--cost-max`.
+- [x] `--free` restricts selection to all-zero prices across the full catalog and
+  sends a zero `max_price` provider constraint; paid overrides are rejected.
+- [x] Usage estimates use the fetched catalog rates for the selected model.
+- [x] `--` passes the remaining arguments literally; `--help`/`--skills` stay offline.
+- [x] Reasoning blocks (`thinking`, `redacted_thinking`) are preserved in history
+  so GLM/DeepSeek tool continuations stay valid.
+
+## Proposed: subagents and compaction
+
+### Problem
+
+A long task currently fails all at once. After 32 model calls in one turn
+(`TurnLimit`), or 128 messages / 2 MiB of serialized history (`HistoryLimit`),
+`main.zig` prints "Conversation limit reached", clears history, and
+reinitializes the agent. File edits and commands already run stay on disk, but
+the model's understanding of them is lost, and the user has to reconstruct the
+context by hand. The two pressures are different:
+
+- **Breadth:** exploration (reading many files, grepping) fills the parent
+  context with raw tool output that is needed only briefly.
+- **Length:** a coherent task can simply need more than 32 calls or 128 messages.
+
+Subagents address breadth, compaction addresses length, and both reuse existing
+pieces (`Agent`, `Route`, `Catalog`, `Usage`, `Ui`). Neither needs new
+dependencies or a new layer.
+
+### 1. Compaction (do first)
+
+| Item | Design |
+|---|---|
+| Trigger | Before each request, when history exceeds a byte budget (e.g. 75% of the 2 MiB request limit or ~96 messages), and also instead of failing when a limit is about to be hit |
+| Summary call | One extra Messages request on the **fast** route, without tools: "Summarize goal, decisions, files changed (paths + what), commands run and their results, open TODOs." Bounded `max_tokens` (e.g. 2048) |
+| Replacement | History becomes `[user: original task + "<summary>…</summary>"]` + the last N complete exchanges. Never split a `tool_use` from its `tool_result`, and keep the reasoning blocks attached to their turn |
+| Turn limit | On reaching 32 calls, compact and give a fresh 32-call budget, up to a hard cap (e.g. 3 compactions per turn), then fail as today |
+| Error path | When a turn fails, keep a compacted summary instead of clearing history entirely, so "Inspect completed tool effects" becomes "here is what was done" |
+| Commands | `/compact [focus]` manually; `/context` shows message count, bytes, and remaining budget |
+| Usage | Summary requests count in turn and session `Usage` and are labeled `compaction` |
+| Memory | Rebuild the arena after compaction (copy the summary and the kept tail into a new arena), as `/c` does, so long sessions do not grow without bound |
+
+Tests: a mock server that returns many `tool_use` replies verifies that compaction
+fires, that tool pairs stay intact, that the summary request carries no tools, that
+usage is counted, and that the hard cap still produces `TurnLimit`.
+
+### 2. Subagents (`task` tool)
+
+| Item | Design |
+|---|---|
+| Tool | `{"name":"task","input":{"prompt":string,"tier":"fast"\|"strong"?}}`: "Delegate a self-contained investigation; returns only a final report" |
+| Execution | Create a child `Agent` with a scratch arena, its own history and system prompt ("You are a subagent. Do the task and finish with a concise report"), the same `Context`, and a route from `forTask` (or the explicit tier) through the catalog |
+| Isolation | Only the child's final text returns to the parent as the `tool_result`, capped at 64 KiB like other tools. Intermediate tool output never enters the parent context |
+| Limits | Depth 1 (children don't get the `task` tool), a smaller budget (e.g. 16 calls), and the child's own compaction. A child that hits its limit returns a partial report rather than failing the parent turn |
+| Read-only option | `"mode":"explore"` gives the child only read/glob/grep/skill, which is safe for cheap fast-tier models; write tools only with `"mode":"edit"` |
+| UI | Child tool calls are indented under `• task …` with compact previews; `/details` holds the child's full report |
+| Usage | Child usage rolls into the parent turn and session totals, shown as a separate line |
+| Cost routing | Exploration subagents use the fast/`--free` tier while the parent stays on strong. This is the main cost saving with catalog routing |
+
+Sequential execution first (matching the current single-threaded loop). Running
+subagents in parallel for several `task` calls in one response is a later
+increment, and needs care with shared-file writes and UI output ordering.
+
+Tests: the mock server scripts a parent `task` call, child read/grep calls and a
+child report. Assert that the parent history contains only the report, that depth
+is enforced, that explore mode refuses writes, that a child limit gives a partial
+report, and that usage adds up.
+
+### 3. Smaller follow-ups
+
+- **Session persistence:** `/save` and `/resume` the (compacted) history as JSON
+  under `.omnicode/sessions/`, so a cleared or crashed REPL can continue.
+- **Prompt caching:** add `cache_control` to the system prompt, the tool schemas
+  and the summary block. Compaction keeps a stable prefix, which raises cache hits.
+- **Token-aware limits:** use the reported `input_tokens` against the catalog
+  `context_length` instead of a fixed byte budget.
+- **Retry for reads only:** retry idempotent HTTP failures (429/5xx) once with
+  backoff. Mutating tool effects are never replayed.
+- **Plan/todo tool:** a small in-memory checklist that the model updates. It
+  survives compaction verbatim and anchors long tasks.
+- **Input history:** up/down arrows in the composer (already listed as a follow-on).
+
+### Order
+
+```mermaid
+flowchart LR
+    A["Compaction + /compact + /context"] --> B["Failure keeps summary instead of clearing"]
+    B --> C["task tool: sequential, depth 1, explore mode"]
+    C --> D["Edit-mode subagents + UI nesting"]
+    D --> E["Persistence / caching / parallel subagents"]
+```
+
+Each step is its own commit, with unit tests, mock-server integration tests and
+a LOC check, following the increments above.
+
+## Proposed: status bar (model · directory · time)
+
+### Goal
+
+Keep the current provider/model, working directory, and local time visible
+without scrolling back to the banner or the last `• route` line. In automatic
+mode the model changes from turn to turn, so the bar is the only place the user
+can see the routing state at a glance.
+
+### Constraints from earlier decisions
+
+- The transcript stays in **native scrollback**: no alternate screen, no terminal
+  framework, no new dependencies (see "Terminal UI increment").
+- The waiting indicator already owns the current line during work (`\r\x1b[2K`
+  redraws in `Ui.work`), and the raw composer owns it while the user types.
+- Plain output (pipes, `TERM=dumb`, one-shot prompts) must stay free of escape
+  sequences and redraw noise.
+
+### Options considered
+
+| Option | Mechanism | Verdict |
+|---|---|---|
+| A. Inline status line | Print one dim line directly above each prompt | **Phase 1.** Uses no cursor tricks, works with canonical and raw input, paste, wrapping and resizes. Because the prompt is almost always the last screen row, the line sits at the bottom whenever the user is idle. The copies left in scrollback also act as per-turn timestamps |
+| B. Footer below the composer | Draw the line under the prompt, move the cursor up, erase on submit | Rejected for now. Pasted newlines and wrapped input overwrite it, so the composer would need full redraw logic, which the roadmap deliberately avoided |
+| C. Pinned bottom row | Reserve the last row with a scroll region (`DECSTBM` `\x1b[1;{rows-1}r`), draw the bar at `rows`, restore with `\x1b[r` | **Phase 2, opt-in.** A true always-visible bar, including during long tool runs. It risks scrollback (some terminals and multiplexers don't save lines that scroll out of a partial region), needs the terminal size and resize (`SIGWINCH`) handling, and must restore the terminal on every exit path |
+| D. Alternate-screen TUI | Full-screen renderer | Rejected: it breaks native scrollback and copy behaviour, which the project explicitly keeps |
+| E. Terminal title (`OSC 0/2`) | Put the status in the window/tab title | An optional extra (`/status title`). It costs nothing to the transcript, but isn't visible in every setup and some multiplexers drop it |
+
+### Content and layout
+
+```text
+ openrouter · auto (cost-max) → z-ai/glm-4.6 · ~/Projects/omnicode · 10:25
+```
+
+| Field | Source | Notes |
+|---|---|---|
+| Provider | `Route.provider` | Always shown |
+| Model | Pinned: `Route.model`. Automatic: `auto (cost-max\|free)` plus `→ last selected model` after the first turn | The catalog picks the model inside `respond`, so before a turn only the policy is known; never show a guessed model as current |
+| Directory | `std.process.currentPathAlloc` with `$HOME` shortened to `~` | Middle-elided with `…` when space is short |
+| Time | Local `HH:MM` | See "Local time" below |
+| Later (optional) | Session cost from `/usage`, context budget from `/context` (after compaction), Git branch read from `.git/HEAD` (no subprocess) | Add only once the base bar is stable; each must be cheap to compute without I/O at render time |
+
+Truncation priority when narrow: shorten the directory first, then the model
+(cut at the end with `…`), then drop the time. Provider and the start of the
+model always remain. All fields go through the existing control-character
+sanitizer, and cut points respect UTF-8 boundaries (the same rules as tool previews).
+
+### Local time
+
+Zig's `std.time` has no timezone conversion, but `std.tz.Tz.parse` reads TZif
+data. At startup, load `$TZ` when it names a zoneinfo file, else `/etc/localtime`.
+Find the offset from the transition table and format `HH:MM`. If loading fails,
+show `HH:MM UTC` explicitly rather than presenting UTC as local time. Do this once
+and cache the transitions; no subprocess (`date`) and no per-render file I/O.
+
+When the time refreshes:
+
+- Inline (Phase 1): when each prompt is drawn. Text in scrollback is never
+  rewritten, which is correct because each line records when that prompt began.
+- Pinned (Phase 2): at each prompt, on every waiting-indicator tick (already
+  periodic in `Ui.work`), and once a minute while idle. That last case needs the
+  composer to wait on input with a timeout (`poll`) instead of a blocking read.
+
+### Terminal width
+
+`COLUMNS` is usually not exported by shells, so `Ui.width` often falls back to 80.
+Query the real size with the `TIOCGWINSZ` ioctl when stdout is a TTY, fall back
+to `COLUMNS`, then 80. Tool previews benefit from the same improvement. Phase 2
+also needs the row count and a `SIGWINCH` handler that only sets an atomic flag.
+The next redraw then resets the scroll region and repaints, with no terminal
+writes inside the signal handler.
+
+### Phase 2 safety (pinned bar)
+
+- Enter the scroll region only in the styled interactive REPL (stdin and stdout
+  are TTYs, not `TERM=dumb` or `NO_COLOR`), matching when the raw composer is used.
+- Restore (`\x1b[r`, clear the last row, move the cursor to the bottom) on `/q`,
+  Ctrl-D, error returns, and before handing the terminal to anything interactive.
+  Register the restore with `defer` next to the existing termios restore. Document
+  `reset` as the manual way to recover after a hard kill.
+- Before printing transcript text, make sure the cursor is inside the scroll
+  region so output never lands on the bar row.
+- Draw the bar with save/restore cursor (`\x1b7`…`\x1b8`) and a clear line,
+  dimmed, and never wider than the width minus one column (to avoid auto-wrap
+  scrolling the region).
+- Fall back to Phase 1 automatically when the size can't be read or rows < 10.
+
+### Controls
+
+`/status inline|pinned|title|off` in the REPL and `OMNICODE_STATUS` with the same
+values. The default is `inline` for interactive TTYs and `off` for plain output and
+one-shot prompts. `pinned` stays opt-in until it passes the terminal matrix below.
+
+### Implementation sketch
+
+- `ui.zig`: a pure `statusLine(buf, width, fields) []const u8` (formatting and
+  truncation only, unit-testable), plus `Ui.status()` that renders according to mode.
+- `main.zig`: call `ui.status()` before `ui.prompt()`, and store the last selected
+  route so automatic mode can show `→ model`. `Agent.respond` already has the
+  selected route and can return or store it.
+- Small time helper (TZif load and offset lookup) next to `ui.zig`. Phase 1 is
+  about 60 lines including tests; Phase 2 adds about 80 for the size, resize,
+  scroll region and restore logic.
+
+### Verification
+
+- Unit: field truncation order, `~` substitution, UTF-8-safe cuts, sanitizing a
+  model ID that contains control characters, TZif offset lookup with a fixture
+  zone, and the UTC fallback label.
+- PTY integration (existing Python harness): the inline line appears before each
+  prompt in a styled PTY; it is absent with piped output, `TERM=dumb`, and one-shot
+  prompts; the `→ model` text updates after a mocked turn.
+- Phase 2: assert that `DECSTBM` is set at startup and reset on `/q`, on EOF, and
+  after an API error. Resize the PTY (`TIOCSWINSZ`, then `SIGWINCH`) and check the
+  region is redrawn for the new row count.
+- Manual matrix before making `pinned` the default: xterm, GNOME Terminal (VTE),
+  kitty, Alacritty, WezTerm, tmux, and screen. Check scrollback is kept, copy/paste
+  works, and resizing behaves during a long `bash` tool run.
+
+### Placement in the order
+
+Phase 1 doesn't depend on compaction or subagents and is small, so it can land
+first. Once compaction exists, the bar is the natural place for the `/context`
+budget. Once subagents exist, it can show `task 1/1 · fast`. Phase 2 follows
+after the inline bar has been used for a while.
+
+```mermaid
+flowchart LR
+    S1["Status line inline: model, dir, time + real width"] --> A["Compaction"]
+    A --> S2["Bar shows context budget"]
+    S2 --> C["Subagents"]
+    C --> S3["Pinned bar opt-in after terminal matrix"]
+```
