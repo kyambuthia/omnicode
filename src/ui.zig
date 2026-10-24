@@ -88,7 +88,7 @@ pub const Ui = struct {
     /// Only this task writes to the terminal; the worker owns network/tool I/O.
     pub fn work(ui: Ui, label: []const u8, comptime function: anytype, args: anytype) anyerror!@typeInfo(@typeInfo(@TypeOf(function)).@"fn".return_type.?).error_union.payload {
         if (!ui.interactive) {
-            try ui.note(label);
+            if (!std.mem.eql(u8, label, "Running tool...")) try ui.note(label);
             try ui.out.flush();
             return @call(.auto, function, args);
         }
@@ -157,7 +157,7 @@ pub const Ui = struct {
     pub fn toolStart(ui: Ui, name: []const u8, args: j.Value) !void {
         const key = if (std.mem.eql(u8, name, "bash")) "cmd" else if (std.mem.eql(u8, name, "skill")) "name" else if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) "pat" else "path";
         try ui.style("\x1b[1m");
-        try ui.out.writeAll("\n• ");
+        try ui.out.writeAll("• ");
         try ui.safe(name, 24);
         try ui.style("\x1b[0m");
         try ui.out.writeAll("  ");
