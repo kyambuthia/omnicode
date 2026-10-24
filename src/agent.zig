@@ -136,10 +136,16 @@ fn validate(response: j.Value) !j.Value {
     const content = try j.get(response, "content");
     if (content != .array or content.array.items.len == 0 or content.array.items.len > 64) return error.InvalidResponse;
     var calls: usize = 0;
+    var texts: usize = 0;
     for (content.array.items, 0..) |block, i| {
         const kind = try j.str(block, "type");
         if (std.mem.eql(u8, kind, "text")) {
             _ = try j.str(block, "text");
+            texts += 1;
+        } else if (std.mem.eql(u8, kind, "thinking")) {
+            _ = try j.str(block, "thinking");
+        } else if (std.mem.eql(u8, kind, "redacted_thinking")) {
+            _ = try j.str(block, "data");
         } else if (std.mem.eql(u8, kind, "tool_use")) {
             calls += 1;
             const id = try j.str(block, "id");
@@ -152,6 +158,7 @@ fn validate(response: j.Value) !j.Value {
             }
         } else return error.UnsupportedContent;
     }
+    if (calls == 0 and texts == 0) return error.InvalidResponse;
     if ((calls != 0) != std.mem.eql(u8, stop, "tool_use")) return error.InvalidResponse;
     return content;
 }

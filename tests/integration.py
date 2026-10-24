@@ -116,6 +116,21 @@ class Integration(unittest.TestCase):
                     self.assertEqual(headers["authorization"], "Bearer fake-openrouter")
                     self.assertNotIn("x-api-key", headers)
 
+    def test_reasoning_blocks_are_preserved_across_tool_continuations(self):
+        thinking = {"type": "thinking", "thinking": "private model analysis", "signature": "opaque-signature"}
+        redacted = {"type": "redacted_thinking", "data": "opaque-data"}
+        self.reply = lambda _: tools(thinking, redacted, call("bash", {"cmd": "printf ok"})) if len(self.requests) == 1 else text()
+        result = self.run_agent("fix code")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("private model analysis", result.stdout)
+        content = self.requests[-1][0]["messages"][-2]["content"]
+        self.assertEqual(content[:2], [thinking, redacted])
+        self.requests.clear()
+        self.reply = lambda _: tools(call("write", {"path": "should-not-exist", "content": "oops"}), {"type": "thinking"})
+        result = self.run_agent("fix code")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.cwd / "should-not-exist").exists())
+
     def test_live_cost_selection_and_refresh(self):
         self.env["PROVIDER"] = "openrouter"
         self.env.pop("MODEL")
