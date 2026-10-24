@@ -45,11 +45,29 @@ pub fn fetch(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]cons
             .extra_headers = headers,
         },
     }, timeout);
-    if (response.status != .ok) {
+    checkStatus(response.status) catch |err| {
         std.debug.print("API HTTP {d}\n", .{@backingInt(response.status)});
-        return error.ApiError;
-    }
-    return j.parse(a, writer.buffered());
+        return err;
+    };
+    return parseResponse(a, writer.buffered());
+}
+
+fn checkStatus(status: std.http.Status) !void {
+    return switch (@backingInt(status)) {
+        200 => {},
+        401 => error.ApiAuthenticationFailed,
+        403 => error.ApiAccessDenied,
+        429 => error.ApiRateLimited,
+        500...599 => error.ApiServerError,
+        else => error.ApiError,
+    };
+}
+
+fn parseResponse(a: std.mem.Allocator, body: []const u8) !j.Value {
+    return j.parse(a, body) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return error.InvalidJsonResponse,
+    };
 }
 
 test "endpoints require TLS or literal loopback HTTP" {
@@ -67,4 +85,25 @@ test "endpoints require TLS or literal loopback HTTP" {
         "file:///tmp/test",                       "ftp://example.com/test",             "https:///test",                     "not a url",
         "https://user:password@example.com/test", "http://127.0.0.1@evil.example/test", "https://example.com/test#fragment", "https://example.com/test\r\nInjected: header",
     }) |url| try std.testing.expectError(error.InvalidEndpoint, validateEndpoint(url));
+}
+
+test "HTTP status diagnostics distinguish credential, rate, and server failures" {
+    try checkStatus(.ok);
+    try std.testing.expectError(error.ApiAuthenticationFailed, checkStatus(.unauthorized));
+    try std.testing.expectError(error.ApiAccessDenied, checkStatus(.forbidden));
+    try std.testing.expectError(error.ApiRateLimited, checkStatus(.too_many_requests));
+    for ([_]u10{ 500, 502, 503, 529, 599 }) |code|
+        try std.testing.expectError(error.ApiServerError, checkStatus(@fromBackingInt(@intCast(code))));
+    for ([_]u10{ 201, 204, 301, 307, 400, 404, 499 }) |code|
+        try std.testing.expectError(error.ApiError, checkStatus(@fromBackingInt(@intCast(code))));
+}
+
+test "malformed JSON responses produce a stable diagnostic without body text" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "", "<html>credential-echo</html>", "{\"partial\":", "{\"bad\":\"\xff\"}" }) |body|
+        try std.testing.expectError(error.InvalidJsonResponse, parseResponse(a, body));
+    const valid = try parseResponse(a, "{\"content\":[]}");
+    try std.testing.expect(valid == .object);
 }

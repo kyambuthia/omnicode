@@ -883,6 +883,38 @@ class Integration(unittest.TestCase):
         self.assertIn("    4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
+    def test_http_failures_have_safe_actionable_diagnostics(self):
+        marker = "provider-error-body-must-stay-private"
+        for status, error, hint in (
+            (401, "ApiAuthenticationFailed", "selected provider key"),
+            (403, "ApiAccessDenied", "permissions"),
+            (429, "ApiRateLimited", "Wait before retrying"),
+            (503, "ApiServerError", "provider availability"),
+            (529, "ApiServerError", "provider availability"),
+            (400, "ApiError", "endpoint"),
+        ):
+            with self.subTest(status=status):
+                self.requests.clear()
+                self.reply = lambda _, status=status: (status, {"error": marker + " fake-anthropic"})
+                result = self.run_agent(stdin="inspect project\n/q\n")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(error, result.stdout)
+                self.assertIn(hint, result.stdout)
+                self.assertIn(f"API HTTP {status}", result.stderr)
+                self.assertNotIn(marker, result.stdout + result.stderr)
+                self.assertNotIn("fake-anthropic", result.stdout + result.stderr)
+                self.assertEqual(len(self.requests), 1)
+
+    def test_invalid_json_response_is_reported_without_echoing_body(self):
+        self.reply = lambda _: b"<html>private-response-body fake-anthropic</html>"
+        result = self.run_agent(stdin="inspect project\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("InvalidJsonResponse", result.stdout)
+        self.assertIn("Check the endpoint", result.stdout)
+        self.assertNotIn("private-response-body", result.stdout + result.stderr)
+        self.assertNotIn("fake-anthropic", result.stdout + result.stderr)
+        self.assertEqual(len(self.requests), 1)
+
     def test_nul_voice_and_secret_import_paths_fail_without_io_side_effects(self):
         secret = "must-not-import-private-token"
         (self.cwd / "import.env").write_text(f"TOKEN={secret}\n")
