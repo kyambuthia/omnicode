@@ -397,7 +397,7 @@ flowchart LR
     C --> S3["Pinned bar opt-in after terminal matrix"]
 ```
 
-## Proposed: `/exit`, `/init`, bottom-pinned status bar default, and adversarial multi-agent review
+## `/exit`, `/init`, bottom-pinned status bar default, and adversarial multi-agent review (completed)
 
 ### 1. `/exit` and bottom-pinned status bar by default
 

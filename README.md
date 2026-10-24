@@ -26,12 +26,12 @@ export OPENROUTER_API_KEY='your-key'
 ./zig-out/bin/omnicode
 ```
 
-Use `zig build run -- 'your task'` during development. `--help` and `--skills`
+Use `zig build run -- 'your task'` during development. `--help`, `--skills`, and `--init`
 work without a key or network connection. Do not put API keys in tracked files.
 
 ```text
 omnicode [--free|--cost-max] [--verbose] [--] [prompt ...]
-omnicode --skills | --help
+omnicode --skills | --init [force] | --help
 ```
 
 | Option | Effect |
@@ -39,6 +39,7 @@ omnicode --skills | --help
 | `--cost-max` | Default. Pick the cheapest suitable model from the live OpenRouter catalog |
 | `--free` | Only zero-price OpenRouter tool models; forces OpenRouter and rejects paid overrides |
 | `--verbose` | Full tool output instead of compact previews |
+| `--init [force]` | Bootstrap `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md` for the current repository |
 | `--` | Treat every following argument literally as prompt text (e.g. `-- --help me`) |
 
 `--free` and `--cost-max` together is an error (`ConflictingOptions`); other
@@ -66,7 +67,7 @@ beyond those keywords; override the model for ambiguous work.
 | `OPENROUTER_API_KEY` | Key for OpenRouter requests |
 | `API_URL` | Optional **complete Messages endpoint URL**, primarily for local testing |
 | `MODELS_URL` | Optional OpenRouter model catalog URL (public metadata; the API key is never sent to it) |
-| `OMNICODE_STATUS` | Status line mode: `inline` (default), `pinned`, `title`, or `off` |
+| `OMNICODE_STATUS` | Status line mode: `pinned` (default), `inline`, `title`, or `off` |
 
 ### Live catalog selection (OpenRouter)
 
@@ -101,6 +102,8 @@ REPL commands:
 
 | Command | Effect |
 |---|---|
+| `/init [force]` | Generate `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md`, then reload system instructions |
+| `/review [focus]` | Run the two-critic adversarial code review (Correctness/Security + Anti-Slop/Simplicity) on workspace changes |
 | `/model openrouter anthropic/claude-sonnet-4.5` | Pin a provider/model and clear history |
 | `/model anthropic claude-sonnet-4-5` | Pin a direct Anthropic model and clear history |
 | `/model auto` | Restore environment/default routing and clear history |
@@ -109,7 +112,7 @@ REPL commands:
 | `/help` | Show commands and configuration |
 | `/model` | Show current routing mode and models |
 | `/verbose on` or `/verbose off` | Switch future tool output between full and compact previews |
-| `/status inline\|pinned\|title\|off` | Show the status line above the prompt, pinned to the bottom row, in the terminal title, or not at all |
+| `/status inline\|pinned\|title\|off` | Show the status line pinned to the bottom row (default), above the prompt, in the terminal title, or not at all |
 | `/usage` | Show session token/cost totals, retained across clears and model changes |
 | `/context` | Show conversation message, byte, and token budget |
 | `/compact [focus]` | Summarize older exchanges on the fast route, keeping the original goal and recent tool pairs |
@@ -118,7 +121,7 @@ REPL commands:
 | `/resume [NAME]` | Load a saved session from `.omnicode/sessions/<NAME>.json` (default: `latest`) |
 | `/details` | Recover the last tool result, up to 64 KiB; next tool call replaces it |
 | `/c` | Clear conversation and free session allocations |
-| `/q` or `exit` | Quit |
+| `/q`, `/exit`, or `exit` | Quit |
 
 ## Terminal interface
 
@@ -155,7 +158,8 @@ tool results still go to the model. UTF-8 characters are never cut mid-sequence.
 
 ### Status line
 
-Interactive terminals print one dim status line above each prompt:
+Interactive terminals pin a dim status line to the bottom terminal row by default
+(using a `DECSTBM` scroll region for rows `1..rows-1`, restored on exit):
 
 ```text
  openrouter · auto (cost-max) → z-ai/glm-4.6 · ~/Projects/omnicode · 10:25
@@ -167,11 +171,10 @@ message count once a conversation has started; and local time. Local time comes 
 `$TZ` or `/etc/localtime` (TZif); when no zone can be loaded the time is labeled
 `UTC`. Narrow terminals elide the directory first, then the model, then drop the
 context count and time. Width is read from the terminal on every prompt, falling back
-to `COLUMNS`. `/status pinned` reserves the bottom terminal row using a `DECSTBM`
-scroll region (restored on exit), `/status title` puts the status in the terminal
-title (restored via the xterm title stack), `/status off` hides it, and
-`OMNICODE_STATUS=inline|pinned|title|off` sets the startup mode. Plain output never
-prints it.
+to `COLUMNS`. `/status inline` prints the status line directly above each prompt,
+`/status title` puts the status in the terminal title (restored via the xterm title
+stack), `/status off` hides it, and `OMNICODE_STATUS=pinned|inline|title|off` sets
+the startup mode. Plain output never prints it.
 
 The interface keeps normal terminal scrolling and copy/paste. Styled terminal
 responses emphasize Markdown headings and dim backtick fence markers; fenced
@@ -253,6 +256,7 @@ files immediately. Keep skills local and trusted.
 | `skill` | Load an advertised project's skill body by name |
 | `todo` | Read or replace the session checklist (`items: [{task, done}]`); survives compaction and `/save` |
 | `task` | Delegate a sub-task to a depth-1 child agent (`mode: explore\|edit`, `tier: fast\|strong`); returns only its final report |
+| `review` | Run adversarial multi-agent code review (Correctness/Security critic + Anti-Slop/Simplicity critic) on current workspace changes; returns findings and `OVERALL VERDICT: PASS\|FAIL` |
 
 Tools execute sequentially with your user's filesystem and process permissions.
 There is **no sandbox or approval prompt**. Run in a checkout you trust; inspect
