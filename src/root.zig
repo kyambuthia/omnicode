@@ -1,3 +1,4 @@
+pub const Usage = @import("usage.zig").Usage;
 pub const Input = @import("input.zig").Input;
 pub const Details = @import("ui.zig").Details;
 pub const Ui = @import("ui.zig").Ui;
@@ -10,4 +11,5 @@ test {
     _ = @import("tools.zig");
     _ = @import("agent.zig");
     _ = @import("ui.zig");
+    _ = @import("usage.zig");
 }
