@@ -29,6 +29,7 @@ pub const Input = struct {
         try ui.out.flush();
         var n: usize = 0;
         var paste = false;
+        var carriage_return = false;
         var overflow = false;
         var sequence: [8]u8 = undefined;
         var pending: usize = 0;
@@ -40,6 +41,10 @@ pub const Input = struct {
             };
             if (count == 0) return null;
             const c = byte[0];
+            if (!paste and c == 3) {
+                try ui.out.writeAll("^C\n");
+                return error.InputCancelled;
+            }
             if (pending != 0 or c == 27) {
                 sequence[pending] = c;
                 pending += 1;
@@ -50,10 +55,6 @@ pub const Input = struct {
                 if (std.mem.eql(u8, escape, "\x1b[201~")) paste = false;
                 pending = 0;
                 continue;
-            }
-            if (!paste and c == 3) {
-                try ui.out.writeAll("^C\n");
-                return error.InputCancelled;
             }
             if (!paste and c == 4 and n == 0) return null;
             if (!paste and (c == '\r' or c == '\n')) {
@@ -67,6 +68,11 @@ pub const Input = struct {
                 while (n > 0 and self.bytes[n] & 0xc0 == 0x80) n -= 1;
                 try ui.out.writeAll("\x08 \x08");
             } else if (c >= 32 or (paste and (c == '\n' or c == '\r' or c == '\t'))) {
+                if (paste and c == '\n' and carriage_return) {
+                    carriage_return = false;
+                    continue;
+                }
+                carriage_return = c == '\r';
                 if (n == self.bytes.len) {
                     overflow = true;
                     continue;
