@@ -19,4 +19,5 @@ test {
     _ = @import("ui.zig");
     _ = @import("usage.zig");
     _ = @import("status.zig");
+    _ = @import("input.zig");
 }
