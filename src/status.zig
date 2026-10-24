@@ -10,10 +10,11 @@ pub const Status = struct {
     model_bytes: [160]u8 = undefined,
     model_len: usize = 0,
 
-    pub const Mode = enum { inline_line, title, off };
+    pub const Mode = enum { inline_line, pinned, title, off };
 
     pub fn parseMode(name: []const u8) ?Mode {
         if (std.mem.eql(u8, name, "inline")) return .inline_line;
+        if (std.mem.eql(u8, name, "pinned")) return .pinned;
         if (std.mem.eql(u8, name, "title")) return .title;
         if (std.mem.eql(u8, name, "off")) return .off;
         return null;
@@ -22,6 +23,7 @@ pub const Status = struct {
     pub fn modeName(mode: Mode) []const u8 {
         return switch (mode) {
             .inline_line => "inline",
+            .pinned => "pinned",
             .title => "title",
             .off => "off",
         };
@@ -95,6 +97,16 @@ pub fn terminalWidth(env: *const std.process.Environ.Map) usize {
         if (std.os.linux.errno(rc) == .SUCCESS and size.col > 0) return std.math.clamp(size.col, 40, 160);
     }
     return std.math.clamp(std.fmt.parseInt(usize, env.get("COLUMNS") orelse "80", 10) catch 80, 40, 160);
+}
+
+/// Terminal rows from the TTY; returns 0 when unavailable or smaller than the 10-row minimum.
+pub fn terminalRows() usize {
+    if (builtin.os.tag == .linux) {
+        var size: std.posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
+        const rc = std.os.linux.ioctl(1, std.os.linux.T.IOCGWINSZ, @intFromPtr(&size));
+        if (std.os.linux.errno(rc) == .SUCCESS and size.row >= 10) return size.row;
+    }
+    return 0;
 }
 
 pub const Fields = struct {

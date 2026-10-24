@@ -106,10 +106,31 @@ pub const Ui = struct {
             try ui.out.writeAll("\x07");
             return;
         }
+        if (s.mode == .pinned) {
+            const rows = status_line.terminalRows();
+            if (rows >= 10) {
+                try ui.out.print("\x1b7\x1b[1;{d}r\x1b[{d};1H\x1b[2K\x1b[2m", .{ rows - 1, rows });
+                try status_line.render(ui.out, ui.width, fields);
+                try ui.out.writeAll("\x1b[0m\x1b8");
+                return;
+            }
+        }
         try ui.style("\x1b[2m");
         try status_line.render(ui.out, ui.width, fields);
         try ui.style("\x1b[0m");
         try ui.out.writeByte('\n');
+    }
+
+    /// Reset DECSTBM scroll region and clear the pinned bar row on exit or mode switch.
+    pub fn resetScrollRegion(ui: Ui) !void {
+        if (!ui.interactive) return;
+        const rows = status_line.terminalRows();
+        if (rows >= 10) {
+            try ui.out.print("\x1b7\x1b[r\x1b[{d};1H\x1b[2K\x1b8", .{rows});
+        } else {
+            try ui.out.writeAll("\x1b[r");
+        }
+        try ui.out.flush();
     }
 
     /// Save/restore the terminal title around title mode (xterm title stack).

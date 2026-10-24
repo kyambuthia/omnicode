@@ -678,16 +678,18 @@ class Integration(unittest.TestCase):
         self.env.pop("NO_COLOR", None)
         (self.cwd / "nested").mkdir()
         self.cwd = self.cwd / "nested"
-        output = self.run_pty(b"list files\n/model anthropic pinned-model\n/status title\n/status off\n/status bogus\n/q\n", cols=100)
+        output = self.run_pty(b"list files\n/model anthropic pinned-model\n/status pinned\n/status title\n/status off\n/status bogus\n/q\n", cols=100)
         lines = [l for l in output.replace("\r", "").split("\n") if " · " in l and "anthropic" in l and "~" in l]
         self.assertGreaterEqual(len(lines), 2, output)
         self.assertRegex(lines[0], r"anthropic · auto · ~/nested · \d\d:\d\d")
         self.assertIn("auto → fast-test-model", lines[1])
         self.assertIn("anthropic · pinned-model · ~/nested", output)
+        self.assertIn("\x1b[1;23r\x1b[24;1H", output)
+        self.assertIn("\x1b[r", output)
         self.assertIn("\x1b]0;omnicode · anthropic · pinned-model", output)
         self.assertIn("\x1b[22;0t", output)
         self.assertIn("\x1b[23;0t", output)
-        self.assertIn("usage: /status inline|title|off (current: off)", output)
+        self.assertIn("usage: /status inline|pinned|title|off (current: off)", output)
         # Width comes from the terminal, not COLUMNS; the line never exceeds it.
         self.env["COLUMNS"] = "160"
         output = self.run_pty(b"/q\n", cols=50)

@@ -12,7 +12,7 @@ const help =
     \\  /model PROVIDER MODEL  Pin a model (clears conversation)
     \\  /skills, /skill NAME   List or load project instructions
     \\  /verbose on|off        Show full output for future tool calls
-    \\  /status inline|title|off  Status line: provider, model, directory, local time
+    \\  /status inline|pinned|title|off  Status line: provider, model, directory, local time
     \\  /usage                 Show cumulative usage (survives /c and model changes)
     \\  /context               Show conversation message and byte budget
     \\  /compact [focus]       Summarize older context on the fast model
@@ -99,7 +99,10 @@ fn run(init: std.process.Init) !void {
     ui.status = &status;
     const dir = try core.shortenHome(a, cwd, init.environ_map.get("HOME") orelse "");
     if (status.mode == .title) try ui.titleStack(true);
-    defer if (status.mode == .title) ui.titleStack(false) catch {};
+    defer {
+        if (status.mode == .title) ui.titleStack(false) catch {};
+        if (status.mode == .pinned) ui.resetScrollRegion() catch {};
+    }
     var input_buffer: [16 * 1024]u8 = undefined;
     var input = std.Io.File.Reader.init(.stdin(), init.io, &input_buffer);
     var composer: core.Input = .{};
@@ -212,10 +215,11 @@ fn run(init: std.process.Init) !void {
         if (std.mem.eql(u8, line, "/status") or std.mem.startsWith(u8, line, "/status ")) {
             const selected = if (line.len > 8) core.Status.parseMode(std.mem.trim(u8, line[8..], " ")) else null;
             const next = selected orelse {
-                try out.print("usage: /status inline|title|off (current: {s})\n", .{core.Status.modeName(status.mode)});
+                try out.print("usage: /status inline|pinned|title|off (current: {s})\n", .{core.Status.modeName(status.mode)});
                 continue;
             };
             if (status.mode == .title and next != .title) try ui.titleStack(false);
+            if (status.mode == .pinned and next != .pinned) try ui.resetScrollRegion();
             if (status.mode != .title and next == .title) try ui.titleStack(true);
             status.mode = next;
             try ui.note(if (ui.interactive) "Status line updated." else "Status line applies to interactive terminals only.");
