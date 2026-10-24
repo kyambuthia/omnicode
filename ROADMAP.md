@@ -10,8 +10,8 @@ database, background service, or speculative abstractions.
 
 `model tool calls -> local tools / skill loader -> tool results -> loop`
 
-Use the same Messages protocol for Anthropic and OpenRouter. Route explicitly
-by provider and model, with deterministic defaults from environment variables.
+Use the same Messages protocol for Anthropic and OpenRouter. Select fast/strong models automatically using a documented task heuristic, with
+explicit provider selection and a manual model override. Pin routing per turn.
 Do not silently retry mutations or switch providers. Skills are local instructions,
 not plugins: advertise names/descriptions and load a body only when requested.
 
@@ -37,7 +37,7 @@ automated verification.
 
 Trusted local use: tools operate with the user's permissions, without a sandbox.
 Initial scope is POSIX, Zig 0.17.0, and ripgrep for glob/regex search. No streaming,
-automatic model classification, MCP, persisted sessions, or full YAML parser.
+an LLM-based routing classifier, MCP, persisted sessions, or full YAML parser.
 
 ## Primary references
 
@@ -51,6 +51,6 @@ automatic model classification, MCP, persisted sessions, or full YAML parser.
 
 - [x] Inspect template, reference implementation, installed Zig APIs and API docs.
 - [x] Router and foundation (route tests and build pass).
-- [ ] Tools and skills.
+- [x] Tools and skills (real file, skill, deadline and output-limit tests).
 - [ ] Agent and CLI.
 - [ ] Acceptance and documentation.

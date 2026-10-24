@@ -6,6 +6,17 @@ pub const Route = struct {
     url: []const u8,
     key: []const u8,
 
+    /// Classify once per user turn; tool results never change the selected model.
+    pub fn forTask(self: Route, env: *const std.process.Environ.Map, task: []const u8) Route {
+        var route = self;
+        route.model = env.get(if (complex(task)) "MODEL" else "FAST_MODEL") orelse
+            if (complex(task)) self.model else if (self.provider == .anthropic)
+                "claude-haiku-4-5"
+            else
+                "anthropic/claude-haiku-4.5";
+        return route;
+    }
+
     pub fn init(env: *const std.process.Environ.Map, provider: ?[]const u8, model: ?[]const u8) !Route {
         const name = provider orelse env.get("PROVIDER") orelse
             if (env.get("OPENROUTER_API_KEY") != null) "openrouter" else "anthropic";
@@ -25,6 +36,32 @@ pub const Route = struct {
         };
     }
 };
+
+pub fn complex(task: []const u8) bool {
+    if (task.len > 240) return true;
+    var words = std.mem.tokenizeAny(u8, task, " \t\r\n.,:;!?/()-");
+    while (words.next()) |word| {
+        inline for (.{ "implement", "build", "create", "write", "edit", "fix", "debug", "refactor", "test", "tests", "migrate", "design", "architecture", "optimize", "security", "review" }) |verb| {
+            if (std.ascii.eqlIgnoreCase(word, verb)) return true;
+        }
+    }
+    return false;
+}
+
+test "task router chooses configured fast/strong models and preserves provider" {
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("FAST_MODEL", "cheap");
+    try env.put("MODEL", "strong");
+    const route = try Route.init(&env, "openrouter", null);
+    try std.testing.expectEqualStrings("cheap", route.forTask(&env, "what files are here?").model);
+    try std.testing.expectEqualStrings("strong", route.forTask(&env, "FIX a failing test").model);
+    try std.testing.expectEqual(.openrouter, route.forTask(&env, "explain main.zig").provider);
+    var long_task: [241]u8 = undefined;
+    @memset(&long_task, 'x');
+    try std.testing.expect(complex(&long_task));
+    try std.testing.expect(!complex("list fixtures"));
+}
 
 test "route selection, explicit overrides, and invalid config" {
     var env = std.process.Environ.Map.init(std.testing.allocator);
