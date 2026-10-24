@@ -66,9 +66,16 @@ fn run(init: std.process.Init) !void {
     try ui.banner(@tagName(route.provider), try std.process.currentPathAlloc(init.io, a));
     var input_buffer: [16 * 1024]u8 = undefined;
     var input = std.Io.File.Reader.init(.stdin(), init.io, &input_buffer);
+    var composer: core.Input = .{};
     while (true) {
         try ui.prompt();
-        const line = std.mem.trim(u8, (try input.interface.takeDelimiter('\n')) orelse break, " \t\r");
+        const value = composer.read(init.io, ui, &input.interface) catch |err| {
+            if (err == error.InputCancelled) continue;
+            if (err != error.InputTooLong) return err;
+            try ui.errorMessage(err);
+            continue;
+        };
+        const line = std.mem.trim(u8, value orelse break, " \t\r");
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "exit")) break;
         if (std.mem.eql(u8, line, "/details")) {

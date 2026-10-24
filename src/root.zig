@@ -1,3 +1,4 @@
+pub const Input = @import("input.zig").Input;
 pub const Details = @import("ui.zig").Details;
 pub const Ui = @import("ui.zig").Ui;
 pub const Agent = @import("agent.zig").Agent;

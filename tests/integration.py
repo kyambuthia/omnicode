@@ -3,6 +3,8 @@
 import json
 import os
 import pty
+import select
+import termios
 import time
 from pathlib import Path
 import subprocess
@@ -305,6 +307,55 @@ class Integration(unittest.TestCase):
                     self.assertIn("\x1b[2m", output)
                     self.assertNotIn("\x1b[1;36m", output)
                     self.assertIn("\x1b[2K", output)
+
+    def test_raw_input_paste_cancel_eof_and_terminal_restore(self):
+        self.env.update(TERM="xterm-256color")
+        self.env.pop("NO_COLOR", None)
+        for finish in (b"/q\r", b"\x04"):
+            with self.subTest(finish=finish):
+                master, slave = pty.openpty()
+                original = termios.tcgetattr(slave)
+                restored_during_request = []
+                def reply(_):
+                    restored_during_request.append(termios.tcgetattr(slave) == original)
+                    return text("paste accepted")
+                self.reply = reply
+                proc = subprocess.Popen([str(BINARY)], stdin=slave, stdout=slave, stderr=slave,
+                                        cwd=self.cwd, env=self.env)
+                output = bytearray()
+                def until(marker):
+                    deadline = time.monotonic() + 15
+                    while marker not in output:
+                        self.assertLess(time.monotonic(), deadline, output.decode(errors="replace"))
+                        if select.select([master], [], [], 0.1)[0]:
+                            output.extend(os.read(master, 4096))
+                try:
+                    until(b"\x1b[?2004h")
+                    self.assertFalse(termios.tcgetattr(slave)[3] & termios.ICANON)
+                    output.clear()
+                    os.write(master, b"discard me\x03")
+                    until(b"\x1b[?2004h")
+                    self.assertIn(b"^C", output)
+                    output.clear()
+                    os.write(master, b"\x1b[200~explain first\nsecond\x1b[201~")
+                    time.sleep(0.1)
+                    self.assertEqual(len(self.requests), 0)
+                    os.write(master, b"\r")
+                    until(b"paste accepted")
+                    until(b"\x1b[?2004h")
+                    os.write(master, finish)
+                    proc.wait(timeout=10)
+                    self.assertEqual(proc.returncode, 0)
+                    self.assertEqual(termios.tcgetattr(slave), original)
+                    self.assertTrue(all(restored_during_request))
+                    self.assertEqual(self.requests[-1][0]["messages"][0]["content"], "explain first\nsecond")
+                    self.requests.clear()
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait()
+                    os.close(slave)
+                    os.close(master)
 
     def test_offline_commands_and_missing_key(self):
         self.skill()
