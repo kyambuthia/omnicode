@@ -413,6 +413,7 @@ zig fmt --check build.zig build.zig.zon src
 zig build test --summary all
 zig build --summary all
 python3 tests/integration.py -v
+python3 tests/installer.py -v
 ```
 
 The Python standard-library integration suite runs the actual binary in temporary
@@ -423,5 +424,11 @@ HTTP failures, loop limits and size limits. Pseudo-terminal tests cover styling,
 waiting indicators, `NO_COLOR`, compact/full previews, and control sanitization.
 Unit tests cover routing, real file
 edits, skill-name validation, process timeouts and output overflow.
+
+CI runs these checks for main-branch pushes and pull requests. Tagged releases
+reuse the same verification workflow from the tagged commit; release builds and
+publishing wait for it to succeed. Verification uses read-only repository access,
+and release write access is scoped to the release job. Installer tests use local
+release fixtures and require no downloads.
 
 See [ROADMAP.md](ROADMAP.md) for the implementation sequence and primary references.
