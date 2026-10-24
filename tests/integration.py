@@ -181,6 +181,33 @@ class Integration(unittest.TestCase):
         self.assertNotIn(json.dumps(secret)[1:-1], json.dumps(outbound))
         self.assertEqual(json.loads((sessions / "legacy.json").read_text()), legacy)
 
+    def test_vault_values_survive_import_and_process_restart(self):
+        values = {"QUOTED": '"literal-quotes"', "SINGLE": "'single-quotes'",
+                  "SPACED": "  significant spaces  ", "BACKSLASH": r"C:\tokens\private",
+                  "UNICODE": "private-café"}
+        legacy = self.cwd / "legacy.env"
+        legacy.write_text("# legacy dotenv input\n" + "".join(f"{name}='{value}'\n" for name, value in values.items()))
+        result = self.run_agent("--secrets", "load", "legacy.env")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        vault = self.cwd / ".config/omnicode/secrets.env"
+        lines = vault.read_text().splitlines()
+        self.assertIn("vault v2", lines[0])
+        stored = {name: json.loads(encoded) for name, encoded in
+                  (line.split("=", 1) for line in lines[1:])}
+        self.assertEqual(stored, values)
+        (self.cwd / "observe.py").write_text(
+            "import json, os\nfrom pathlib import Path\n" +
+            "names = " + repr(list(values)) + "\n" +
+            "Path('observed.json').write_text(json.dumps({name: os.environ[name] for name in names}))\n"
+        )
+        self.reply = lambda _: tools(call("bash", {"cmd": "python3 observe.py"})) if len(self.requests) == 1 else text("verified")
+        result = self.run_agent("verify stored values")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.cwd / "observed.json").read_text()), values)
+        for value in values.values():
+            self.assertNotIn(value, result.stdout + result.stderr)
+        self.assertEqual(vault.stat().st_mode & 0o777, 0o600)
+
     def test_startup_storage_errors_block_requests_but_allow_help(self):
         vault = self.cwd / "startup-vault.env"
         self.env["OMNICODE_SECRETS"] = str(vault)

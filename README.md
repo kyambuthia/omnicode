@@ -177,6 +177,13 @@ are allowed. Vault loads and imports apply only after the whole file parses;
 comments, blank lines, `export` entries, and empty-value skips are supported.
 `--help` and `--version` remain available even when persisted files need repair.
 
+New vault saves use a versioned header and JSON-encoded values to preserve quotes,
+backslashes, significant spaces, and control bytes across restarts. Older vaults
+and ordinary `.env` imports remain readable; saving upgrades them to v2. The
+vault remains unencrypted and must not be sourced as a shell script. Vault and
+import files are capped at 256 KiB, enough for all 64 supported secrets at the
+512-byte value limit even after JSON escaping.
+
 Conversation and system strings are scrubbed again before model requests, and
 session message and todo strings are scrubbed on save and resume. This covers history
 created before a value was registered as a secret, including JSON-escaped values.

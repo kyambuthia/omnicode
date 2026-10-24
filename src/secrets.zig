@@ -6,6 +6,10 @@ const status = @import("status.zig");
 pub const max_secrets = 64;
 pub const max_name_len = 64;
 pub const max_val_len = 512;
+// A full vault can expand sixfold when JSON escapes control bytes.
+pub const max_file_bytes = 256 * 1024;
+const vault_version_prefix = "# Omnicode secrets vault v";
+const vault_header = "# Omnicode secrets vault v2 (0600, JSON values; managed by /secrets)";
 
 pub fn validSecretName(name: []const u8) bool {
     if (name.len == 0 or name.len > max_name_len) return false;
@@ -77,7 +81,7 @@ pub const Secrets = struct {
 
     pub fn load(self: *Secrets, a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *const std.process.Environ.Map) !void {
         const path = try secretsPath(a, env);
-        const text = dir.readFileAlloc(io, path, a, .limited(64 * 1024)) catch |err| switch (err) {
+        const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes)) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
         };
@@ -90,9 +94,11 @@ pub const Secrets = struct {
             if (parent.len > 0) try dir.createDirPath(io, parent);
         }
         var out: Io.Writer.Allocating = .init(a);
-        try out.writer.writeAll("# Omnicode secrets vault (0600, managed by /secrets)\n");
+        try out.writer.writeAll(vault_header ++ "\n");
         for (0..self.count) |i| {
-            try out.writer.print("{s}={s}\n", .{ self.nameAt(i), self.valAt(i) });
+            try out.writer.print("{s}=", .{self.nameAt(i)});
+            try std.json.Stringify.value(self.valAt(i), .{}, &out.writer);
+            try out.writer.writeByte('\n');
         }
         const data = try out.toOwnedSlice();
         try @import("storage.zig").writePrivate(io, dir, path, data);
@@ -106,6 +112,15 @@ pub const Secrets = struct {
     }
 
     fn parseLinesInto(self: *Secrets, text: []const u8) !usize {
+        var json_values = false;
+        var headers = std.mem.splitScalar(u8, text, '\n');
+        while (headers.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t\r");
+            if (std.mem.startsWith(u8, line, vault_version_prefix)) {
+                if (!std.mem.eql(u8, line, vault_header)) return error.InvalidSecretFile;
+                json_values = true;
+            }
+        }
         var added: usize = 0;
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |raw| {
@@ -115,10 +130,20 @@ pub const Secrets = struct {
             const eq = std.mem.indexOfScalar(u8, line, '=') orelse return error.InvalidSecretFile;
             const name = std.mem.trim(u8, line[0..eq], " \t");
             var val = std.mem.trim(u8, line[eq + 1 ..], " \t");
+            if (!validSecretName(name)) return error.InvalidSecretName;
+            if (json_values) {
+                const decoded = std.json.parseFromSlice([]const u8, std.heap.page_allocator, val, .{}) catch |err| switch (err) {
+                    error.OutOfMemory => return err,
+                    else => return error.InvalidSecretFile,
+                };
+                defer decoded.deinit();
+                try self.setMemory(name, decoded.value);
+                added += 1;
+                continue;
+            }
             if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
                 val = val[1 .. val.len - 1];
             }
-            if (!validSecretName(name)) return error.InvalidSecretName;
             if (val.len == 0) continue;
             try self.setMemory(name, val);
             added += 1;
@@ -271,7 +296,7 @@ pub const Secrets = struct {
         if (std.mem.eql(u8, sub, "load")) {
             const file_path = std.mem.trim(u8, parts.rest(), " \t");
             if (file_path.len == 0) return error.InvalidSecretsCommand;
-            const text = try dir.readFileAlloc(io, file_path, a, .limited(64 * 1024));
+            const text = try dir.readFileAlloc(io, file_path, a, .limited(max_file_bytes));
             var next = self.*;
             const count = try next.parseLines(text);
             const message = try std.fmt.allocPrint(a, "Loaded {d} secret(s) from {s} (values hidden).", .{ count, file_path });
@@ -418,4 +443,59 @@ test "vault parsing applies a complete file or leaves memory unchanged" {
     try std.testing.expectEqual(1, secrets.count);
     try std.testing.expectEqual(1, try secrets.parseLines("# comment\n\nEMPTY=\nexport NEW_TOKEN='new-value'\n"));
     try std.testing.expectEqual(2, secrets.count);
+}
+
+test "versioned vault preserves exact values and imports legacy files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_SECRETS", "vault.env");
+    var secrets: Secrets = .{};
+    const values = [_][]const u8{ "\"literal quotes\"", "'single quotes'", " leading and trailing ", "C:\\tokens\\private", "tab\there", "control\x01value", "binary\xffvalue", "utf8 café", "#hash=equals" };
+    for (values, 0..) |value, i| {
+        const name = try std.fmt.allocPrint(a, "TOKEN_{d}", .{i});
+        try secrets.setMemory(name, value);
+    }
+    try secrets.save(a, io, tmp.dir, &env);
+    var loaded: Secrets = .{};
+    try loaded.load(a, io, tmp.dir, &env);
+    try std.testing.expectEqual(values.len, loaded.count);
+    for (values, 0..) |value, i| try std.testing.expectEqualStrings(value, loaded.valAt(i));
+    var legacy: Secrets = .{};
+    _ = try legacy.parseLines("# Omnicode secrets vault (0600, managed by /secrets)\nexport TOKEN='\"literal quotes\"'\n");
+    try legacy.save(a, io, tmp.dir, &env);
+    loaded = .{};
+    try loaded.load(a, io, tmp.dir, &env);
+    try std.testing.expectEqualStrings("\"literal quotes\"", loaded.valAt(0));
+    try std.testing.expectError(error.InvalidSecretFile, loaded.parseLines(vault_header ++ "\nNEW=\"first\"\nBAD=not-json\n"));
+    try std.testing.expectEqual(1, loaded.count);
+    try std.testing.expectError(error.InvalidSecretFile, loaded.parseLines("# Omnicode secrets vault v99\nTOKEN=value\n"));
+}
+
+test "full vault of maximally escaped values can be saved and reloaded" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_SECRETS", "vault.env");
+    var secrets: Secrets = .{};
+    const value: [max_val_len]u8 = @splat(1);
+    for (0..max_secrets) |i| {
+        const name = try std.fmt.allocPrint(a, "TOKEN_{d}", .{i});
+        try secrets.setMemory(name, &value);
+    }
+    try secrets.save(a, io, tmp.dir, &env);
+    const encoded = try tmp.dir.readFileAlloc(io, "vault.env", a, .limited(max_file_bytes));
+    try std.testing.expect(encoded.len > 64 * 1024);
+    var loaded: Secrets = .{};
+    try loaded.load(a, io, tmp.dir, &env);
+    try std.testing.expectEqual(max_secrets, loaded.count);
+    for (0..max_secrets) |i| try std.testing.expectEqualStrings(&value, loaded.valAt(i));
 }
