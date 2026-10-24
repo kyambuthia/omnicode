@@ -78,6 +78,7 @@ fn sendVoiceRequest(a: std.mem.Allocator, io: std.Io, url: []const u8, body: []c
 
 /// Read an audio file, base64-encode it, and transcribe via a cheap OpenRouter audio model.
 pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, route: Route, path: []const u8, ui: Ui) ![]const u8 {
+    try @import("storage.zig").validatePath(path);
     var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer scratch.deinit();
     const sa = scratch.allocator();

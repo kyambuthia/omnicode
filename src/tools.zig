@@ -64,7 +64,7 @@ pub const Context = struct {
     env: ?*const std.process.Environ.Map = null,
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
-        try validatePath(path);
+        try @import("storage.zig").validatePath(path);
         return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024));
     }
 
@@ -92,7 +92,7 @@ pub const Context = struct {
             const content = try j.str(args, "content");
             if (content.len > 1024 * 1024) return error.StreamTooLong;
             const path = try j.str(args, "path");
-            try validatePath(path);
+            try @import("storage.zig").validatePath(path);
             try c.dir.writeFile(c.io, .{ .sub_path = path, .data = content });
             return "ok";
         }
@@ -306,10 +306,6 @@ pub fn capCommandOutput(a: j.Allocator, full: []const u8) ![]const u8 {
     var tail_start = full.len - (limit - head - marker.len);
     while (tail_start < full.len and !std.unicode.utf8ValidateSlice(full[tail_start..])) tail_start += 1;
     return std.fmt.allocPrint(a, "{s}{s}{s}", .{ full[0..head], marker, full[tail_start..] });
-}
-
-fn validatePath(path: []const u8) !void {
-    if (std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPath;
 }
 
 pub fn validName(name: []const u8) bool {

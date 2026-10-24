@@ -883,6 +883,23 @@ class Integration(unittest.TestCase):
         self.assertIn("    4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
+    def test_nul_voice_and_secret_import_paths_fail_without_io_side_effects(self):
+        secret = "must-not-import-private-token"
+        (self.cwd / "import.env").write_text(f"TOKEN={secret}\n")
+        (self.cwd / "clip.wav").write_bytes(b"RIFFfixtureWAVE")
+        result = self.run_agent(stdin=(
+            "/voice clip.wav\x00suffix.wav\n"
+            "/secrets load import.env\x00suffix\n"
+            "/secrets\n/q\n"
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("InvalidPath"), 2)
+        self.assertIn("no custom secrets stored", result.stdout)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assertFalse((self.cwd / ".config/omnicode/secrets.env").exists())
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.catalog_requests, [])
+
     def test_nul_tool_arguments_fail_without_side_effects_and_recover(self):
         (self.cwd / "file").write_text("original")
         def reply(_):

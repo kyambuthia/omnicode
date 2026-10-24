@@ -211,7 +211,8 @@ tail. Review output retains the overall verdict within its 64 KiB limit. A criti
 passes only with an exact final `VERDICT: PASS` line; turn-limit reports and
 reports containing `VERDICT: FAIL` are treated as failures.
 
-File tools reject NUL bytes in paths, and command tools (`bash`, `glob`, `grep`)
+File tools, voice input, secret imports, and private state writes reject NUL bytes
+in paths. Command tools (`bash`, `glob`, `grep`)
 reject NUL bytes in subprocess arguments before executing. Malformed arguments
 return tool errors instead of truncating a command/path or crashing the session.
 File contents remain length-delimited and may contain NUL bytes.

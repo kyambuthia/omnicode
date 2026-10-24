@@ -351,6 +351,7 @@ pub const Ui = struct {
             error.ModelUnavailable => "No eligible model in the live catalog. Check model overrides and MODELS_URL.",
             error.InvalidCatalog => "Invalid model catalog; inference was blocked.",
             error.FreeRequiresOpenRouter => "--free requires OpenRouter.",
+            error.InvalidPath => "File paths cannot contain NUL bytes. Remove the embedded NUL and retry.",
             error.Timeout => "The operation timed out. Check connectivity or narrow the task.",
             error.HistoryLimit, error.TurnLimit => "Conversation limit reached. Start a smaller task.",
             error.IncompleteResponse => "Model response was incomplete; no tools in that response were run.",

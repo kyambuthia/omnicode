@@ -296,6 +296,7 @@ pub const Secrets = struct {
         if (std.mem.eql(u8, sub, "load")) {
             const file_path = std.mem.trim(u8, parts.rest(), " \t");
             if (file_path.len == 0) return error.InvalidSecretsCommand;
+            try @import("storage.zig").validatePath(file_path);
             const text = try dir.readFileAlloc(io, file_path, a, .limited(max_file_bytes));
             var next = self.*;
             const count = try next.parseLines(text);
