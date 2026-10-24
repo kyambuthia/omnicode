@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the built binary with a local Messages server; no real keys or API calls."""
 import json
+import fcntl
 import os
+import struct
 import pty
 import select
 import termios
@@ -93,6 +95,36 @@ class Integration(unittest.TestCase):
     def run_agent(self, *args, stdin=None):
         return subprocess.run([str(BINARY), *args], input=stdin, text=True,
                               capture_output=True, cwd=self.cwd, env=self.env, timeout=15)
+
+    def run_pty(self, stdin, cols=0):
+        """Run with stdout on a pseudo-terminal (stdin piped); return decoded output."""
+        master, slave = pty.openpty()
+        if cols:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, cols, 0, 0))
+        try:
+            proc = subprocess.Popen([str(BINARY)], stdin=subprocess.PIPE, stdout=slave, stderr=slave,
+                                    cwd=self.cwd, env=self.env)
+            os.close(slave)
+            slave = None
+            try:
+                proc.communicate(stdin, timeout=15)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+            chunks = []
+            while True:
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError:
+                    break
+                if not chunk: break
+                chunks.append(chunk)
+            self.assertEqual(proc.returncode, 0, b"".join(chunks).decode(errors="replace"))
+            return b"".join(chunks).decode()
+        finally:
+            os.close(master)
+            if slave is not None: os.close(slave)
 
     def skill(self):
         path = self.cwd / ".omnicode/skills/check/SKILL.md"
@@ -515,6 +547,34 @@ class Integration(unittest.TestCase):
                         proc.wait()
                     os.close(slave)
                     os.close(master)
+
+    def test_status_line_model_directory_time_and_modes(self):
+        self.env.update(TERM="xterm-256color", TZ="UTC")
+        self.env.pop("NO_COLOR", None)
+        (self.cwd / "nested").mkdir()
+        self.cwd = self.cwd / "nested"
+        output = self.run_pty(b"list files\n/model anthropic pinned-model\n/status title\n/status off\n/status bogus\n/q\n", cols=100)
+        lines = [l for l in output.replace("\r", "").split("\n") if " · " in l and "anthropic" in l and "~" in l]
+        self.assertGreaterEqual(len(lines), 2, output)
+        self.assertRegex(lines[0], r"anthropic · auto · ~/nested · \d\d:\d\d")
+        self.assertIn("auto → fast-test-model", lines[1])
+        self.assertIn("anthropic · pinned-model · ~/nested", output)
+        self.assertIn("\x1b]0;omnicode · anthropic · pinned-model", output)
+        self.assertIn("\x1b[22;0t", output)
+        self.assertIn("\x1b[23;0t", output)
+        self.assertIn("usage: /status inline|title|off (current: off)", output)
+        # Width comes from the terminal, not COLUMNS; the line never exceeds it.
+        self.env["COLUMNS"] = "160"
+        output = self.run_pty(b"/q\n", cols=50)
+        status = [l for l in output.replace("\r", "").split("\n") if "anthropic · auto · " in l][0]
+        self.assertLessEqual(len(status.replace("\x1b[2m", "").replace("\x1b[0m", "")), 49)
+        # Plain output and OMNICODE_STATUS=off never print it; invalid modes are rejected.
+        result = self.run_agent(stdin="/q\n")
+        self.assertNotIn("anthropic · auto · ~", result.stdout)
+        self.env["OMNICODE_STATUS"] = "off"
+        self.assertNotIn("anthropic · auto · ~", self.run_pty(b"/q\n"))
+        self.env["OMNICODE_STATUS"] = "pinned-typo"
+        self.assertIn("InvalidStatusMode", self.run_agent(stdin="/q\n").stderr)
 
     def test_offline_commands_and_missing_key(self):
         self.skill()

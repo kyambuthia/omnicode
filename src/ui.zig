@@ -2,6 +2,7 @@ const std = @import("std");
 const j = @import("json.zig");
 const Io = std.Io;
 const Usage = @import("usage.zig").Usage;
+const status_line = @import("status.zig");
 
 /// Last tool result only: replacement bounds memory independently of conversation history.
 pub const Details = struct {
@@ -29,6 +30,7 @@ pub const Ui = struct {
     width: usize = 80,
     details: ?*Details = null,
     usage: ?*Usage = null,
+    status: ?*status_line.Status = null,
 
     pub fn init(out: *Io.Writer, io: Io, env: *const std.process.Environ.Map) Ui {
         const tty = Io.File.stdout().isTty(io) catch false;
@@ -38,7 +40,7 @@ pub const Ui = struct {
             .io = io,
             .interactive = tty and !dumb and env.get("NO_COLOR") == null,
             .color = tty and !dumb and env.get("NO_COLOR") == null,
-            .width = std.math.clamp(std.fmt.parseInt(usize, env.get("COLUMNS") orelse "80", 10) catch 80, 40, 160),
+            .width = if (tty) status_line.terminalWidth(env) else std.math.clamp(std.fmt.parseInt(usize, env.get("COLUMNS") orelse "80", 10) catch 80, 40, 160),
         };
     }
 
@@ -82,6 +84,36 @@ pub const Ui = struct {
         try ui.style("\x1b[1m");
         try ui.out.writeAll("› ");
         try ui.style("\x1b[0m");
+        try ui.out.flush();
+    }
+
+    /// One dim line above the prompt (or the terminal title); interactive terminals only.
+    pub fn statusBar(ui: Ui, provider: []const u8, model: []const u8, dir: []const u8) !void {
+        const s = ui.status orelse return;
+        if (!ui.interactive or s.mode == .off) return;
+        var time: [16]u8 = undefined;
+        const fields: status_line.Fields = .{
+            .provider = provider,
+            .model = model,
+            .dir = dir,
+            .time = s.clock.format(Io.Clock.real.now(ui.io).toSeconds(), &time),
+        };
+        if (s.mode == .title) {
+            try ui.out.writeAll("\x1b]0;omnicode ·");
+            try status_line.render(ui.out, 200, fields);
+            try ui.out.writeAll("\x07");
+            return;
+        }
+        try ui.style("\x1b[2m");
+        try status_line.render(ui.out, ui.width, fields);
+        try ui.style("\x1b[0m");
+        try ui.out.writeByte('\n');
+    }
+
+    /// Save/restore the terminal title around title mode (xterm title stack).
+    pub fn titleStack(ui: Ui, push: bool) !void {
+        if (!ui.interactive) return;
+        try ui.out.writeAll(if (push) "\x1b[22;0t" else "\x1b[23;0t");
         try ui.out.flush();
     }
 

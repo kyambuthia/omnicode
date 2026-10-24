@@ -43,6 +43,7 @@ pub const Agent = struct {
             route = try catalog.select(route, requested, @import("router.zig").complex(prompt));
         } else if (route.mode == .free) return error.FreeRequiresOpenRouter;
         if (route.model.len == 0) return error.EmptyModel;
+        if (ui.status) |status| status.setModel(route.model);
         const out = ui.out;
         const turn_start = Io.Clock.awake.now(self.context.io);
         var tool_count: usize = 0;

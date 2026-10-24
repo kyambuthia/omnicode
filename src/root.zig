@@ -4,6 +4,10 @@ pub const Details = @import("ui.zig").Details;
 pub const Ui = @import("ui.zig").Ui;
 pub const Agent = @import("agent.zig").Agent;
 pub const Context = @import("tools.zig").Context;
+pub const Status = @import("status.zig").Status;
+pub const Clock = @import("status.zig").Clock;
+pub const shortenHome = @import("status.zig").shortenHome;
+pub const terminalWidth = @import("status.zig").terminalWidth;
 pub const Route = @import("router.zig").Route;
 
 test {
@@ -13,4 +17,5 @@ test {
     _ = @import("agent.zig");
     _ = @import("ui.zig");
     _ = @import("usage.zig");
+    _ = @import("status.zig");
 }

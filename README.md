@@ -66,6 +66,7 @@ beyond those keywords; override the model for ambiguous work.
 | `OPENROUTER_API_KEY` | Key for OpenRouter requests |
 | `API_URL` | Optional **complete Messages endpoint URL**, primarily for local testing |
 | `MODELS_URL` | Optional OpenRouter model catalog URL (public metadata; the API key is never sent to it) |
+| `OMNICODE_STATUS` | Status line mode: `inline` (default), `title`, or `off` |
 
 ### Live catalog selection (OpenRouter)
 
@@ -108,6 +109,7 @@ REPL commands:
 | `/help` | Show commands and configuration |
 | `/model` | Show current routing mode and models |
 | `/verbose on` or `/verbose off` | Switch future tool output between full and compact previews |
+| `/status inline\|title\|off` | Show the status line above the prompt, in the terminal title, or not at all |
 | `/usage` | Show session token/cost totals, retained across clears and model changes |
 | `/details` | Recover the last tool result, up to 64 KiB; next tool call replaces it |
 | `/c` | Clear conversation and free session allocations |
@@ -141,10 +143,29 @@ boundary. It is replaced by the next tool result, including failures.
 
 Interactive terminals show a waiting indicator with elapsed seconds during
 model requests and tools. Color and animation are disabled when output is
-redirected, `TERM=dumb`, or `NO_COLOR` is set. `COLUMNS` controls preview width
-(default 80, clamped to 40–160). Terminal control characters from model text,
+redirected, `TERM=dumb`, or `NO_COLOR` is set. Preview width is the terminal's
+reported width, else `COLUMNS`, else 80, clamped to 40–160. Terminal control characters from model text,
 file contents, commands, and tool output are neutralized for display; the original
 tool results still go to the model. UTF-8 characters are never cut mid-sequence.
+
+### Status line
+
+Interactive terminals print one dim status line above each prompt:
+
+```text
+ openrouter · auto (cost-max) → z-ai/glm-4.6 · ~/Projects/omnicode · 10:25
+```
+
+It shows the provider; the pinned model, or the routing policy plus the model
+selected for the previous turn; the working directory (`$HOME` as `~`); and local
+time. Local time comes from `$TZ` or `/etc/localtime` (TZif); when no zone can be
+loaded the time is labeled `UTC`. Narrow terminals elide the directory first, then
+the model, then drop the time. Width is read from the terminal on every prompt,
+falling back to `COLUMNS`. `/status title` puts the same text in the terminal title
+(restored on exit via the xterm title stack), `/status off` hides it, and
+`OMNICODE_STATUS=inline|title|off` sets the startup mode. Plain output never
+prints it. Lines already in scrollback are not rewritten, so each records when that
+prompt was shown.
 
 The interface keeps normal terminal scrolling and copy/paste. Styled terminal
 responses emphasize Markdown headings and dim backtick fence markers; fenced

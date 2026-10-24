@@ -12,11 +12,12 @@ const help =
     \\  /model PROVIDER MODEL  Pin a model (clears conversation)
     \\  /skills, /skill NAME   List or load project instructions
     \\  /verbose on|off        Show full output for future tool calls
+    \\  /status inline|title|off  Status line: provider, model, directory, local time
     \\  /usage                 Show cumulative usage (survives /c and model changes)
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q or exit             Quit (Ctrl-D also exits)
-    \\Config: PROVIDER=anthropic|openrouter, MODEL, FAST_MODEL, API_URL, MODELS_URL
+    \\Config: PROVIDER=anthropic|openrouter, MODEL, FAST_MODEL, API_URL, MODELS_URL, OMNICODE_STATUS
     \\Keys: ANTHROPIC_API_KEY or OPENROUTER_API_KEY. Searches require rg.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
@@ -85,11 +86,23 @@ fn run(init: std.process.Init) !void {
         };
         return;
     }
-    try ui.banner(@tagName(route.provider), try std.process.currentPathAlloc(init.io, a));
+    const cwd = try std.process.currentPathAlloc(init.io, a);
+    try ui.banner(@tagName(route.provider), cwd);
+    var status: core.Status = .{ .clock = core.Clock.load(a, init.io, init.environ_map) };
+    if (init.environ_map.get("OMNICODE_STATUS")) |name| status.mode = core.Status.parseMode(name) orelse return error.InvalidStatusMode;
+    ui.status = &status;
+    const dir = try core.shortenHome(a, cwd, init.environ_map.get("HOME") orelse "");
+    if (status.mode == .title) try ui.titleStack(true);
+    defer if (status.mode == .title) ui.titleStack(false) catch {};
     var input_buffer: [16 * 1024]u8 = undefined;
     var input = std.Io.File.Reader.init(.stdin(), init.io, &input_buffer);
     var composer: core.Input = .{};
     while (true) {
+        if (ui.interactive) ui.width = core.terminalWidth(init.environ_map);
+        var label: [256]u8 = undefined;
+        const policy = if (route.provider == .anthropic) "auto" else if (mode == .free) "auto (free)" else "auto (cost-max)";
+        const model_label = if (!automatic) route.model else if (status.lastModel().len == 0) policy else std.fmt.bufPrint(&label, "{s} → {s}", .{ policy, status.lastModel() }) catch policy;
+        try ui.statusBar(@tagName(route.provider), model_label, dir);
         try ui.prompt();
         const value = composer.read(init.io, ui, &input.interface) catch |err| {
             if (err == error.InputCancelled) continue;
@@ -125,6 +138,18 @@ fn run(init: std.process.Init) !void {
                 try ui.route(@tagName(route.provider), route.model);
                 if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
             }
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/status") or std.mem.startsWith(u8, line, "/status ")) {
+            const selected = if (line.len > 8) core.Status.parseMode(std.mem.trim(u8, line[8..], " ")) else null;
+            const next = selected orelse {
+                try out.print("usage: /status inline|title|off (current: {s})\n", .{core.Status.modeName(status.mode)});
+                continue;
+            };
+            if (status.mode == .title and next != .title) try ui.titleStack(false);
+            if (status.mode != .title and next == .title) try ui.titleStack(true);
+            status.mode = next;
+            try ui.note(if (ui.interactive) "Status line updated." else "Status line applies to interactive terminals only.");
             continue;
         }
         if (std.mem.startsWith(u8, line, "/verbose")) {
