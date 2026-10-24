@@ -368,6 +368,20 @@ class Integration(unittest.TestCase):
                     until(b"\x1b[?2004h")
                     self.assertIn(b"^C", output)
                     output.clear()
+                    if finish == b"/q\r":
+                        payload = b"\x1b[200~" + b"x" * (16 * 1024 + 1) + b"\x1b[201~\r"
+                        def write_overflow():
+                            view = memoryview(payload)
+                            while view:
+                                view = view[os.write(master, view):]
+                        writer = threading.Thread(target=write_overflow, daemon=True)
+                        writer.start()
+                        until(b"InputTooLong")
+                        until(b"\x1b[?2004h")
+                        writer.join(timeout=2)
+                        self.assertFalse(writer.is_alive())
+                        self.assertEqual(self.requests, [])
+                        output.clear()
                     os.write(master, b"\x1b[200~explain first\r\nsecond\x1b[201~")
                     time.sleep(0.1)
                     self.assertEqual(len(self.requests), 0)
