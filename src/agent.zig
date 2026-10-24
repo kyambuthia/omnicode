@@ -79,7 +79,9 @@ pub const Agent = struct {
             }
             try out.flush();
             if (results.items.len == 0) {
-                try out.print("\n  Completed · {d}ms · {d} tool calls\n\n", .{ turn_start.durationTo(Io.Clock.awake.now(self.context.io)).toMilliseconds(), tool_count });
+                try out.writeAll("\n  Completed · ");
+                try ui.elapsed(turn_start);
+                try out.print(" · {d} tool {s}\n\n", .{ tool_count, if (tool_count == 1) "call" else "calls" });
                 return out.flush();
             }
             try self.history.append(a, .{ .role = "user", .content = .{ .array = results.toManaged(a) } });

@@ -65,8 +65,8 @@ flowchart LR
     C --> D[Mock API acceptance and docs]
 ```
 
-The implementation uses roughly 600 physical lines of Zig including unit tests
-and build configuration. Integration tests are separate Python standard-library
+The initial implementation used roughly 600 physical lines of Zig including unit
+tests and build configuration. Integration tests are separate Python standard-library
 code. Minimize future growth by adding capabilities to the existing tool registry
 and routing policy before introducing new layers.
 
@@ -79,3 +79,27 @@ loading a skill, editing the fixture, and executing its verification command.
 Live testing exposed an extra numbered line after a trailing newline; the read
 tool now preserves actual blank lines without inventing an EOF line, with
 regression coverage for empty files and trailing newlines.
+
+## Terminal UI increment
+
+Borrow interaction patterns from Codex; implement them directly in Zig, without
+porting its Rust renderer or introducing a terminal framework.
+
+| Codex pattern | Omnicode adaptation |
+|---|---|
+| [Command cells and head/tail previews](https://github.com/openai/codex/blob/main/codex-rs/tui/src/exec_cell/render.rs) | Tool arguments, completion state/timing, first three/last two lines, explicit omission counts, full-output toggle |
+| [Live status row](https://github.com/openai/codex/blob/main/codex-rs/tui/src/status_indicator_widget.rs) | A single waiting line with elapsed seconds, cleared when the operation finishes |
+| [Diff presentation](https://github.com/openai/codex/blob/main/codex-rs/tui/src/diff_render.rs) | Red/green old/new replacement snippets after successful edits |
+| [Composer help and command discovery](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs) | Startup hints, explicit `/help`, routing status, and verbose-output controls |
+
+Keep the transcript in normal terminal scrollback. No raw-mode input, alternate
+screen, or keyboard shortcut claims that the implementation cannot fulfill.
+Honor `NO_COLOR`, redirected output, and dumb terminals. Sanitize untrusted
+terminal controls and preserve UTF-8 boundaries. Preserve tool data sent to the
+model; display formatting belongs in a small standalone renderer.
+
+Verification: unit tests plus integration tests with real pseudo-terminals,
+both styled and `NO_COLOR`. Include delayed responses to exercise the waiting
+indicator, malformed tool results, compact/full output, and edit/failure display.
+Live OpenRouter verification also completed read/edit/command calls with the new
+transcript, and the edited fixture contents were checked directly.

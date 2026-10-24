@@ -65,8 +65,47 @@ REPL commands:
 | `/model auto` | Restore environment/default routing and clear history |
 | `/skills` | List local skills |
 | `/skill NAME` | Add that skill's instructions to the conversation |
+| `/help` | Show commands and configuration |
+| `/model` | Show current routing mode and models |
+| `/verbose on` or `/verbose off` | Switch future tool output between full and compact previews |
 | `/c` | Clear conversation and free session allocations |
 | `/q` or `exit` | Quit |
+
+## Terminal interface
+
+The terminal keeps a scrollable transcript, with model responses separated from
+tool activity. Tool entries show the file, search pattern, skill, or command,
+followed by success/failure and elapsed time. Successful edits preview the exact
+old/new replacement with `-` and `+`; these are replacement snippets, not a full
+file diff. Writes report bytes written.
+
+```text
+• edit  src/example.zig
+  ✓ Done · 1ms
+    - return 1;
+    + return 2;
+
+• bash  zig build test
+  ✓ Done · 142ms
+    All tests passed.
+```
+
+Compact output retains the first three and last two lines, with an explicit
+hidden-line count. Long preview lines end in `...`. Use `--verbose` before a
+one-shot prompt, or `/verbose on` in the REPL, to show full output for subsequent
+tool calls (within the tool's existing collection limits).
+
+Interactive terminals show a waiting indicator with elapsed seconds during
+model requests and tools. Color and animation are disabled when output is
+redirected, `TERM=dumb`, or `NO_COLOR` is set. `COLUMNS` controls preview width
+(default 80, clamped to 40–160). Terminal control characters from model text,
+file contents, commands, and tool output are neutralized for display; the original
+tool results still go to the model. UTF-8 characters are never cut mid-sequence.
+
+The interface keeps normal terminal scrolling and copy/paste. It uses canonical
+line input; a full-screen composer, input-history navigation, and streaming model
+text are outside this increment. Codex design references are recorded in
+[ROADMAP.md](ROADMAP.md#terminal-ui-increment).
 
 ## Skills
 
@@ -137,7 +176,9 @@ The Python standard-library integration suite runs the actual binary in temporar
 workspaces against a loopback mock Messages server, with fake keys and no paid
 API calls. It covers both routes/authentication, every tool, skill discovery and
 loading, history, model overrides, error recovery, malformed/truncated responses,
-HTTP failures, loop limits and size limits. Unit tests cover routing, real file
+HTTP failures, loop limits and size limits. Pseudo-terminal tests cover styling,
+waiting indicators, `NO_COLOR`, compact/full previews, and control sanitization.
+Unit tests cover routing, real file
 edits, skill-name validation, process timeouts and output overflow.
 
 See [ROADMAP.md](ROADMAP.md) for the implementation sequence and primary references.

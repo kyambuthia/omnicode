@@ -218,7 +218,7 @@ class Integration(unittest.TestCase):
         self.assertIn("✓ Done", compact.stdout)
         self.assertIn("3 lines hidden", compact.stdout)
         self.assertIn("last", compact.stdout)
-        self.assertIn("1 tool calls", compact.stdout)
+        self.assertIn("1 tool call", compact.stdout)
         self.assertNotIn("\x1b", compact.stdout)
         verbose = self.run_agent("--verbose", "list files")
         self.assertEqual(verbose.returncode, 0, verbose.stderr)

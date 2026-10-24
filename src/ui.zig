@@ -170,7 +170,9 @@ pub const Ui = struct {
 
     pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp) !void {
         try ui.style(if (failed) "\x1b[31m" else "\x1b[32m");
-        try ui.out.print("  {s} · {d}ms\n", .{ if (failed) "✗ Failed" else "✓ Done", start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds() });
+        try ui.out.print("  {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
+        try ui.elapsed(start);
+        try ui.out.writeByte('\n');
         try ui.style("\x1b[0m");
         if (!failed and std.mem.eql(u8, name, "edit")) {
             try ui.style("\x1b[31m");
@@ -182,6 +184,11 @@ pub const Ui = struct {
             try ui.out.print("    {d} bytes written\n", .{(try j.str(args, "content")).len});
         } else try ui.preview(result, "");
         try ui.out.flush();
+    }
+
+    pub fn elapsed(ui: Ui, start: Io.Timestamp) !void {
+        const ms = start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds();
+        if (ms < 1000) try ui.out.print("{d}ms", .{ms}) else try ui.out.print("{d}.{d}s", .{ @divTrunc(ms, 1000), @divTrunc(@mod(ms, 1000), 100) });
     }
 
     pub fn errorMessage(ui: Ui, err: anyerror) !void {
@@ -205,9 +212,11 @@ test "previews keep head and tail, preserve UTF-8, and neutralize terminal escap
     const ui: Ui = .{ .out = &writer, .io = std.testing.io, .width = 40 };
     try ui.preview("first\n2\n3\n4\n5\n6\nlast", "");
     try ui.preview("雪\x1b[2J\rhidden", "");
+    try ui.safe("é😊", 1);
     const text = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, text, "2 lines hidden") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "last") != null);
     try std.testing.expect(std.mem.indexOfScalar(u8, text, 27) == null);
     try std.testing.expect(std.unicode.utf8ValidateSlice(text));
+    try std.testing.expect(std.mem.endsWith(u8, text, "é..."));
 }
