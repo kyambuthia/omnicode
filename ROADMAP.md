@@ -52,5 +52,5 @@ an LLM-based routing classifier, MCP, persisted sessions, or full YAML parser.
 - [x] Inspect template, reference implementation, installed Zig APIs and API docs.
 - [x] Router and foundation (route tests and build pass).
 - [x] Tools and skills (real file, skill, deadline and output-limit tests).
-- [ ] Agent and CLI.
+- [x] Agent and CLI (build, unit tests, offline help and skill listing pass).
 - [ ] Acceptance and documentation.
