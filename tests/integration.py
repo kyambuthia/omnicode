@@ -28,16 +28,35 @@ def tools(*calls):
     return {"stop_reason": "tool_use", "content": list(calls)}
 
 
+def model(id, prompt="0.000001", completion="0.000002", **pricing):
+    return {"id": id, "pricing": dict(prompt=prompt, completion=completion, **pricing),
+            "context_length": 65536, "supported_parameters": ["tools"],
+            "architecture": {"output_modalities": ["text"]}}
+
+
 class Integration(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.cwd = Path(self.tmp.name)
         self.requests = []
+        self.catalog_requests = []
+        self.catalog_status = 200
+        self.catalog = {"data": [model("strong-test-model"), model("fast-test-model"), model("pinned-model"),
+                                 model("openai/gpt-4.1-mini", "0.0000004", "0.0000016"),
+                                 model("unpriced-custom", overrides=[{"prompt": "0.1"}])]}
         self.reply = lambda _: text()
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                outer.catalog_requests.append((self.path, dict(self.headers)))
+                data = json.dumps(outer.catalog).encode()
+                self.send_response(outer.catalog_status)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 outer.requests.append((body, {k.lower(): v for k, v in self.headers.items()}))
@@ -67,6 +86,7 @@ class Integration(unittest.TestCase):
             "OPENROUTER_API_KEY": "fake-openrouter",
             "MODEL": "strong-test-model",
             "FAST_MODEL": "fast-test-model",
+            "MODELS_URL": f"http://127.0.0.1:{self.server.server_port}/models",
             "API_URL": f"http://127.0.0.1:{self.server.server_port}/v1/messages",
         }
 
@@ -95,6 +115,65 @@ class Integration(unittest.TestCase):
                 else:
                     self.assertEqual(headers["authorization"], "Bearer fake-openrouter")
                     self.assertNotIn("x-api-key", headers)
+
+    def test_live_cost_selection_and_refresh(self):
+        self.env["PROVIDER"] = "openrouter"
+        self.env.pop("MODEL")
+        self.env.pop("FAST_MODEL")
+        self.catalog = {"data": [model("z-ai/glm-test", "0.0000002", "0.00000015"),
+                                  model("deepseek/test", "0.00000001", "0.0000003")]}
+        result = self.run_agent("--cost-max", "lookup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][0]["model"], "deepseek/test")
+        self.assertIn("catalog $0.0100 in / $0.3000 out", result.stdout)
+        result = self.run_agent("fix code")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][0]["model"], "z-ai/glm-test")
+        self.catalog["data"][0]["pricing"]["completion"] = "0.00003"
+        self.run_agent("fix code")
+        self.assertEqual(self.requests[-1][0]["model"], "deepseek/test")
+        self.assertEqual(len(self.catalog_requests), 3)
+        self.assertTrue(all("Authorization" not in headers for _, headers in self.catalog_requests))
+        self.assertEqual(self.requests[-1][0]["provider"]["sort"], "price")
+        self.assertNotIn("max_price", self.requests[-1][0]["provider"])
+
+    def test_free_mode_guards_every_continuation(self):
+        self.env.pop("MODEL")
+        self.env.pop("FAST_MODEL")
+        self.catalog["data"].extend([model("paid-fee:free", "0", "0", request="0.01"),
+                                     model("available/tool:free", "0", "0")])
+        self.reply = lambda _: tools(call("bash", {"cmd": "printf free"})) if len(self.requests) == 1 else text()
+        result = self.run_agent("--verbose", "--free", "fix code")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 2)
+        for body, _ in self.requests:
+            self.assertEqual(body["model"], "available/tool:free")
+            self.assertEqual(body["provider"]["max_price"], {"prompt": 0, "completion": 0, "request": 0, "image": 0})
+            self.assertTrue(body["provider"]["require_parameters"])
+            self.assertNotIn("models", body)
+            self.assertNotIn("fallbacks", body)
+        self.assertEqual(len(self.catalog_requests), 1)
+        self.assertIn("--free", result.stdout)
+
+    def test_free_mode_fails_closed_for_paid_overrides_and_catalog_errors(self):
+        for mode in ("paid override", "no free models", "catalog unavailable", "invalid catalog"):
+            with self.subTest(mode=mode):
+                self.env.pop("MODEL", None)
+                self.env.pop("FAST_MODEL", None)
+                self.catalog_status = 200
+                self.catalog = {"data": [model("available/tool:free", "0", "0")]}
+                if mode == "paid override":
+                    self.catalog["data"].append(model("paid/model"))
+                    self.env["FAST_MODEL"] = "paid/model"
+                if mode == "no free models": self.catalog = {"data": [model("paid/model")]}
+                if mode == "catalog unavailable": self.catalog_status = 503
+                if mode == "invalid catalog": self.catalog = {"data": {}}
+                result = self.run_agent("--free", "hello")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.requests, [])
+        result = self.run_agent("--free", "--cost-max", "hello")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ConflictingOptions", result.stderr)
 
     def test_all_tools_and_skill_round_trip(self):
         self.skill()

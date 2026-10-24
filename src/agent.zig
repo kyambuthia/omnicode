@@ -4,6 +4,7 @@ const tools = @import("tools.zig");
 const Route = @import("router.zig").Route;
 const Io = std.Io;
 const Usage = @import("usage.zig").Usage;
+const Catalog = @import("catalog.zig").Catalog;
 const Ui = @import("ui.zig").Ui;
 const max_bytes = 2 * 1024 * 1024;
 const Message = struct { role: []const u8, content: j.Value };
@@ -32,7 +33,15 @@ pub const Agent = struct {
 
     pub fn respond(self: *Agent, prompt: []const u8, ui: Ui) !void {
         const a = self.context.a;
-        const route = if (self.automatic) self.route.forTask(self.env, prompt) else self.route;
+        var route = if (self.automatic) self.route.forTask(self.env, prompt) else self.route;
+        var metadata = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer metadata.deinit();
+        if (route.provider == .openrouter) {
+            if (route.key.len == 0) return error.MissingApiKey;
+            const catalog = try ui.work("Refreshing model catalog...", Catalog.load, .{ metadata.allocator(), self.context.io, self.env });
+            const requested = if (self.automatic) self.env.get(if (@import("router.zig").complex(prompt)) "MODEL" else "FAST_MODEL") else self.route.model;
+            route = try catalog.select(route, requested, @import("router.zig").complex(prompt));
+        } else if (route.mode == .free) return error.FreeRequiresOpenRouter;
         if (route.model.len == 0) return error.EmptyModel;
         const out = ui.out;
         const turn_start = Io.Clock.awake.now(self.context.io);
@@ -42,18 +51,30 @@ pub const Agent = struct {
             ui.usageSummary(usage, "Turn") catch {};
         };
         try ui.route(@tagName(route.provider), route.model);
+        if (route.price) |price| {
+            try out.print("  --{s} · catalog ${d:.4} in / ${d:.4} out per 1M tokens{s}\n", .{
+                if (route.mode == .free) "free" else "cost-max",      price.input * 1_000_000, price.output * 1_000_000,
+                if (price.variable) " (variable base rates)" else "",
+            });
+        }
         try self.history.append(a, .{ .role = "user", .content = .{ .string = try a.dupe(u8, prompt) } });
         for (0..32) |_| {
             if (self.history.items.len > 128) return error.HistoryLimit;
             var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer scratch.deinit();
-            const body = try j.encode(scratch.allocator(), .{
+            const sa = scratch.allocator();
+            var payload = try j.parse(sa, try j.encode(sa, .{
                 .model = route.model,
                 .max_tokens = 8192,
                 .system = self.system,
                 .messages = self.history.items,
                 .tools = self.schemas,
-            });
+            }));
+            if (route.provider == .openrouter) try payload.object.put(sa, "provider", try j.parse(sa, if (route.mode == .free)
+                "{\"sort\":\"price\",\"require_parameters\":true,\"max_price\":{\"prompt\":0,\"completion\":0,\"request\":0,\"image\":0}}"
+            else
+                "{\"sort\":\"price\",\"require_parameters\":true}"));
+            const body = try j.encode(sa, payload);
             if (body.len > max_bytes) return error.HistoryLimit;
             const response = try ui.work("Thinking...", Agent.request, .{ self, route, body });
             const delta = Usage.response(response, route);

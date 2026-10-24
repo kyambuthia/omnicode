@@ -1,8 +1,10 @@
 const std = @import("std");
 const core = @import("omnicode");
 const help =
-    \\omnicode [--verbose] [prompt ...]       Run a task, or start a REPL without arguments.
+    \\omnicode [--free|--cost-max] [--verbose] [prompt ...]       Run a task, or start a REPL without arguments.
     \\omnicode --skills          List project skills without an API call.
+    \\--cost-max (default)      Optimize live OpenRouter catalog prices
+    \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
     \\  /model                 Show the current routing mode
@@ -14,7 +16,7 @@ const help =
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q or exit             Quit (Ctrl-D also exits)
-    \\Config: PROVIDER=anthropic|openrouter, MODEL, FAST_MODEL, API_URL
+    \\Config: PROVIDER=anthropic|openrouter, MODEL, FAST_MODEL, API_URL, MODELS_URL
     \\Keys: ANTHROPIC_API_KEY or OPENROUTER_API_KEY. Searches require rg.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
@@ -39,9 +41,23 @@ fn run(init: std.process.Init) !void {
     var usage: core.Usage = .{};
     ui.usage = &usage;
     var first: usize = 1;
-    if (args.len > first and std.mem.eql(u8, args[first], "--verbose")) {
-        ui.verbose = true;
-        first += 1;
+    var mode: @FieldType(core.Route, "mode") = .cost_max;
+    var policy_set = false;
+    while (first < args.len) : (first += 1) {
+        const arg = args[first];
+        if (std.mem.eql(u8, arg, "--verbose")) {
+            ui.verbose = true;
+        } else if (std.mem.eql(u8, arg, "--free") or std.mem.eql(u8, arg, "--cost-max")) {
+            const selected: @TypeOf(mode) = if (std.mem.eql(u8, arg, "--free")) .free else .cost_max;
+            if (policy_set and selected != mode) return error.ConflictingOptions;
+            mode = selected;
+            policy_set = true;
+        } else if (std.mem.eql(u8, arg, "--")) {
+            first += 1;
+            break;
+        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--skills")) {
+            return error.UnknownOption;
+        } else break;
     }
     if (args.len > first and (std.mem.eql(u8, args[first], "--help") or std.mem.eql(u8, args[first], "-h"))) {
         try out.writeAll(help);
@@ -53,7 +69,8 @@ fn run(init: std.process.Init) !void {
         try ui.skills(skills);
         return out.flush();
     }
-    var route = try core.Route.init(init.environ_map, null, null);
+    var route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
+    route.mode = mode;
     var automatic = true;
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
@@ -99,9 +116,13 @@ fn run(init: std.process.Init) !void {
             continue;
         }
         if (std.mem.eql(u8, line, "/model")) {
-            try ui.note(if (automatic) "Automatic routing: economical fast models for lookups, coding models for development." else "Pinned model (automatic routing disabled).");
-            try ui.route(@tagName(route.provider), route.model);
-            if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
+            try ui.note(if (mode == .free) "--free: live zero-price tool models only; paid overrides are rejected." else "--cost-max (default): optimize live catalog prices within the ranked candidate pool.");
+            if (automatic and route.provider == .openrouter) {
+                try ui.note("Automatic model selection refreshes from OpenRouter before each turn.");
+            } else {
+                try ui.route(@tagName(route.provider), route.model);
+                if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
+            }
             continue;
         }
         if (std.mem.startsWith(u8, line, "/verbose")) {
@@ -116,7 +137,7 @@ fn run(init: std.process.Init) !void {
             var parts = std.mem.tokenizeScalar(u8, line[7..], ' ');
             const provider = parts.next() orelse continue;
             if (std.mem.eql(u8, provider, "auto") and parts.next() == null) {
-                route = try core.Route.init(init.environ_map, null, null);
+                route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
                 automatic = true;
             } else {
                 const model = parts.next() orelse {
@@ -125,6 +146,10 @@ fn run(init: std.process.Init) !void {
                 };
                 if (parts.next() != null) {
                     try out.writeAll("too many model arguments\n");
+                    continue;
+                }
+                if (mode == .free and !std.mem.eql(u8, provider, "openrouter")) {
+                    try ui.note("--free requires OpenRouter; provider switch rejected.");
                     continue;
                 }
                 route = core.Route.init(init.environ_map, provider, try a.dupe(u8, model)) catch |err| {
@@ -156,6 +181,7 @@ fn run(init: std.process.Init) !void {
             if (agent.history.items.len != 0 and agent.history.items.len <= 128) continue;
         }
         _ = arena.reset(.free_all);
+        route.mode = mode;
         agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io }, init.environ_map, route);
         agent.automatic = automatic;
         try out.writeAll("Conversation cleared.\n");
