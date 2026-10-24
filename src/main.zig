@@ -17,6 +17,8 @@ const help =
     \\  /context               Show conversation message and byte budget
     \\  /compact [focus]       Summarize older context on the fast model
     \\  /todo                  Show current session checklist
+    \\  /save [name]           Save session under .omnicode/sessions/ (default: latest)
+    \\  /resume [name]         Resume saved session (default: latest)
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q or exit             Quit (Ctrl-D also exits)
@@ -158,6 +160,33 @@ fn run(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, line, "/todo")) {
             try ui.preview(if (todo.len == 0) "(empty todo list)" else todo.slice(), "");
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/save") or std.mem.startsWith(u8, line, "/save ")) {
+            const raw = if (line.len > 6) std.mem.trim(u8, line[6..], " \t") else "";
+            const name = if (raw.len > 0) raw else "latest";
+            agent.saveSession(name) catch |err| {
+                try out.print("error: {s}\n", .{@errorName(err)});
+                continue;
+            };
+            try ui.note("Session saved.");
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/resume") or std.mem.startsWith(u8, line, "/resume ")) {
+            const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
+            const name = if (raw.len > 0) raw else "latest";
+            var fresh = std.heap.ArenaAllocator.init(init.gpa);
+            var candidate = try core.Agent.init(.{ .a = fresh.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo }, init.environ_map, route);
+            candidate.automatic = automatic;
+            candidate.loadSession(name) catch |err| {
+                fresh.deinit();
+                try out.print("error: {s}\n", .{@errorName(err)});
+                continue;
+            };
+            arena.deinit();
+            arena = fresh;
+            agent = candidate;
+            try ui.note("Session resumed.");
             continue;
         }
         if (std.mem.eql(u8, line, "/skills")) {

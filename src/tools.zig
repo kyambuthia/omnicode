@@ -177,7 +177,7 @@ pub const Context = struct {
     }
 };
 
-fn validName(name: []const u8) bool {
+pub fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > 64) return false;
     for (name) |ch| if (!std.ascii.isAlphanumeric(ch) and ch != '-' and ch != '_') return false;
     return true;

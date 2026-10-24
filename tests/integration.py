@@ -428,6 +428,13 @@ class Integration(unittest.TestCase):
         self.assertIn("first step", final_msgs[0]["content"])
         self.assertIn("<summary>\nsummary: inspected project and ran checks\n</summary>", final_msgs[0]["content"])
         self.assertIn("<todo>\n1. [ ] verify checks\n</todo>", final_msgs[0]["content"])
+        # Save, clear, and resume session (including todo checklist); reject traversal names.
+        result = self.run_agent(stdin="first step\n/save work1\n/save ../escape\n/c\n/todo\n/resume work1\n/todo\ncontinue\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Session saved.", result.stdout)
+        self.assertIn("InvalidSessionName", result.stdout)
+        self.assertIn("Session resumed.", result.stdout)
+        self.assertGreaterEqual(len(self.requests[-1][0]["messages"]), 3)
 
     def test_redirects_are_not_followed(self):
         # A redirect must not replay a request carrying credentials.

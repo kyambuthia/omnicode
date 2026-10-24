@@ -258,6 +258,44 @@ pub const Agent = struct {
         return true;
     }
 
+    /// Save conversation history and todo list under `.omnicode/sessions/<name>.json`.
+    pub fn saveSession(self: *const Agent, name: []const u8) !void {
+        if (!tools.validName(name)) return error.InvalidSessionName;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const sa = scratch.allocator();
+        try self.context.dir.createDirPath(self.context.io, ".omnicode/sessions");
+        const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
+        const todo_text = if (self.context.todo) |t| t.slice() else "";
+        const data = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
+        if (data.len > max_bytes) return error.HistoryLimit;
+        try self.context.dir.writeFile(self.context.io, .{ .sub_path = path, .data = data });
+    }
+
+    /// Resume a saved session from `.omnicode/sessions/<name>.json`.
+    pub fn loadSession(self: *Agent, name: []const u8) !void {
+        if (!tools.validName(name)) return error.InvalidSessionName;
+        const a = self.context.a;
+        const path = try std.fmt.allocPrint(a, ".omnicode/sessions/{s}.json", .{name});
+        const text = try self.context.dir.readFileAlloc(self.context.io, path, a, .limited(max_bytes));
+        const root = try j.parse(a, text);
+        const msgs = try j.get(root, "messages");
+        if (msgs != .array or msgs.array.items.len > max_messages) return error.InvalidSession;
+        var next: std.ArrayList(Message) = .empty;
+        for (msgs.array.items) |item| {
+            const role = try j.str(item, "role");
+            if (!std.mem.eql(u8, role, "user") and !std.mem.eql(u8, role, "assistant")) return error.InvalidSession;
+            try next.append(a, .{ .role = role, .content = try j.get(item, "content") });
+        }
+        if (self.context.todo) |t| {
+            const saved_todo = j.optional(root, "todo", "") catch "";
+            const len = @min(saved_todo.len, t.text.len);
+            @memcpy(t.text[0..len], saved_todo[0..len]);
+            t.len = len;
+        }
+        self.history = next;
+    }
+
     /// Clone history into a fresh arena so long compacted sessions reclaim memory.
     pub fn reallocate(self: *Agent, a: std.mem.Allocator) !void {
         var next: std.ArrayList(Message) = .empty;
@@ -499,4 +537,17 @@ test "compaction preserves original goal, tool pairs, and retains completed work
     try std.testing.expectEqual(1, agent.history.items.len);
     try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content.string, "initial goal") != null);
     try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content.string, "- tool read: a") != null);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    agent.context.dir = tmp.dir;
+    var todo: tools.Todo = .{};
+    _ = try todo.update(try j.parse(a, "{\"items\":[{\"task\":\"persisted\",\"done\":true}]}"));
+    agent.context.todo = &todo;
+    try agent.saveSession("checkpoint");
+    try std.testing.expectError(error.InvalidSessionName, agent.saveSession("../bad"));
+    agent.history.clearRetainingCapacity();
+    todo.len = 0;
+    try agent.loadSession("checkpoint");
+    try std.testing.expectEqual(1, agent.history.items.len);
+    try std.testing.expectEqualStrings("1. [x] persisted\n", todo.slice());
 }
