@@ -8,6 +8,7 @@ pub const Route = @import("router.zig").Route;
 
 test {
     _ = @import("router.zig");
+    _ = @import("catalog.zig");
     _ = @import("tools.zig");
     _ = @import("agent.zig");
     _ = @import("ui.zig");
