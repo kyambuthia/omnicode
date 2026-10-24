@@ -50,7 +50,7 @@ automatic model classification, MCP, persisted sessions, or full YAML parser.
 ## Progress
 
 - [x] Inspect template, reference implementation, installed Zig APIs and API docs.
-- [ ] Router and foundation.
+- [x] Router and foundation (route tests and build pass).
 - [ ] Tools and skills.
 - [ ] Agent and CLI.
 - [ ] Acceptance and documentation.
