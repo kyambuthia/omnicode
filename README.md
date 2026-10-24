@@ -190,6 +190,8 @@ created before a value was registered as a secret, including JSON-escaped values
 Assistant text and tool previews redact registered values before terminal rendering;
 `/details` retention redacts before truncation. Tool execution keeps the original
 arguments.
+Command output and skill descriptions are scrubbed before truncation, so a
+preview boundary cannot expose a fragment of a registered value.
 
 Checklist replacements apply only after all items validate and fit the 4 KiB
 limit. A rejected replacement preserves the previous checklist.

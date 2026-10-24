@@ -181,6 +181,35 @@ class Integration(unittest.TestCase):
         self.assertNotIn(json.dumps(secret)[1:-1], json.dumps(outbound))
         self.assertEqual(json.loads((sessions / "legacy.json").read_text()), legacy)
 
+    def test_redaction_precedes_command_and_skill_truncation(self):
+        head_secret = "HDsecretTokenPrivate998"
+        tail_secret = "TLsecretTokenPrivate998"
+        skill_secret = "VLTskillTokenPrivate998"
+        limit = 64 * 1024
+        output = bytearray(b"x" * (limit + 4096))
+        head = limit * 2 // 3
+        marker = b"\n...[truncated middle; narrow command or filter output]...\n"
+        tail = len(output) - (limit - head - len(marker))
+        output[head - 8:head - 8 + len(head_secret)] = head_secret.encode()
+        output[tail - 8:tail - 8 + len(tail_secret)] = tail_secret.encode()
+        (self.cwd / "output").write_bytes(output)
+        skill = self.cwd / ".omnicode/skills/check/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("description: " + "x" * 232 + skill_secret + "\n")
+        self.reply = lambda _: tools(call("bash", {"cmd": "cat output"})) if len(self.requests) == 1 else text("done")
+        result = self.run_agent(stdin=(
+            f"/secrets set HEAD {head_secret}\n/secrets set TAIL {tail_secret}\n"
+            f"/secrets set SKILL {skill_secret}\ncheck output\n/details\n/q\n"
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        outbound = json.dumps([body for body, _ in self.requests])
+        for fragment in (head_secret[:8], tail_secret[8:], skill_secret[:8]):
+            self.assertNotIn(fragment, outbound)
+            self.assertNotIn(fragment, result.stdout + result.stderr)
+        tool_output = self.requests[-1][0]["messages"][-1]["content"][0]["content"]
+        self.assertLessEqual(len(tool_output.encode()), limit)
+        self.assertIn("truncated middle", tool_output)
+
     def test_vault_values_survive_import_and_process_restart(self):
         values = {"QUOTED": '"literal-quotes"', "SINGLE": "'single-quotes'",
                   "SPACED": "  significant spaces  ", "BACKSLASH": r"C:\tokens\private",

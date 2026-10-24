@@ -69,8 +69,14 @@ pub const Context = struct {
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
         const out = try c.runRaw(name, args);
-        if (c.secrets) |s| return s.scrub(c.a, out, c.env);
-        return out;
+        // Commands redact before applying their output cap.
+        if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) return out;
+        return c.scrub(out);
+    }
+
+    fn scrub(c: Context, text: []const u8) ![]const u8 {
+        if (c.secrets) |secrets| return secrets.scrub(c.a, text, c.env);
+        return text;
     }
 
     fn runRaw(c: Context, name: []const u8, args: j.Value) ![]const u8 {
@@ -168,7 +174,7 @@ pub const Context = struct {
             try std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, result.stdout, result.stderr })
         else
             try std.fmt.allocPrint(c.a, "{s}{s}", .{ result.stdout, result.stderr });
-        return capCommandOutput(c.a, full);
+        return capCommandOutput(c.a, try c.scrub(full));
     }
 
     pub fn loadSkill(c: Context, name: []const u8) ![]const u8 {
@@ -198,8 +204,11 @@ pub const Context = struct {
                     break;
                 }
             }
-            if (out.writer.end + entry.name.len + @min(description.len, 240) + 8 > limit) return error.TooManySkills;
-            try out.writer.print("- {s}: {s}\n", .{ entry.name, description[0..@min(description.len, 240)] });
+            description = try c.scrub(description);
+            var description_len = @min(description.len, 240);
+            while (description_len > 0 and !std.unicode.utf8ValidateSlice(description[0..description_len])) description_len -= 1;
+            if (out.writer.end + entry.name.len + description_len + 8 > limit) return error.TooManySkills;
+            try out.writer.print("- {s}: {s}\n", .{ entry.name, description[0..description_len] });
         }
         return out.toOwnedSlice();
     }
@@ -406,4 +415,50 @@ test "shell timeout overrides are validated before execution" {
     try std.testing.expectError(error.FileNotFound, c.readFile("marker"));
     try std.testing.expectError(error.Timeout, c.run("bash", try j.parse(c.a, "{\"cmd\":\"exec sleep 1\",\"timeout_ms\":10}")));
     try std.testing.expectEqualStrings("ok", try c.run("bash", try j.parse(c.a, "{\"cmd\":\"printf ok\",\"timeout_ms\":300000}")));
+}
+
+test "commands scrub secrets before head and tail truncation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("HEAD", "head-secret-left-private");
+    try secrets.setMemory("TAIL", "tail-secret-right-private");
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir, .secrets = &secrets };
+    const output = try c.a.alloc(u8, limit + 4096);
+    @memset(output, 'x');
+    const head = (limit * 2) / 3;
+    const marker_len = "\n...[truncated middle; narrow command or filter output]...\n".len;
+    const tail = output.len - (limit - head - marker_len);
+    @memcpy(output[head - 8 ..][0..secrets.valAt(0).len], secrets.valAt(0));
+    @memcpy(output[tail - 8 ..][0..secrets.valAt(1).len], secrets.valAt(1));
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "output", .data = output });
+    const result = try c.run("bash", try j.parse(c.a, "{\"cmd\":\"cat output\"}"));
+    try std.testing.expect(result.len <= limit);
+    try std.testing.expect(std.mem.indexOf(u8, result, "truncated middle") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "head-sec") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "right-private") == null);
+    // A second pass must not rewrite generated tags when another secret matches their text.
+    try secrets.setMemory("TAG", "REDACTED");
+    const short = try c.run("bash", try j.parse(c.a, "{\"cmd\":\"printf head-secret-left-private\"}"));
+    try std.testing.expectEqualStrings("[REDACTED:HEAD]", short);
+}
+
+test "skill descriptions redact before truncation and preserve UTF-8" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "description-secret-private");
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir, .secrets = &secrets };
+    try tmp.dir.createDirPath(c.io, ".omnicode/skills/check");
+    const padding: [232]u8 = @splat('x');
+    const body = try std.fmt.allocPrint(c.a, "description: {s}description-secret-private\n", .{&padding});
+    try tmp.dir.writeFile(c.io, .{ .sub_path = ".omnicode/skills/check/SKILL.md", .data = body });
+    try std.testing.expect(std.mem.indexOf(u8, try c.skills(), "descript") == null);
+    const unicode_body = try std.fmt.allocPrint(c.a, "description: {s}1234567é\n", .{&padding});
+    try tmp.dir.writeFile(c.io, .{ .sub_path = ".omnicode/skills/check/SKILL.md", .data = unicode_body });
+    try std.testing.expect(std.unicode.utf8ValidateSlice(try c.skills()));
 }
