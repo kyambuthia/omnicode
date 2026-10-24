@@ -3,6 +3,10 @@ const Io = std.Io;
 const router = @import("router.zig");
 const status = @import("status.zig");
 
+const max_file_bytes = 64 * 1024;
+const version_prefix = "# Omnicode configuration v";
+const header = "# Omnicode configuration v2 (JSON values; managed by /setup)";
+
 pub const allowed_keys = [_][]const u8{
     "AN_ABLE_KEY",
     "OPENROUTER_API_KEY",
@@ -70,44 +74,57 @@ pub fn configPath(a: std.mem.Allocator, env: *const std.process.Environ.Map) ![]
 /// Load persisted settings into `env` without overwriting variables already set in the process environment.
 pub fn loadIntoEnv(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map) !void {
     const path = try configPath(a, env);
-    const text = dir.readFileAlloc(io, path, a, .limited(64 * 1024)) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (line.len == 0 or line[0] == '#') continue;
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
-        const key = std.mem.trim(u8, line[0..eq], " \t");
-        var val = std.mem.trim(u8, line[eq + 1 ..], " \t");
-        if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
-            val = val[1 .. val.len - 1];
-        }
-        if (!isAllowedKey(key)) continue;
-        if (env.get(key) == null) {
-            try env.put(key, val);
-        }
+    const entries = try readEntries(a, io, dir, path);
+    var pending = std.process.Environ.Map.init(env.allocator);
+    defer pending.deinit();
+    for (entries.items) |entry| {
+        if (env.get(entry.key) == null and pending.get(entry.key) == null)
+            try pending.put(entry.key, entry.val);
     }
+    try env.array_hash_map.ensureUnusedCapacity(env.allocator, pending.count());
+    applyPending(env, &pending);
 }
 
 const Entry = struct { key: []const u8, val: []const u8 };
 
 fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8) !std.ArrayList(Entry) {
     var list: std.ArrayList(Entry) = .empty;
-    const text = dir.readFileAlloc(io, path, a, .limited(64 * 1024)) catch |err| switch (err) {
+    const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes)) catch |err| switch (err) {
         error.FileNotFound => return list,
         else => return err,
     };
+    var json_values = false;
+    var headers = std.mem.splitScalar(u8, text, '\n');
+    while (headers.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (std.mem.startsWith(u8, line, version_prefix)) {
+            if (!std.mem.eql(u8, line, header)) return error.InvalidConfigFile;
+            json_values = true;
+        }
+    }
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse return error.InvalidConfigFile;
         const key = std.mem.trim(u8, line[0..eq], " \t");
-        const val = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        var val = std.mem.trim(u8, line[eq + 1 ..], " \t");
         if (!isAllowedKey(key)) continue;
-        try list.append(a, .{ .key = key, .val = val });
+        if (json_values) {
+            val = std.json.parseFromSliceLeaky([]const u8, a, val, .{}) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return error.InvalidConfigFile,
+            };
+        } else if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
+            val = val[1 .. val.len - 1];
+        }
+        if (std.mem.indexOfAny(u8, val, "\x00\r\n") != null) return error.InvalidConfigValue;
+        // First entry wins, matching the legacy startup loader.
+        var duplicate = false;
+        for (list.items) |entry| {
+            if (std.mem.eql(u8, entry.key, key)) duplicate = true;
+        }
+        if (!duplicate) try list.append(a, .{ .key = key, .val = val });
     }
     return list;
 }
@@ -117,17 +134,20 @@ fn writeEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, ent
         if (parent.len > 0) try dir.createDirPath(io, parent);
     }
     var out: Io.Writer.Allocating = .init(a);
-    try out.writer.writeAll("# Omnicode configuration (managed by /setup)\n");
+    try out.writer.print("{s}\n", .{header});
     for (entries) |e| {
-        try out.writer.print("{s}={s}\n", .{ e.key, e.val });
+        try out.writer.print("{s}=", .{e.key});
+        try std.json.Stringify.value(e.val, .{}, &out.writer);
+        try out.writer.writeByte('\n');
     }
     const data = try out.toOwnedSlice();
+    if (data.len > max_file_bytes) return error.InvalidConfigValue;
     try @import("storage.zig").writePrivate(io, dir, path, data);
 }
 
 pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8, value: []const u8) !void {
     if (!isAllowedKey(key)) return error.InvalidConfigKey;
-    if (value.len == 0 or std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidConfigValue;
+    if (value.len == 0 or std.mem.indexOfAny(u8, value, "\x00\r\n") != null) return error.InvalidConfigValue;
     if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
         try @import("http.zig").validateEndpoint(value);
     const path = try configPath(a, env);
@@ -141,8 +161,19 @@ pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.
         }
     }
     if (!replaced) try entries.append(a, .{ .key = key, .val = value });
+    var pending = std.process.Environ.Map.init(env.allocator);
+    defer pending.deinit();
+    try pending.put(key, value);
+    try env.array_hash_map.ensureUnusedCapacity(env.allocator, pending.count());
     try writeEntries(a, io, dir, path, entries.items);
-    try env.put(key, value);
+    applyPending(env, &pending);
+}
+
+// Capacity and owned strings must be prepared before committing persistent state.
+fn applyPending(env: *std.process.Environ.Map, pending: *std.process.Environ.Map) void {
+    for (pending.keys(), pending.values()) |key, value|
+        env.putMove(@constCast(key), @constCast(value)) catch unreachable;
+    pending.array_hash_map.clearRetainingCapacity();
 }
 
 pub fn unset(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8) !void {
@@ -356,4 +387,105 @@ test "config persists keys, respects environment precedence, and masks secrets" 
     try std.testing.expectEqualStrings("openrouter", fresh_env.get("PROVIDER").?);
     const list_out = try executeProviders(a, std.testing.io, tmp.dir, &fresh_env, .openrouter, "");
     try std.testing.expect(std.mem.indexOf(u8, list_out, "*  2. openrouter") != null);
+}
+
+test "config values survive JSON persistence and legacy migration exactly" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_CONFIG", "config.env");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "config.env", .data = "# legacy\nMODEL=\"legacy model\"\nMODEL=ignored duplicate\nFAST_MODEL='fast model'\nUNRELATED=ignored\n" });
+    for ([_][]const u8{ "  spaced value  ", "\"quoted\"", "'single quotes'", "back\\slash\tvalue", "\x01\x7f\xff", "雪= #value" }) |value| {
+        try set(a, std.testing.io, tmp.dir, &env, "OPENAI_API_KEY", value);
+        var fresh = std.process.Environ.Map.init(a);
+        try fresh.put("OMNICODE_CONFIG", "config.env");
+        try loadIntoEnv(a, std.testing.io, tmp.dir, &fresh);
+        try std.testing.expectEqualStrings(value, fresh.get("OPENAI_API_KEY").?);
+        try std.testing.expectEqualStrings("legacy model", fresh.get("MODEL").?);
+        try std.testing.expectEqualStrings("fast model", fresh.get("FAST_MODEL").?);
+        try std.testing.expect(fresh.get("UNRELATED") == null);
+    }
+    try set(a, std.testing.io, tmp.dir, &env, "MODEL", "replacement-model");
+    var fresh = std.process.Environ.Map.init(a);
+    try fresh.put("OMNICODE_CONFIG", "config.env");
+    try loadIntoEnv(a, std.testing.io, tmp.dir, &fresh);
+    try std.testing.expectEqualStrings("replacement-model", fresh.get("MODEL").?);
+}
+
+test "malformed config loads and failed writes preserve environment and file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_CONFIG", "config.env");
+    try env.put("MODEL", "process-model");
+    const invalid = [_][]const u8{
+        "FAST_MODEL=must-not-load\nmalformed line\n",
+        "FAST_MODEL=must-not-load\n# Omnicode configuration v99\n",
+        header ++ "\nFAST_MODEL=\"must-not-load\"\nMODEL=invalid-json\n",
+        header ++ "\nFAST_MODEL=\"must-not-load\"\nMODEL=\"nul\\u0000value\"\n",
+    };
+    for (invalid) |data| {
+        try tmp.dir.writeFile(io, .{ .sub_path = "config.env", .data = data });
+        if (loadIntoEnv(a, io, tmp.dir, &env)) |_| return error.TestUnexpectedResult else |_| {}
+        try std.testing.expect(env.get("FAST_MODEL") == null);
+        try std.testing.expectEqualStrings("process-model", env.get("MODEL").?);
+        if (set(a, io, tmp.dir, &env, "MODEL", "new-model")) |_| return error.TestUnexpectedResult else |_| {}
+        const saved = try tmp.dir.readFileAlloc(io, "config.env", a, .limited(max_file_bytes));
+        try std.testing.expectEqualStrings(data, saved);
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.env", .data = "MODEL=old-model\n" });
+    const oversized: [max_file_bytes]u8 = @splat('x');
+    try std.testing.expectError(error.InvalidConfigValue, set(a, io, tmp.dir, &env, "MODEL", &oversized));
+    try std.testing.expectError(error.InvalidConfigValue, set(a, io, tmp.dir, &env, "MODEL", "nul\x00value"));
+    try std.testing.expectEqualStrings("process-model", env.get("MODEL").?);
+    try std.testing.expectEqualStrings("MODEL=old-model\n", try tmp.dir.readFileAlloc(io, "config.env", a, .limited(max_file_bytes)));
+}
+
+test "environment allocation failures occur before config writes or partial loads" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Sweep every allocation in the environment map while leaving scratch allocations independent.
+    for (0..16) |offset| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var env = std.process.Environ.Map.init(failing.allocator());
+        defer env.deinit();
+        try env.put("OMNICODE_CONFIG", "config.env");
+        try env.put("MODEL", "old-model");
+        try tmp.dir.writeFile(io, .{ .sub_path = "config.env", .data = "MODEL=old-model\n" });
+        failing.fail_index = failing.alloc_index + offset;
+        if (set(a, io, tmp.dir, &env, "MODEL", "new-model")) |_| {
+            try std.testing.expectEqualStrings("new-model", env.get("MODEL").?);
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expectEqualStrings("old-model", env.get("MODEL").?);
+            try std.testing.expectEqualStrings("MODEL=old-model\n", try tmp.dir.readFileAlloc(io, "config.env", a, .limited(max_file_bytes)));
+        }
+    }
+    for (0..20) |offset| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var env = std.process.Environ.Map.init(failing.allocator());
+        defer env.deinit();
+        try env.put("OMNICODE_CONFIG", "config.env");
+        try tmp.dir.writeFile(io, .{ .sub_path = "config.env", .data = "MODEL=loaded-model\nFAST_MODEL=loaded-fast\n" });
+        failing.fail_index = failing.alloc_index + offset;
+        if (loadIntoEnv(a, io, tmp.dir, &env)) |_| {
+            try std.testing.expectEqualStrings("loaded-model", env.get("MODEL").?);
+            try std.testing.expectEqualStrings("loaded-fast", env.get("FAST_MODEL").?);
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expect(env.get("MODEL") == null);
+            try std.testing.expect(env.get("FAST_MODEL") == null);
+        }
+    }
 }

@@ -155,6 +155,45 @@ class Integration(unittest.TestCase):
         for body, _ in self.requests:
             self.assertNotIn(secret, json.dumps(body))
 
+    def test_config_round_trip_preserves_quotes_and_migrates_legacy_values(self):
+        config = self.cwd / ".config/omnicode/config.env"
+        config.parent.mkdir(parents=True)
+        config.write_text('MODEL="legacy model"\nFAST_MODEL=\'legacy fast\'\n')
+        self.env.pop("MODEL", None)
+        self.env.pop("FAST_MODEL", None)
+        result = self.run_agent("--setup", "set", "VOICE_MODEL", "fixture-voice")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.reply = lambda _: text("done")
+        result = self.run_agent("inspect project")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(self.requests[-1][0]["model"], ("legacy model", "legacy fast"))
+        exact = '"quoted-model"'
+        for key in ("MODEL", "FAST_MODEL"):
+            result = self.run_agent("--setup", "set", key, exact)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_agent("inspect project")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][0]["model"], exact)
+        self.assertIn("# Omnicode configuration v2", config.read_text())
+
+    def test_malformed_config_prevents_requests_and_is_not_overwritten(self):
+        config = self.cwd / ".config/omnicode/config.env"
+        config.parent.mkdir(parents=True)
+        for data in ('MODEL=valid-first-line\nmalformed line\n',
+                     '# Omnicode configuration v99\nMODEL=value\n',
+                     '# Omnicode configuration v2 (JSON values; managed by /setup)\nMODEL=invalid-json\n'):
+            with self.subTest(data=data):
+                config.write_text(data)
+                result = self.run_agent("inspect project")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("InvalidConfigFile", result.stderr)
+                self.assertEqual(self.requests, [])
+                result = self.run_agent("--setup", "set", "MODEL", "new-model")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(config.read_text(), data)
+                result = self.run_agent("--help")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_retired_secret_redacts_checklist_and_retained_details(self):
         secret = "retired-checklist-private-token"
         def reply(body):

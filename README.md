@@ -177,6 +177,15 @@ are allowed. Vault loads and imports apply only after the whole file parses;
 comments, blank lines, `export` entries, and empty-value skips are supported.
 `--help` and `--version` remain available even when persisted files need repair.
 
+Configuration saves also use a v2 header and JSON-encoded values. Legacy
+configuration files remain readable and are upgraded on the next successful save;
+quoted legacy values retain their meaning during unrelated updates. Configuration
+files must not be sourced as shell scripts. Malformed assignments, unsupported
+format versions, and invalid values stop loading before any saved settings are
+applied. Existing process environment variables still take precedence. Saves
+prepare environment allocations first and reject files exceeding the 64 KiB load
+limit, preserving the previous file and live setting on failure.
+
 New vault saves use a versioned header and JSON-encoded values to preserve quotes,
 backslashes, significant spaces, and control bytes across restarts. Older vaults
 and ordinary `.env` imports remain readable; saving upgrades them to v2. The
