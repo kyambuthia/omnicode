@@ -333,6 +333,7 @@ pub const Ui = struct {
             error.Timeout => "The operation timed out. Check connectivity or narrow the task.",
             error.HistoryLimit, error.TurnLimit => "Conversation limit reached. Start a smaller task.",
             error.IncompleteResponse => "Model response was incomplete; no tools in that response were run.",
+            error.AlreadyInitialized => "OMNICODE.md already exists. Use /init force to overwrite.",
             else => "Use /help for commands and check your provider/model configuration.",
         };
         try ui.out.print("  {s}\n", .{hint});

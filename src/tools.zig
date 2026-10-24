@@ -175,6 +175,67 @@ pub const Context = struct {
         }
         return out.toOwnedSlice();
     }
+
+    pub fn projectInstructions(c: Context) ![]const u8 {
+        return c.dir.readFileAlloc(c.io, "OMNICODE.md", c.a, .limited(limit)) catch |err| switch (err) {
+            error.FileNotFound => "",
+            else => return err,
+        };
+    }
+
+    fn hasFile(c: Context, path: []const u8) bool {
+        _ = c.dir.readFileAlloc(c.io, path, c.a, .limited(limit)) catch return false;
+        return true;
+    }
+
+    pub fn initProject(c: Context, force: bool) ![]const u8 {
+        if (!force and c.hasFile("OMNICODE.md")) return error.AlreadyInitialized;
+        const commands = if (c.hasFile("build.zig"))
+            "- Build: `zig build`\n- Test: `zig build test`\n- Format check: `zig fmt --check src`"
+        else if (c.hasFile("Cargo.toml"))
+            "- Build: `cargo build`\n- Test: `cargo test`\n- Format check: `cargo fmt --check`"
+        else if (c.hasFile("package.json"))
+            "- Build: `npm run build`\n- Test: `npm test`"
+        else if (c.hasFile("pyproject.toml") or c.hasFile("pytest.ini"))
+            "- Test: `pytest`"
+        else if (c.hasFile("go.mod"))
+            "- Build: `go build ./...`\n- Test: `go test ./...`"
+        else if (c.hasFile("Makefile"))
+            "- Build: `make`\n- Test: `make test`"
+        else
+            "- Add project build, test, and lint commands here.";
+        const doc = try std.fmt.allocPrint(c.a,
+            \\# OMNICODE.md
+            \\
+            \\## Verification Commands
+            \\{s}
+            \\
+            \\## Coding & Anti-Slop Guidelines
+            \\- Read target files before editing; match existing naming, error handling, and formatting.
+            \\- Prefer small, direct changes over speculative abstractions, wrappers, or dead code.
+            \\- Do not add comments that merely restate what the code does.
+            \\- Run the verification commands and the `review` tool on non-trivial changes before finishing.
+            \\
+        , .{commands});
+        try c.dir.writeFile(c.io, .{ .sub_path = "OMNICODE.md", .data = doc });
+        const skill_path = try std.fmt.allocPrint(c.a, "{s}/verify", .{c.skills_path});
+        const skill_file = try std.fmt.allocPrint(c.a, "{s}/verify/SKILL.md", .{c.skills_path});
+        try c.dir.createDirPath(c.io, skill_path);
+        if (force or !c.hasFile(skill_file)) {
+            const verify_skill =
+                \\---
+                \\name: verify
+                \\description: Run build, test, and adversarial review checks before finishing
+                \\---
+                \\1. Run the verification commands in `OMNICODE.md`.
+                \\2. Run the `review` tool to audit changes with the correctness and anti-slop critics.
+                \\3. Fix any reported issues before concluding.
+                \\
+            ;
+            try c.dir.writeFile(c.io, .{ .sub_path = skill_file, .data = verify_skill });
+        }
+        return "Initialized OMNICODE.md and .omnicode/skills/verify/SKILL.md.";
+    }
 };
 
 pub fn validName(name: []const u8) bool {
@@ -232,6 +293,14 @@ test "skills advertise metadata, load body, and reject traversal" {
     try std.testing.expectEqualStrings(body, try c.loadSkill("check"));
     try std.testing.expectError(error.InvalidSkillName, c.loadSkill("../escape"));
     try std.testing.expectError(error.InvalidSkillName, c.loadSkill(""));
+    try std.testing.expectEqualStrings("", try c.projectInstructions());
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "build.zig", .data = "// zig" });
+    _ = try c.initProject(false);
+    try std.testing.expectError(error.AlreadyInitialized, c.initProject(false));
+    const instructions = try c.projectInstructions();
+    try std.testing.expect(std.mem.indexOf(u8, instructions, "zig build test") != null);
+    try std.testing.expect(std.mem.indexOf(u8, try c.skills(), "- verify:") != null);
+    _ = try c.initProject(true);
 }
 
 test "commands bound runtime/output and report search misses" {

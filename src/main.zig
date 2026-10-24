@@ -3,10 +3,13 @@ const core = @import("omnicode");
 const help =
     \\omnicode [--free|--cost-max] [--verbose] [prompt ...]       Run a task, or start a REPL without arguments.
     \\omnicode --skills          List project skills without an API call.
+    \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
+    \\  /init [force]          Bootstrap OMNICODE.md and verify skill
+    \\  /review [focus]        Run adversarial multi-agent code review
     \\  /model                 Show the current routing mode
     \\  /model auto            Select fast/strong models automatically
     \\  /model PROVIDER MODEL  Pin a model (clears conversation)
@@ -63,7 +66,7 @@ fn run(init: std.process.Init) !void {
             prompt_only = true;
             first += 1;
             break;
-        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--skills")) {
+        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init")) {
             return error.UnknownOption;
         } else break;
     }
@@ -75,6 +78,13 @@ fn run(init: std.process.Init) !void {
     if (!prompt_only and args.len == first + 1 and std.mem.eql(u8, args[first], "--skills")) {
         const skills = try context.skills();
         try ui.skills(skills);
+        return out.flush();
+    }
+    if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--init")) {
+        const force = args.len == first + 2 and std.mem.eql(u8, args[first + 1], "force");
+        if (args.len > first + 1 and !force) return error.UnknownOption;
+        const msg = try context.initProject(force);
+        try ui.note(msg);
         return out.flush();
     }
     var route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
@@ -196,6 +206,20 @@ fn run(init: std.process.Init) !void {
         if (std.mem.eql(u8, line, "/skills")) {
             const skills = try agent.context.skills();
             try ui.skills(skills);
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/init") or std.mem.startsWith(u8, line, "/init ")) {
+            const arg = if (line.len > 6) std.mem.trim(u8, line[6..], " \t") else "";
+            if (arg.len > 0 and !std.mem.eql(u8, arg, "force")) {
+                try out.writeAll("usage: /init [force]\n");
+                continue;
+            }
+            const msg = agent.context.initProject(std.mem.eql(u8, arg, "force")) catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            try agent.refreshSystem();
+            try ui.note(msg);
             continue;
         }
         if (std.mem.eql(u8, line, "/help")) {
