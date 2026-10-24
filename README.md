@@ -66,7 +66,7 @@ beyond those keywords; override the model for ambiguous work.
 | `OPENROUTER_API_KEY` | Key for OpenRouter requests |
 | `API_URL` | Optional **complete Messages endpoint URL**, primarily for local testing |
 | `MODELS_URL` | Optional OpenRouter model catalog URL (public metadata; the API key is never sent to it) |
-| `OMNICODE_STATUS` | Status line mode: `inline` (default), `title`, or `off` |
+| `OMNICODE_STATUS` | Status line mode: `inline` (default), `pinned`, `title`, or `off` |
 
 ### Live catalog selection (OpenRouter)
 
@@ -109,8 +109,13 @@ REPL commands:
 | `/help` | Show commands and configuration |
 | `/model` | Show current routing mode and models |
 | `/verbose on` or `/verbose off` | Switch future tool output between full and compact previews |
-| `/status inline\|title\|off` | Show the status line above the prompt, in the terminal title, or not at all |
+| `/status inline\|pinned\|title\|off` | Show the status line above the prompt, pinned to the bottom row, in the terminal title, or not at all |
 | `/usage` | Show session token/cost totals, retained across clears and model changes |
+| `/context` | Show conversation message, byte, and token budget |
+| `/compact [focus]` | Summarize older exchanges on the fast route, keeping the original goal and recent tool pairs |
+| `/todo` | Show the current session checklist |
+| `/save [NAME]` | Save session history and checklist to `.omnicode/sessions/<NAME>.json` (default: `latest`) |
+| `/resume [NAME]` | Load a saved session from `.omnicode/sessions/<NAME>.json` (default: `latest`) |
 | `/details` | Recover the last tool result, up to 64 KiB; next tool call replaces it |
 | `/c` | Clear conversation and free session allocations |
 | `/q` or `exit` | Quit |
@@ -157,29 +162,30 @@ Interactive terminals print one dim status line above each prompt:
 ```
 
 It shows the provider; the pinned model, or the routing policy plus the model
-selected for the previous turn; the working directory (`$HOME` as `~`); and local
-time. Local time comes from `$TZ` or `/etc/localtime` (TZif); when no zone can be
-loaded the time is labeled `UTC`. Narrow terminals elide the directory first, then
-the model, then drop the time. Width is read from the terminal on every prompt,
-falling back to `COLUMNS`. `/status title` puts the same text in the terminal title
-(restored on exit via the xterm title stack), `/status off` hides it, and
-`OMNICODE_STATUS=inline|title|off` sets the startup mode. Plain output never
-prints it. Lines already in scrollback are not rewritten, so each records when that
-prompt was shown.
+selected for the previous turn; the working directory (`$HOME` as `~`); the active
+message count once a conversation has started; and local time. Local time comes from
+`$TZ` or `/etc/localtime` (TZif); when no zone can be loaded the time is labeled
+`UTC`. Narrow terminals elide the directory first, then the model, then drop the
+context count and time. Width is read from the terminal on every prompt, falling back
+to `COLUMNS`. `/status pinned` reserves the bottom terminal row using a `DECSTBM`
+scroll region (restored on exit), `/status title` puts the status in the terminal
+title (restored via the xterm title stack), `/status off` hides it, and
+`OMNICODE_STATUS=inline|pinned|title|off` sets the startup mode. Plain output never
+prints it.
 
 The interface keeps normal terminal scrolling and copy/paste. Styled terminal
 responses emphasize Markdown headings and dim backtick fence markers; fenced
 code stays literal. Plain output preserves Markdown source.
 
 When both input and output are interactive, a small raw-mode composer supports
-append, backspace, Ctrl-C to discard input, Ctrl-D on empty input to quit, and
-bracketed paste. Pasted newlines remain in one prompt until Enter is pressed.
-Input is capped at 16 KiB; overflow discards the prompt on submission. Terminal
-settings are restored on return, errors, and EOF, before model or tool work.
-Pipes, dumb terminals, and `NO_COLOR` use canonical input. This is a basic
-composer: history navigation, arbitrary cursor movement, and a full-screen editor
-are not implemented; wide-character and wrapped-line backspace display is limited.
-Codex and fx references are recorded in [ROADMAP.md](ROADMAP.md).
+append, backspace, Up/Down arrow history navigation across the last 32 single-line
+commands, Ctrl-C to discard input, Ctrl-D on empty input to quit, and bracketed
+paste. Pasted newlines remain in one prompt until Enter is pressed. Input is capped
+at 16 KiB; overflow discards the prompt on submission. Terminal settings are
+restored on return, errors, and EOF, before model or tool work. Pipes, dumb
+terminals, and `NO_COLOR` use canonical input. Arbitrary cursor movement and a
+full-screen editor are not implemented; wide-character and wrapped-line backspace
+display is limited. Codex and fx references are recorded in [ROADMAP.md](ROADMAP.md).
 
 ## Token and cost usage
 
@@ -245,6 +251,8 @@ files immediately. Keep skills local and trusted.
 | `grep` | Ripgrep regex search with line numbers; up to 50 matches per file |
 | `bash` | Execute through `sh -c`; returns stdout then stderr and reports nonzero exit |
 | `skill` | Load an advertised project's skill body by name |
+| `todo` | Read or replace the session checklist (`items: [{task, done}]`); survives compaction and `/save` |
+| `task` | Delegate a sub-task to a depth-1 child agent (`mode: explore\|edit`, `tier: fast\|strong`); returns only its final report |
 
 Tools execute sequentially with your user's filesystem and process permissions.
 There is **no sandbox or approval prompt**. Run in a checkout you trust; inspect
@@ -261,16 +269,18 @@ limit. Redirects are disabled. Requests are limited to 2 MiB serialized history,
 
 Errors become tool results when execution can continue. Invalid or truncated
 model responses are rejected before executing any tools in that response.
-Non-UTF-8 tool output is returned as a tool error. An API/turn failure clears
-REPL history; already completed file/process effects remain, so inspect them
-before retrying. Sessions are in memory only; there is no streaming or automatic
-context compaction. Limits count bytes, not model tokens.
+Non-UTF-8 tool output is returned as a tool error. When a turn fails after
+completing one or more tool calls or responses, a summary of completed work is
+retained in history so the next turn can continue; if nothing completed before
+the failure, history is cleared.
 
-Hitting the 32-call turn limit or the 128-message/2 MiB history limit reports
-`TurnLimit`/`HistoryLimit` ("Conversation limit reached") and discards the whole
-conversation, including the work done in that turn. Long agentic tasks should be
-split into smaller prompts. Subagents and compaction, which would remove this
-limitation, are proposed in [ROADMAP.md](ROADMAP.md#proposed-subagents-and-compaction).
+Before hitting the 32-call turn window, the 96-message threshold, 75% of the 2 MiB
+serialized request budget, or 75% of the model's `context_length` token budget,
+the agent automatically compacts older history via a summary request on the fast
+route (up to 3 compactions per turn), keeping the original goal, any `/todo`
+checklist, and recent tool pairs intact. `/save` and `/resume` persist sessions
+under `.omnicode/sessions/`. Tool schemas attach an ephemeral `cache_control`
+breakpoint for prompt caching.
 
 ## Verification
 

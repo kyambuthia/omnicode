@@ -178,7 +178,7 @@ Supersedes the static GPT-4.1 Nano/Mini defaults and fallback price table above.
 - [x] Reasoning blocks (`thinking`, `redacted_thinking`) are preserved in history
   so GLM/DeepSeek tool continuations stay valid.
 
-## Proposed: subagents and compaction
+## Subagents and compaction (completed)
 
 ### Problem
 
@@ -263,7 +263,7 @@ flowchart LR
 Each step is its own commit, with unit tests, mock-server integration tests and
 a LOC check, following the increments above.
 
-## Proposed: status bar (model · directory · time)
+## Status bar: model · directory · time (completed)
 
 ### Goal
 
