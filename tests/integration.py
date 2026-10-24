@@ -428,6 +428,8 @@ class Integration(unittest.TestCase):
         self.assertIn("first step", final_msgs[0]["content"])
         self.assertIn("<summary>\nsummary: inspected project and ran checks\n</summary>", final_msgs[0]["content"])
         self.assertIn("<todo>\n1. [ ] verify checks\n</todo>", final_msgs[0]["content"])
+        # Tool schema carries ephemeral cache_control breakpoint on the final tool.
+        self.assertEqual(self.requests[0][0]["tools"][-1]["cache_control"], {"type": "ephemeral"})
         # Save, clear, and resume session (including todo checklist); reject traversal names.
         result = self.run_agent(stdin="first step\n/save work1\n/save ../escape\n/c\n/todo\n/resume work1\n/todo\ncontinue\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)

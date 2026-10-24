@@ -46,6 +46,7 @@ pub const Catalog = struct {
                 var route = base;
                 route.model = id;
                 route.price = price;
+                route.context_length = j.number(model, "context_length", 32768) catch 32768;
                 best = route;
                 score = cost;
             }

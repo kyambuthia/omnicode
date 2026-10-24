@@ -24,6 +24,8 @@ pub const Agent = struct {
     subagent: bool = false,
     turn_budget: usize = max_turns,
     compaction_budget: usize = max_compactions,
+    last_input_tokens: u64 = 0,
+    context_length: usize = 128 * 1024,
     history: std.ArrayList(Message) = .empty,
     system: []const u8,
     schemas: j.Value,
@@ -53,6 +55,7 @@ pub const Agent = struct {
             route = try catalog.select(route, requested, @import("router.zig").complex(prompt));
         } else if (route.mode == .free) return error.FreeRequiresOpenRouter;
         if (route.model.len == 0) return error.EmptyModel;
+        self.context_length = route.context_length;
         if (ui.status) |status| status.setModel(route.model);
         const out = ui.out;
         const turn_start = Io.Clock.awake.now(self.context.io);
@@ -78,7 +81,9 @@ pub const Agent = struct {
                 compactions += 1;
                 turns = 0;
             }
-            if (self.history.items.len > compact_messages and compactions < self.compaction_budget and self.history.items.len > 4) {
+            if ((self.history.items.len > compact_messages or self.last_input_tokens > (self.context_length * 3) / 4) and
+                compactions < self.compaction_budget and self.history.items.len > 4)
+            {
                 try self.compact(ui, &usage, null);
                 compactions += 1;
             }
@@ -99,6 +104,7 @@ pub const Agent = struct {
             turns += 1;
             const response = try ui.work("Thinking...", Agent.request, .{ self, route, body });
             const delta = Usage.response(response, route);
+            self.last_input_tokens = delta.input + delta.read + delta.write;
             usage.add(delta);
             if (ui.usage) |total| total.add(delta);
             const content = try validate(response);
@@ -148,7 +154,16 @@ pub const Agent = struct {
             .system = self.system,
             .messages = messages,
         }));
-        if (with_tools) try payload.object.put(a, "tools", self.schemas);
+        if (with_tools) {
+            var tools_copy = try j.parse(a, try j.encode(a, self.schemas));
+            if (tools_copy == .array and tools_copy.array.items.len > 0) {
+                const last_idx = tools_copy.array.items.len - 1;
+                if (tools_copy.array.items[last_idx] == .object) {
+                    try tools_copy.array.items[last_idx].object.put(a, "cache_control", try j.parse(a, "{\"type\":\"ephemeral\"}"));
+                }
+            }
+            try payload.object.put(a, "tools", tools_copy);
+        }
         if (route.provider == .openrouter) try payload.object.put(a, "provider", try j.parse(a, if (route.mode == .free)
             "{\"sort\":\"price\",\"require_parameters\":true,\"max_price\":{\"prompt\":0,\"completion\":0,\"request\":0,\"image\":0}}"
         else if (with_tools)
@@ -219,6 +234,7 @@ pub const Agent = struct {
         for (self.history.items[split..]) |m| try next.append(a, m);
         self.history.deinit(a);
         self.history = next;
+        self.last_input_tokens = 0;
         try ui.note("Context compacted.");
     }
 

@@ -128,10 +128,11 @@ fn run(init: std.process.Init) !void {
         if (std.mem.eql(u8, line, "/context")) {
             const bytes = agent.historyBytes();
             const msgs = agent.history.items.len;
-            const pct = @max((msgs * 100) / core.Agent.max_messages, (bytes * 100) / core.Agent.max_bytes);
-            var note_buf: [160]u8 = undefined;
-            try ui.note(std.fmt.bufPrint(&note_buf, "Context · {d}/{d} messages · {d}/{d} bytes ({d}% of limit)", .{
-                msgs, core.Agent.max_messages, bytes, core.Agent.max_bytes, pct,
+            const tok_pct = if (agent.context_length > 0) (agent.last_input_tokens * 100) / agent.context_length else 0;
+            const pct = @max(@max((msgs * 100) / core.Agent.max_messages, (bytes * 100) / core.Agent.max_bytes), tok_pct);
+            var note_buf: [200]u8 = undefined;
+            try ui.note(std.fmt.bufPrint(&note_buf, "Context · {d}/{d} messages · {d}/{d} bytes · {d}/{d} tokens ({d}% of limit)", .{
+                msgs, core.Agent.max_messages, bytes, core.Agent.max_bytes, agent.last_input_tokens, agent.context_length, pct,
             }) catch "Context status");
             continue;
         }

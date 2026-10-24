@@ -7,6 +7,7 @@ pub const Route = struct {
     key: []const u8,
     mode: enum { cost_max, free } = .cost_max,
     price: ?@import("pricing.zig").Price = null,
+    context_length: usize = 128 * 1024,
 
     /// Classify once per user turn; tool results never change the selected model.
     pub fn forTask(self: Route, env: *const std.process.Environ.Map, task: []const u8) Route {
