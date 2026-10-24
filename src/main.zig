@@ -4,10 +4,13 @@ const help =
     \\omnicode [--free|--cost-max] [--verbose] [prompt ...]       Run a task, or start a REPL without arguments.
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
+    \\omnicode --setup [...]     View or configure provider API keys and settings.
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
+    \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
+    \\  /voice [sec|file]      Record or transcribe audio via cheap OpenRouter voice models
     \\  /init [force]          Bootstrap OMNICODE.md and verify skill
     \\  /review [focus]        Run adversarial multi-agent code review
     \\  /model                 Show the current routing mode
@@ -25,8 +28,8 @@ const help =
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
-    \\Config: PROVIDER=anthropic|openrouter, MODEL, FAST_MODEL, API_URL, MODELS_URL, OMNICODE_STATUS
-    \\Keys: ANTHROPIC_API_KEY or OPENROUTER_API_KEY. Searches require rg.
+    \\Config: PROVIDER=anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL
+    \\Keys: OPENROUTER_API_KEY, ANTHROPIC_API_KEY, etc. (or run /setup). Searches require rg.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
 ;
@@ -40,6 +43,7 @@ pub fn main(init: std.process.Init) void {
 
 fn run(init: std.process.Init) !void {
     const a = init.arena.allocator();
+    core.config.loadIntoEnv(a, init.io, .cwd(), init.environ_map) catch {};
     const args = try init.minimal.args.toSlice(a);
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.Writer.init(.stdout(), init.io, &output_buffer);
@@ -66,7 +70,7 @@ fn run(init: std.process.Init) !void {
             prompt_only = true;
             first += 1;
             break;
-        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init")) {
+        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init") and !std.mem.eql(u8, arg, "--setup")) {
             return error.UnknownOption;
         } else break;
     }
@@ -85,6 +89,14 @@ fn run(init: std.process.Init) !void {
         if (args.len > first + 1 and !force) return error.UnknownOption;
         const msg = try context.initProject(force);
         try ui.note(msg);
+        return out.flush();
+    }
+    if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--setup")) {
+        const rest = try std.mem.join(a, " ", args[first + 1 ..]);
+        const msg = try core.config.execute(a, init.io, .cwd(), init.environ_map, rest);
+        var full = ui;
+        full.verbose = true;
+        try full.preview(msg, "");
         return out.flush();
     }
     var route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
@@ -208,6 +220,27 @@ fn run(init: std.process.Init) !void {
             try ui.skills(skills);
             continue;
         }
+        if (std.mem.eql(u8, line, "/setup") or std.mem.startsWith(u8, line, "/setup ")) {
+            const rest = if (line.len > 7) std.mem.trim(u8, line[7..], " \t") else "";
+            const msg = core.config.execute(a, init.io, .cwd(), init.environ_map, rest) catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            if (automatic) {
+                if (core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null)) |updated| {
+                    route = updated;
+                    route.mode = mode;
+                    agent.route = route;
+                } else |_| {}
+            } else {
+                route.key = init.environ_map.get(route.provider.envKey()) orelse route.key;
+                agent.route = route;
+            }
+            var full = ui;
+            full.verbose = true;
+            try full.preview(msg, "");
+            continue;
+        }
         if (std.mem.eql(u8, line, "/init") or std.mem.startsWith(u8, line, "/init ")) {
             const arg = if (line.len > 6) std.mem.trim(u8, line[6..], " \t") else "";
             if (arg.len > 0 and !std.mem.eql(u8, arg, "force")) {
@@ -308,11 +341,55 @@ fn run(init: std.process.Init) !void {
             try out.writeAll("Skill loaded for this conversation.\n");
             continue;
         } else if (!std.mem.eql(u8, line, "/c")) {
-            if (line[0] == '/') {
+            var active_prompt = line;
+            if (std.mem.eql(u8, line, "/voice") or std.mem.startsWith(u8, line, "/voice ")) {
+                const varg = if (line.len > 7) std.mem.trim(u8, line[7..], " \t") else "";
+                if (std.mem.eql(u8, varg, "model") or std.mem.startsWith(u8, varg, "model ")) {
+                    const mval = if (varg.len > 6) std.mem.trim(u8, varg[6..], " \t") else "";
+                    if (mval.len == 0) {
+                        const cur = init.environ_map.get("VOICE_MODEL") orelse "auto (cheapest OpenRouter audio model)";
+                        try ui.note(try std.fmt.allocPrint(a, "Voice model: {s}", .{cur}));
+                    } else {
+                        core.config.set(a, init.io, .cwd(), init.environ_map, "VOICE_MODEL", mval) catch |err| {
+                            try ui.errorMessage(err);
+                            continue;
+                        };
+                        try ui.note(try std.fmt.allocPrint(a, "Saved VOICE_MODEL = {s}", .{mval}));
+                    }
+                    continue;
+                }
+                const audio_path = blk: {
+                    if (varg.len == 0 or std.mem.eql(u8, varg, "record") or std.mem.startsWith(u8, varg, "record ")) {
+                        const sec_str = if (std.mem.startsWith(u8, varg, "record")) std.mem.trim(u8, varg[6..], " \t") else "";
+                        const secs = if (sec_str.len == 0) 5 else std.fmt.parseInt(usize, sec_str, 10) catch {
+                            try out.writeAll("usage: /voice [seconds|file.wav] | /voice record [seconds] | /voice model [MODEL]\n");
+                            continue;
+                        };
+                        break :blk core.voice.recordAudio(agent.context, init.environ_map, secs) catch |err| {
+                            try ui.errorMessage(err);
+                            continue;
+                        };
+                    }
+                    if (std.fmt.parseInt(usize, varg, 10)) |secs| {
+                        break :blk core.voice.recordAudio(agent.context, init.environ_map, secs) catch |err| {
+                            try ui.errorMessage(err);
+                            continue;
+                        };
+                    } else |_| {
+                        break :blk varg;
+                    }
+                };
+                const transcript = core.voice.transcribeFile(agent.context, init.environ_map, route, audio_path, ui) catch |err| {
+                    try ui.errorMessage(err);
+                    continue;
+                };
+                try ui.note(try std.fmt.allocPrint(a, "Voice: {s}", .{transcript}));
+                active_prompt = transcript;
+            } else if (line[0] == '/') {
                 try out.writeAll("Unknown command. Use /help for available commands.\n");
                 continue;
             }
-            agent.respond(line, ui) catch |err| {
+            agent.respond(active_prompt, ui) catch |err| {
                 try ui.errorMessage(err);
                 var fresh = std.heap.ArenaAllocator.init(init.gpa);
                 if (agent.retainCompletedWork(fresh.allocator()) catch false) {

@@ -10,6 +10,8 @@ pub const Clock = @import("status.zig").Clock;
 pub const shortenHome = @import("status.zig").shortenHome;
 pub const terminalWidth = @import("status.zig").terminalWidth;
 pub const Route = @import("router.zig").Route;
+pub const config = @import("config.zig");
+pub const voice = @import("voice.zig");
 
 test {
     _ = @import("router.zig");
@@ -20,4 +22,6 @@ test {
     _ = @import("usage.zig");
     _ = @import("status.zig");
     _ = @import("input.zig");
+    _ = @import("config.zig");
+    _ = @import("voice.zig");
 }

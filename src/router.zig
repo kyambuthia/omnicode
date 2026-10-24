@@ -1,7 +1,53 @@
 const std = @import("std");
 
+pub const Provider = enum {
+    anthropic,
+    openrouter,
+    deepseek,
+    xai,
+    openai,
+    gemini,
+    groq,
+
+    pub fn envKey(self: Provider) []const u8 {
+        return switch (self) {
+            .anthropic => "ANTHROPIC_API_KEY",
+            .openrouter => "OPENROUTER_API_KEY",
+            .deepseek => "DEEPSEEK_API_KEY",
+            .xai => "XAI_API_KEY",
+            .openai => "OPENAI_API_KEY",
+            .gemini => "GEMINI_API_KEY",
+            .groq => "GROQ_API_KEY",
+        };
+    }
+
+    pub fn defaultUrl(self: Provider) []const u8 {
+        return switch (self) {
+            .anthropic => "https://api.anthropic.com/v1/messages",
+            .openrouter => "https://openrouter.ai/api/v1/messages",
+            .deepseek => "https://api.deepseek.com/anthropic/v1/messages",
+            .xai => "https://api.x.ai/v1/messages",
+            .openai => "https://api.openai.com/v1/messages",
+            .gemini => "https://generativelanguage.googleapis.com/v1beta/openai/messages",
+            .groq => "https://api.groq.com/openai/v1/messages",
+        };
+    }
+
+    pub fn defaultModel(self: Provider, strong: bool) []const u8 {
+        return switch (self) {
+            .anthropic => "claude-haiku-4-5",
+            .openrouter => "auto",
+            .deepseek => if (strong) "deepseek-reasoner" else "deepseek-chat",
+            .xai => if (strong) "grok-4" else "grok-3-mini",
+            .openai => if (strong) "gpt-4.1" else "gpt-4.1-mini",
+            .gemini => if (strong) "gemini-2.5-pro" else "gemini-2.5-flash",
+            .groq => "llama-3.3-70b-versatile",
+        };
+    }
+};
+
 pub const Route = struct {
-    provider: enum { anthropic, openrouter },
+    provider: Provider,
     model: []const u8,
     url: []const u8,
     key: []const u8,
@@ -12,31 +58,31 @@ pub const Route = struct {
     /// Classify once per user turn; tool results never change the selected model.
     pub fn forTask(self: Route, env: *const std.process.Environ.Map, task: []const u8) Route {
         var route = self;
-        route.model = env.get(if (complex(task)) "MODEL" else "FAST_MODEL") orelse
-            if (complex(task)) self.model else if (self.provider == .anthropic)
-                "claude-haiku-4-5"
-            else
-                "auto";
+        const is_complex = complex(task);
+        route.model = env.get(if (is_complex) "MODEL" else "FAST_MODEL") orelse
+            if (is_complex) self.model else self.provider.defaultModel(false);
         return route;
     }
 
     pub fn init(env: *const std.process.Environ.Map, provider: ?[]const u8, model: ?[]const u8) !Route {
-        const name = provider orelse env.get("PROVIDER") orelse
-            if (env.get("OPENROUTER_API_KEY") != null) "openrouter" else "anthropic";
-        const p = std.meta.stringToEnum(@FieldType(Route, "provider"), name) orelse return error.UnknownProvider;
-        const key = env.get(if (p == .anthropic) "ANTHROPIC_API_KEY" else "OPENROUTER_API_KEY") orelse "";
-        const selected = model orelse env.get("MODEL") orelse
-            if (p == .anthropic) "claude-haiku-4-5" else "auto";
+        const name = provider orelse env.get("PROVIDER") orelse detectProvider(env);
+        const p = std.meta.stringToEnum(Provider, name) orelse return error.UnknownProvider;
+        const key = env.get(p.envKey()) orelse "";
+        const selected = model orelse env.get("MODEL") orelse p.defaultModel(true);
         if (selected.len == 0) return error.EmptyModel;
         return .{
             .provider = p,
             .model = selected,
-            .url = env.get("API_URL") orelse if (p == .anthropic)
-                "https://api.anthropic.com/v1/messages"
-            else
-                "https://openrouter.ai/api/v1/messages",
+            .url = env.get("API_URL") orelse p.defaultUrl(),
             .key = key,
         };
+    }
+
+    fn detectProvider(env: *const std.process.Environ.Map) []const u8 {
+        inline for (.{ Provider.openrouter, Provider.anthropic, Provider.deepseek, Provider.xai, Provider.openai, Provider.gemini, Provider.groq }) |p| {
+            if (env.get(p.envKey())) |v| if (v.len > 0) return @tagName(p);
+        }
+        return "anthropic";
     }
 };
 

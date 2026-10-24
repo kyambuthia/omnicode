@@ -337,6 +337,9 @@ pub const Ui = struct {
             error.HistoryLimit, error.TurnLimit => "Conversation limit reached. Start a smaller task.",
             error.IncompleteResponse => "Model response was incomplete; no tools in that response were run.",
             error.AlreadyInitialized => "OMNICODE.md already exists. Use /init force to overwrite.",
+            error.InvalidConfigKey, error.InvalidSetupCommand => "Usage: /setup <provider> <key> | /setup set <KEY> <VALUE> | /setup unset <KEY>",
+            error.VoiceRecordFailed => "Audio recording failed. Install arecord/sox/ffmpeg, set OMNICODE_VOICE_CMD, or pass /voice <file.wav>.",
+            error.EmptyAudio, error.EmptyTranscript => "Voice input produced no transcription.",
             else => "Use /help for commands and check your provider/model configuration.",
         };
         try ui.out.print("  {s}\n", .{hint});

@@ -53,6 +53,27 @@ pub const Catalog = struct {
         }
         return best orelse if (base.mode == .free) error.NoFreeModels else error.ModelUnavailable;
     }
+
+    /// Pick the cheapest model in the catalog that accepts audio input and emits text output.
+    pub fn selectVoice(self: Catalog, mode: @FieldType(Route, "mode"), requested: ?[]const u8) ?[]const u8 {
+        var best: ?[]const u8 = null;
+        var score = std.math.inf(f64);
+        for (self.models) |model| {
+            const id = j.str(model, "id") catch continue;
+            if (requested) |name| if (!std.mem.eql(u8, id, name)) continue;
+            const price = Price.parse(j.get(model, "pricing") catch continue) orelse continue;
+            if (mode == .free and !price.free) continue;
+            const arch = j.get(model, "architecture") catch .null;
+            if (!contains(arch, "input_modalities", "audio") or !contains(arch, "output_modalities", "text")) continue;
+            if (std.mem.startsWith(u8, id, "openrouter/") or std.mem.startsWith(u8, id, "~")) continue;
+            const cost = price.request + 1000 * (price.input + price.output);
+            if (cost < score) {
+                best = id;
+                score = cost;
+            }
+        }
+        return best;
+    }
 };
 
 fn contains(value: j.Value, key: []const u8, needle: []const u8) bool {
@@ -110,4 +131,10 @@ test "cost mode bounds the ranked pool while free mode searches the whole catalo
     try std.testing.expectEqualStrings("model/16", (try catalog.select(base, null, false)).model);
     base.mode = .free;
     try std.testing.expectEqualStrings("model/32", (try catalog.select(base, null, false)).model);
+    const voice_cat = try Catalog.parse(try j.parse(a,
+        \\{"data":[
+        \\{"id":"expensive/audio","pricing":{"prompt":"0.00001","completion":"0.00002"},"architecture":{"input_modalities":["text","audio"],"output_modalities":["text"]}},
+        \\{"id":"cheap/audio","pricing":{"prompt":"0.0000001","completion":"0.0000002"},"architecture":{"input_modalities":["text","audio"],"output_modalities":["text"]}}]}
+    ));
+    try std.testing.expectEqualStrings("cheap/audio", voice_cat.selectVoice(.cost_max, null).?);
 }

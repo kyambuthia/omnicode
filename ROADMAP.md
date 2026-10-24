@@ -474,3 +474,65 @@ flowchart LR
 3. Adversarial multi-agent `review` tool and `/review [focus]` command.
 4. Unit and integration tests covering `/exit`, default pinned status bar, `/init`,
    `OMNICODE.md`, and multi-agent adversarial review (`PASS` and `FAIL` verdicts).
+
+## Proposed: `/setup` multi-provider credential store, `/voice` OpenRouter audio input, and hardening
+
+### 1. `/setup` and `--setup`: Multi-provider API keys and persistent configuration (`src/config.zig`, `src/router.zig`)
+
+#### Why `/setup` is needed
+
+Relying exclusively on shell environment variables (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`)
+creates friction when switching providers or configuring secondary keys (such as an
+OpenRouter key for `/voice` while using Anthropic or DeepSeek for code turns, or configuring
+OpenAI, Gemini, Groq, xAI, and DeepSeek endpoints).
+
+#### Design
+
+| Aspect | Specification |
+|---|---|
+| **Storage location** | `$OMNICODE_CONFIG` if set, else `$XDG_CONFIG_HOME/omnicode/config.env`, else `$HOME/.config/omnicode/config.env` (fallback `.omnicode/config.env`). Written with `0o600` owner-only permissions |
+| **Precedence** | Explicit CLI flags / `/model` pin > process environment variables > persisted `config.env` > built-in defaults. `/setup` updates both the live in-memory `std.process.Environ.Map` and `config.env` so changes apply immediately without restarting |
+| **Supported providers** | `openrouter` (`OPENROUTER_API_KEY`), `anthropic` (`ANTHROPIC_API_KEY`), `deepseek` (`DEEPSEEK_API_KEY`), `xai` (`XAI_API_KEY`), `openai` (`OPENAI_API_KEY`), `gemini` (`GEMINI_API_KEY`), `groq` (`GROQ_API_KEY`) |
+| **Secret masking** | `/setup` status output masks every stored key (e.g. `sk-or-…9f2a` or `***` for short keys) and never prints raw secrets to the transcript |
+| **REPL & CLI commands** | `/setup` (status table), `/setup <provider> <api_key>` (save provider key and activate if appropriate), `/setup set <KEY> <VALUE>` (set `PROVIDER`, `MODEL`, `FAST_MODEL`, `VOICE_MODEL`, `VOICE_URL`, `API_URL`, `MODELS_URL`, `OMNICODE_STATUS`, or `*_API_KEY`), `/setup unset <KEY>` (remove key), plus offline `omnicode --setup [...]` |
+
+### 2. `/voice`: Low-cost voice prompts via OpenRouter audio models (`src/voice.zig`, `src/catalog.zig`)
+
+#### Reasoning on OpenRouter voice integration
+
+OpenRouter exposes multimodal models that accept base64-encoded audio (`input_audio` content
+blocks in `wav`, `mp3`, or `ogg` format) at very low cost—such as `google/gemini-2.0-flash-lite-001`,
+`google/gemini-2.5-flash-lite`, and `openai/gpt-4o-mini-audio-preview`—and advertises `"audio"`
+in `architecture.input_modalities` in the live `/api/v1/models` catalog.
+
+```mermaid
+flowchart LR
+    M["/voice [seconds] or /voice <file.wav>"] --> R["Capture mono 16kHz WAV (arecord/rec/ffmpeg) or read file"]
+    R --> B["Base64 encode audio (bounded <= 4 MiB)"]
+    B --> C["Select cheapest OpenRouter audio model (or VOICE_MODEL)"]
+    C --> T["Transcribe spoken request verbatim"]
+    T --> A["Print transcript & dispatch to Agent.respond"]
+```
+
+| Aspect | Specification |
+|---|---|
+| **Audio capture** | `/voice` or `/voice record [seconds]` records mono 16 kHz WAV audio (`1..30`s, default `5`s) to `.omnicode/voice.wav` via `$OMNICODE_VOICE_CMD` if set, else auto-detecting `arecord`, `rec` (SoX), or `ffmpeg` |
+| **Audio file input** | `/voice <path.wav\|mp3\|ogg>` reads an existing audio file (up to 4 MiB), enabling deterministic testing and pre-recorded voice notes |
+| **Model selection** | `Catalog.selectVoice` picks the lowest-cost model in the OpenRouter catalog with `"audio"` in `architecture.input_modalities` and `"text"` in `architecture.output_modalities` (honoring `--free` when active), or uses `VOICE_MODEL` (default fallback `google/gemini-2.0-flash-lite-001`) |
+| **Key resolution** | Uses `OPENROUTER_API_KEY` (configurable via `/setup openrouter <key>`) or the active route's key when `VOICE_URL` / `API_URL` is used |
+| **Execution** | Sends the `input_audio` payload, parses either OpenRouter Chat Completions (`choices[0].message.content`) or Messages (`content[0].text`), records token/cost usage into `Ui.usage`, displays `🎙  <transcript>`, and runs `agent.respond(transcript, ui)` |
+
+### 3. Correctness, latency, and maintainability hardening
+
+- **`src/input.zig` long-CSI escape draining:** Drain oversized CSI sequences (`> 8` bytes) until their final byte (`0x40..0x7E`) so tail bytes never leak into the prompt buffer.
+- **`src/status.zig` portable `TIOCGWINSZ`:** Use `std.posix.system.ioctl` across POSIX platforms rather than Linux-only `std.os.linux.ioctl`.
+- **Per-turn catalog reuse (`src/agent.zig`):** Reuse the fetched `Catalog` across subagents (`task`), adversarial critics (`review`), and `compact` within the same turn or review invocation, eliminating redundant 8 MiB catalog downloads.
+- **Comptime schema deduplication (`src/tools.zig`):** Derive `explore_schema`, `edit_schema`, and `schema` from a single tool definition table at `comptime`.
+- **CI & repository hygiene (`.github/workflows/ci.yml`, `.gitignore`):** Add GitHub Actions workflow running `zig fmt --check`, `zig build test`, `zig build`, and `python3 tests/integration.py -v`, and ignore `__pycache__/` and `.omnicode/`.
+
+### Implementation order
+
+1. Implement `src/config.zig`, extended providers in `src/router.zig`, `/setup` REPL command, and `--setup` CLI flag.
+2. Implement `src/voice.zig`, `Catalog.selectVoice` in `src/catalog.zig`, and `/voice` REPL command.
+3. Apply correctness & latency hardening (`src/input.zig`, `src/status.zig`, `src/agent.zig` catalog caching, `src/tools.zig` comptime schema generation, `.gitignore`, `.github/workflows/ci.yml`).
+4. Update `README.md` and `ROADMAP.md`, run full unit + integration suites, and commit.
