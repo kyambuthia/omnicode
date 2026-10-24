@@ -29,7 +29,14 @@ else
 fi
 
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
+STAGE_DIR=""
+cleanup() {
+    rm -rf -- "$TMP_DIR"
+    if [ -n "$STAGE_DIR" ]; then rm -rf -- "$STAGE_DIR"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "Downloading ${ASSET} from ${REPO} (${VERSION})..."
 curl -fsSL "${BASE_URL}/${ASSET}" -o "${TMP_DIR}/${ASSET}"
@@ -56,11 +63,20 @@ if ! (cd "$TMP_DIR" && sha256sum -c selected.sha256 >/dev/null); then
     exit 1
 fi
 
-mkdir -p "$INSTALL_DIR"
+mkdir -p -- "$INSTALL_DIR"
 tar -xzf "${TMP_DIR}/${ASSET}" -C "$TMP_DIR"
-install -m 0755 "${TMP_DIR}/omnicode" "${INSTALL_DIR}/omnicode"
+# Stage on the destination filesystem so the final rename replaces one entry.
+# A private directory protects the staged executable while it is checked.
+STAGE_DIR="$(mktemp -d -- "${INSTALL_DIR}/.omnicode-install.XXXXXXXX")"
+install -m 0755 -- "${TMP_DIR}/omnicode" "${STAGE_DIR}/omnicode"
+if ! INSTALLED_VERSION="$("${STAGE_DIR}/omnicode" --version)"; then
+    echo "error: downloaded binary failed its --version check; existing installation kept" >&2
+    exit 1
+fi
+# -T also prevents an existing directory from redirecting the destination.
+mv -fT -- "${STAGE_DIR}/omnicode" "${INSTALL_DIR}/omnicode"
 
-echo "Installed omnicode to ${INSTALL_DIR}/omnicode ($("${INSTALL_DIR}/omnicode" --version))"
+echo "Installed omnicode to ${INSTALL_DIR}/omnicode (${INSTALLED_VERSION})"
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*) ;;
     *) echo "Note: add ${INSTALL_DIR} to your PATH: export PATH=\"${INSTALL_DIR}:\$PATH\"" ;;

@@ -7,8 +7,13 @@ No Zig package dependencies; native HTTP, TLS, and JSON use the standard library
 
 ## Quick install (Linux x86_64 & aarch64)
 
-The installer requires `curl`, `tar`, and `sha256sum`. It verifies the archive
-against the release’s `SHA256SUMS` and stops if verification is unavailable or fails.
+The installer requires `curl`, `tar`, `awk`, and standard Linux coreutils
+(including `sha256sum`, `install`, `mktemp`, and `mv` with `-T`). It verifies the
+archive against the release’s `SHA256SUMS` and stops if verification is unavailable
+or fails. Updates stage the binary in a private directory on the installation
+filesystem, check `--version`, and rename it into place. Failures before replacement
+preserve the existing binary; destination links are replaced without modifying
+their targets, and a directory at the binary path is rejected.
 
 Install the prebuilt static Linux binary to `~/.local/bin/omnicode` (requires [ripgrep](https://github.com/BurntSushi/ripgrep) `rg` for `glob`/`grep` search):
 
