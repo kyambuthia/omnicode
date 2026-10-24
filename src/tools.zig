@@ -42,7 +42,10 @@ pub const Context = struct {
             var n: usize = 0;
             while (lines.next()) |line| : (n += 1) {
                 if (n < offset) continue;
-                if (n - offset >= count or out.writer.end + line.len + 32 > limit) break;
+                if (n - offset >= count or out.writer.end + line.len + 32 > limit) {
+                    try out.writer.writeAll("[truncated; use offset]\n");
+                    break;
+                }
                 try out.writer.print("{d}| {s}\n", .{ n + 1, line });
             }
             return out.toOwnedSlice();
@@ -130,7 +133,8 @@ test "file tools modify real files and reject ambiguous or invalid edits" {
     const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
     _ = try c.run("write", try j.parse(c.a, "{\"path\":\"a\",\"content\":\"one\\ntwo\\none\"}"));
     const read = try c.run("read", try j.parse(c.a, "{\"path\":\"a\",\"offset\":1,\"limit\":1}"));
-    try std.testing.expectEqualStrings("2| two\n", read);
+    try std.testing.expect(std.mem.startsWith(u8, read, "2| two\n"));
+    try std.testing.expect(std.mem.indexOf(u8, read, "truncated") != null);
     const edit = try j.parse(c.a, "{\"path\":\"a\",\"old\":\"one\",\"new\":\"three\"}");
     try std.testing.expectError(error.AmbiguousMatch, c.run("edit", edit));
     _ = try c.run("edit", try j.parse(c.a, "{\"path\":\"a\",\"old\":\"one\",\"new\":\"three\",\"all\":true}"));

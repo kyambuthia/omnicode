@@ -41,7 +41,7 @@ pub fn complex(task: []const u8) bool {
     if (task.len > 240) return true;
     var words = std.mem.tokenizeAny(u8, task, " \t\r\n.,:;!?/()-");
     while (words.next()) |word| {
-        inline for (.{ "implement", "build", "create", "write", "edit", "fix", "debug", "refactor", "test", "tests", "migrate", "design", "architecture", "optimize", "security", "review" }) |verb| {
+        inline for (.{ "implement", "add", "change", "update", "remove", "delete", "plan", "reason", "diagnose", "build", "create", "write", "edit", "fix", "debug", "refactor", "test", "tests", "migrate", "design", "architecture", "optimize", "security", "review" }) |verb| {
             if (std.ascii.eqlIgnoreCase(word, verb)) return true;
         }
     }

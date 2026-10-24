@@ -10,8 +10,9 @@ database, background service, or speculative abstractions.
 
 `model tool calls -> local tools / skill loader -> tool results -> loop`
 
-Use the same Messages protocol for Anthropic and OpenRouter. Select fast/strong models automatically using a documented task heuristic, with
-explicit provider selection and a manual model override. Pin routing per turn.
+Use the same Messages protocol for Anthropic and OpenRouter. Select fast/strong
+models automatically using a documented task heuristic, with explicit provider
+selection and a manual model override. Pin routing per turn.
 Do not silently retry mutations or switch providers. Skills are local instructions,
 not plugins: advertise names/descriptions and load a body only when requested.
 
@@ -37,7 +38,7 @@ automated verification.
 
 Trusted local use: tools operate with the user's permissions, without a sandbox.
 Initial scope is POSIX, Zig 0.17.0, and ripgrep for glob/regex search. No streaming,
-an LLM-based routing classifier, MCP, persisted sessions, or full YAML parser.
+LLM-based routing classifier, MCP, persisted sessions, or full YAML parser.
 
 ## Primary references
 
@@ -53,4 +54,23 @@ an LLM-based routing classifier, MCP, persisted sessions, or full YAML parser.
 - [x] Router and foundation (route tests and build pass).
 - [x] Tools and skills (real file, skill, deadline and output-limit tests).
 - [x] Agent and CLI (build, unit tests, offline help and skill listing pass).
-- [ ] Acceptance and documentation.
+- [x] Acceptance and documentation (7 unit tests and 11 integration tests pass).
+
+## Completed roadmap
+
+```mermaid
+flowchart LR
+    A[Router and foundation] --> B[Tools and skills]
+    B --> C[Agent loop and CLI]
+    C --> D[Mock API acceptance and docs]
+```
+
+The implementation uses roughly 600 physical lines of Zig including unit tests
+and build configuration. Integration tests are separate Python standard-library
+code. Minimize future growth by adding capabilities to the existing tool registry
+and routing policy before introducing new layers.
+
+Acceptance found a Zig 0.17.0 HTTP client discrepancy: `privileged_headers` are
+stored but not emitted by `Request.sendHead`. Authentication uses `extra_headers`
+with redirects disabled; integration tests verify both providers' actual headers.
+No live paid model call was used for verification.

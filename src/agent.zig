@@ -91,14 +91,18 @@ pub const Agent = struct {
             .{ .name = "x-api-key", .value = route.key }
         else
             .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
-        const response = try @import("deadline.zig").run(self.context.io, std.http.Client.fetch, .{ &client, std.http.Client.FetchOptions{
-            .location = .{ .url = route.url },
-            .payload = body,
-            .response_writer = &writer,
-            .redirect_behavior = .unhandled,
-            .headers = .{ .content_type = .{ .override = "application/json" } },
-            .privileged_headers = &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } },
-        } }, 120_000);
+        const response = try @import("deadline.zig").run(self.context.io, std.http.Client.fetch, .{
+            &client,
+            std.http.Client.FetchOptions{
+                .location = .{ .url = route.url },
+                .payload = body,
+                .response_writer = &writer,
+                .redirect_behavior = .unhandled,
+                .headers = .{ .content_type = .{ .override = "application/json" } },
+                // Zig 0.17 does not emit privileged_headers; redirects stay disabled.
+                .extra_headers = &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } },
+            },
+        }, 120_000);
         if (response.status != .ok) {
             // Avoid printing server bodies, which can reflect credentials or file content.
             std.debug.print("API HTTP {d}\n", .{@backingInt(response.status)});
