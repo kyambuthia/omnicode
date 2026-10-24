@@ -237,7 +237,14 @@ pub const Context = struct {
     }
 
     pub fn initProject(c: Context, force: bool) ![]const u8 {
-        if (!force and c.hasFile("OMNICODE.md")) return error.AlreadyInitialized;
+        if (!force) {
+            if (c.dir.statFile(c.io, "OMNICODE.md", .{ .follow_symlinks = false })) |_| {
+                return error.AlreadyInitialized;
+            } else |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            }
+        }
         const commands = if (c.hasFile("build.zig"))
             "- Build: `zig build`\n- Test: `zig build test`\n- Format check: `zig fmt --check src`"
         else if (c.hasFile("Cargo.toml"))
@@ -265,22 +272,31 @@ pub const Context = struct {
             \\- Run the verification commands and the `review` tool on non-trivial changes before finishing.
             \\
         , .{commands});
-        try c.dir.writeFile(c.io, .{ .sub_path = "OMNICODE.md", .data = doc });
         const skill_path = try std.fmt.allocPrint(c.a, "{s}/verify", .{c.skills_path});
         const skill_file = try std.fmt.allocPrint(c.a, "{s}/verify/SKILL.md", .{c.skills_path});
         try c.dir.createDirPath(c.io, skill_path);
-        if (force or !c.hasFile(skill_file)) {
-            const verify_skill =
-                \\---
-                \\name: verify
-                \\description: Run build, test, and adversarial review checks before finishing
-                \\---
-                \\1. Run the verification commands in `OMNICODE.md`.
-                \\2. Run the `review` tool to audit changes with the correctness and anti-slop critics.
-                \\3. Fix any reported issues before concluding.
-                \\
-            ;
+        // Prepare directories before publishing the instruction file, so an
+        // invalid skills directory does not leave OMNICODE.md half-initialized.
+        if (force) {
+            try c.dir.writeFile(c.io, .{ .sub_path = "OMNICODE.md", .data = doc });
+        } else if (!try @import("storage.zig").createNew(c.io, c.dir, "OMNICODE.md", doc)) {
+            return error.AlreadyInitialized;
+        }
+        const verify_skill =
+            \\---
+            \\name: verify
+            \\description: Run build, test, and adversarial review checks before finishing
+            \\---
+            \\1. Run the verification commands in `OMNICODE.md`.
+            \\2. Run the `review` tool to audit changes with the correctness and anti-slop critics.
+            \\3. Fix any reported issues before concluding.
+            \\
+        ;
+        if (force) {
             try c.dir.writeFile(c.io, .{ .sub_path = skill_file, .data = verify_skill });
+        } else {
+            if (!try @import("storage.zig").createNew(c.io, c.dir, skill_file, verify_skill))
+                return "Initialized OMNICODE.md; preserved the existing verification skill.";
         }
         return "Initialized OMNICODE.md and .omnicode/skills/verify/SKILL.md.";
     }
@@ -517,4 +533,26 @@ test "NUL in tool paths and command arguments is rejected before side effects" {
     // File contents are length-delimited and may legitimately contain NUL.
     _ = try c.run("write", try j.parse(c.a, try j.encode(c.a, .{ .path = "binary", .content = "a\x00b" })));
     try std.testing.expectEqualStrings("a\x00b", try c.readFile("binary"));
+}
+
+test "project initialization preserves oversized files and stops before blocked skills paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
+    const large: [limit + 1]u8 = @splat('x');
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "OMNICODE.md", .data = &large });
+    try std.testing.expectError(error.AlreadyInitialized, c.initProject(false));
+    try std.testing.expectEqualStrings(&large, try c.readFile("OMNICODE.md"));
+    try tmp.dir.deleteFile(c.io, "OMNICODE.md");
+    try tmp.dir.createDirPath(c.io, ".omnicode/skills/verify");
+    try tmp.dir.writeFile(c.io, .{ .sub_path = ".omnicode/skills/verify/SKILL.md", .data = &large });
+    _ = try c.initProject(false);
+    try std.testing.expectEqualStrings(&large, try c.readFile(".omnicode/skills/verify/SKILL.md"));
+    try tmp.dir.deleteFile(c.io, "OMNICODE.md");
+    var blocked = c;
+    blocked.skills_path = ".omnicode/skills/verify/SKILL.md";
+    if (blocked.initProject(false)) |_| return error.TestUnexpectedResult else |_| {}
+    try std.testing.expectError(error.FileNotFound, c.readFile("OMNICODE.md"));
 }

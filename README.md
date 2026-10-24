@@ -411,6 +411,14 @@ checklist, and recent tool pairs intact. `/save` and `/resume` persist sessions
 under `.omnicode/sessions/`. Tool schemas attach an ephemeral `cache_control`
 breakpoint for prompt caching.
 
+Initialization preserves existing instruction and verification-skill entries
+unless `force` is explicit, including oversized files, unreadable files, and
+symlinks. New files are published only after their complete contents are written,
+and creation refuses to replace an entry that appears concurrently. Skill
+directories are prepared before publishing `OMNICODE.md`; the two files are
+updated separately, so a later failure can still leave partial initialization.
+Inspect the files before using `force` after a failure.
+
 ## Verification
 
 ```sh

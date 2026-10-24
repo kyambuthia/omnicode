@@ -5,6 +5,20 @@ pub fn validatePath(path: []const u8) !void {
     if (std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPath;
 }
 
+/// Publish complete contents only if the destination is still absent.
+/// Returns false when any entry (including a dangling symlink) already exists.
+pub fn createNew(io: std.Io, dir: std.Io.Dir, path: []const u8, data: []const u8) !bool {
+    try validatePath(path);
+    var file = try dir.createFileAtomic(io, path, .{});
+    defer file.deinit(io);
+    try file.file.writeStreamingAll(io, data);
+    file.link(io) catch |err| switch (err) {
+        error.PathAlreadyExists => return false,
+        else => return err,
+    };
+    return true;
+}
+
 /// Replace private state only after its complete contents have been written.
 /// Replacing the directory entry also avoids following a destination symlink
 /// or modifying another hard link to the old file.
@@ -47,4 +61,18 @@ test "private writes reject NUL paths before replacing a destination" {
     const text = try tmp.dir.readFileAlloc(io, "state", std.testing.allocator, .limited(32));
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("original", text);
+}
+
+test "new files are published completely without replacing existing entries" {
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try std.testing.expect(try createNew(io, tmp.dir, "new", "complete contents"));
+    try std.testing.expect(!try createNew(io, tmp.dir, "new", "replacement"));
+    const text = try tmp.dir.readFileAlloc(io, "new", std.testing.allocator, .limited(32));
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("complete contents", text);
+    var iterator = tmp.dir.iterate();
+    try std.testing.expectEqualStrings("new", (try iterator.next(io)).?.name);
+    try std.testing.expect(try iterator.next(io) == null);
 }

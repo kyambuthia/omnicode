@@ -1272,6 +1272,62 @@ class Integration(unittest.TestCase):
         self.assertEqual([r["model"] for r in audio_reqs], ["cheap/voice-flash", "custom/voice-model"])
         self.assertEqual(audio_reqs[0]["messages"][0]["content"][1]["input_audio"]["format"], "wav")
 
+    def test_init_preserves_existing_instruction_entries_without_force(self):
+        destination = self.cwd / "OMNICODE.md"
+        target = self.cwd / "instruction-target"
+        for kind in ("large file", "unreadable file", "dangling symlink", "symlink", "directory"):
+            with self.subTest(kind=kind):
+                if destination.is_symlink() or destination.is_file():
+                    destination.unlink()
+                elif destination.exists():
+                    destination.rmdir()
+                target.unlink(missing_ok=True)
+                if kind == "directory":
+                    destination.mkdir()
+                elif "symlink" in kind:
+                    if kind == "symlink": target.write_text("keep target")
+                    destination.symlink_to(target)
+                else:
+                    destination.write_text("x" * 65537 if kind == "large file" else "keep instructions")
+                    if kind == "unreadable file": destination.chmod(0)
+                result = self.run_agent("--init")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("AlreadyInitialized", result.stderr)
+                if "symlink" in kind:
+                    self.assertTrue(destination.is_symlink())
+                    if kind == "symlink": self.assertEqual(target.read_text(), "keep target")
+                    else: self.assertFalse(target.exists())
+                elif kind == "directory":
+                    self.assertTrue(destination.is_dir())
+                else:
+                    destination.chmod(0o600)
+                    self.assertEqual(destination.read_text(), "x" * 65537 if kind == "large file" else "keep instructions")
+                self.assertEqual(self.requests, [])
+
+    def test_init_preserves_existing_verify_skill_links_and_large_files(self):
+        skill = self.cwd / ".omnicode/skills/verify/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        target = self.cwd / "skill-target"
+        for kind in ("large file", "dangling symlink", "symlink"):
+            with self.subTest(kind=kind):
+                (self.cwd / "OMNICODE.md").unlink(missing_ok=True)
+                skill.unlink(missing_ok=True)
+                target.unlink(missing_ok=True)
+                if kind == "large file": skill.write_text("x" * 65537)
+                else:
+                    if kind == "symlink": target.write_text("keep skill")
+                    skill.symlink_to(target)
+                result = self.run_agent("--init")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if kind == "large file": self.assertEqual(skill.read_text(), "x" * 65537)
+                else:
+                    self.assertTrue(skill.is_symlink())
+                    if kind == "symlink": self.assertEqual(target.read_text(), "keep skill")
+                    else: self.assertFalse(target.exists())
+                self.assertIn("preserved the existing verification skill", result.stdout)
+                self.assertTrue((self.cwd / "OMNICODE.md").is_file())
+                self.assertEqual(self.requests, [])
+
     def test_init_project_instructions_and_adversarial_multi_agent_review(self):
         (self.cwd / "build.zig").write_text("// zig build")
         (self.cwd / "target.zig").write_text("pub fn add(a: i32, b: i32) i32 { return a + b; }\n")
