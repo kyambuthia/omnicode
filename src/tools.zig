@@ -18,7 +18,7 @@ pub const schema =
 pub const Context = struct {
     a: j.Allocator,
     io: Io,
-    dir: Io.Dir = .cwd(),
+    dir: Io.Dir,
     skills_path: []const u8 = ".omnicode/skills",
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
@@ -168,7 +168,7 @@ test "skills advertise metadata, load body, and reject traversal" {
 test "commands bound runtime/output and report search misses" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io };
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = .cwd() };
     try std.testing.expectEqualStrings("ok", try c.command(&.{ "sh", "-c", "printf ok" }, false, 1000));
     try std.testing.expectEqualStrings("none", try c.command(&.{ "sh", "-c", "exit 1" }, true, 1000));
     try std.testing.expectError(error.Timeout, c.command(&.{ "sh", "-c", "exec sleep 2" }, false, 30));

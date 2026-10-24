@@ -65,7 +65,7 @@ fn run(init: std.process.Init) !void {
         try out.writeAll(help);
         return out.flush();
     }
-    const context: core.Context = .{ .a = a, .io = init.io };
+    const context: core.Context = .{ .a = a, .io = init.io, .dir = .cwd() };
     if (!prompt_only and args.len == first + 1 and std.mem.eql(u8, args[first], "--skills")) {
         const skills = try context.skills();
         try ui.skills(skills);
@@ -76,7 +76,7 @@ fn run(init: std.process.Init) !void {
     var automatic = true;
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
-    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io }, init.environ_map, route);
+    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd() }, init.environ_map, route);
     if (args.len > first) {
         agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
             try ui.errorMessage(err);
@@ -184,7 +184,7 @@ fn run(init: std.process.Init) !void {
         }
         _ = arena.reset(.free_all);
         route.mode = mode;
-        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io }, init.environ_map, route);
+        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd() }, init.environ_map, route);
         agent.automatic = automatic;
         try out.writeAll("Conversation cleared.\n");
     }
