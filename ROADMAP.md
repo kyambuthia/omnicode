@@ -103,3 +103,37 @@ both styled and `NO_COLOR`. Include delayed responses to exercise the waiting
 indicator, malformed tool results, compact/full output, and edit/failure display.
 Live OpenRouter verification also completed read/edit/command calls with the new
 transcript, and the edited fixture contents were checked directly.
+
+## fx study and small UI commits
+
+Studied installed fx 0.0.14 and Vercel's source pinned at
+[`2327e3c`](https://github.com/vercel-labs/fx/tree/2327e3cb8e6ce449836f22fdc6c32437fd8c5cbc).
+The CLI's `ask --no-save` rendered a user card, a compact tool summary, and a
+visible denial when safety review was unavailable. Successful command rendering
+was not verified in that run. No fx configuration or access policy was changed.
+
+Source observations:
+
+- [Theme](https://github.com/vercel-labs/fx/blob/2327e3cb8e6ce449836f22fdc6c32437fd8c5cbc/src/core/shared/theme.zig): semantic styles and predominantly neutral defaults.
+- [Tool projection](https://github.com/vercel-labs/fx/blob/2327e3cb8e6ce449836f22fdc6c32437fd8c5cbc/src/ui/transcript/tool_group_projection.zig): compact/expanded views derived from retained tool records, with failures tracked separately.
+- [Activity status](https://github.com/vercel-labs/fx/blob/2327e3cb8e6ce449836f22fdc6c32437fd8c5cbc/src/core/output/activity_status.zig): phase, elapsed time, and token counters share a status presentation.
+- [Terminal runtime](https://github.com/vercel-labs/fx/blob/2327e3cb8e6ce449836f22fdc6c32437fd8c5cbc/src/ui/shell_runtime.zig): raw input and terminal restoration are explicit responsibilities.
+
+Our adaptation should borrow the hierarchy, without copying fx's larger runtime.
+Implement each numbered item as an independently verified commit, splitting it
+further if it changes more than one behavior:
+
+1. Quiet routine chrome: neutral headings and completion, dim routing metadata;
+   retain distinct failure and diff cues. Existing PTY tests verify styling and
+   `NO_COLOR` behavior.
+2. Compact routine tool presentation; keep arguments, outcome, and omitted-output
+   counts visible. Verify failures and verbose output before changing defaults.
+3. Retain bounded display details and add a command to recover the last omitted
+   output. Verify eviction and terminal-control sanitization.
+4. Render basic Markdown headings and code fences. Verify literal code content
+   and redirected output independently.
+5. Add an input module with terminal restoration and bracketed paste; test
+   interruption and EOF before adding history or multiline editing in later commits.
+
+These are proposed Omnicode choices, not claims that fx uses the same design.
+Keep native scrollback and avoid new dependencies; measure LOC growth per change.
