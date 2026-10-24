@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Check formatting
+        run: zig fmt --check build.zig build.zig.zon src
+      - name: Run unit tests
+        run: zig build test --summary all
+      - name: Build binary
+        run: zig build --summary all
+      - name: Run integration tests
+        run: python3 tests/integration.py -v

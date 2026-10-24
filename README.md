@@ -26,12 +26,12 @@ export OPENROUTER_API_KEY='your-key'
 ./zig-out/bin/omnicode
 ```
 
-Use `zig build run -- 'your task'` during development. `--help`, `--skills`, and `--init`
+Use `zig build run -- 'your task'` during development. `--help`, `--skills`, `--init`, and `--setup`
 work without a key or network connection. Do not put API keys in tracked files.
 
 ```text
 omnicode [--free|--cost-max] [--verbose] [--] [prompt ...]
-omnicode --skills | --init [force] | --help
+omnicode --skills | --init [force] | --setup [...] | --help
 ```
 
 | Option | Effect |
@@ -40,6 +40,7 @@ omnicode --skills | --init [force] | --help
 | `--free` | Only zero-price OpenRouter tool models; forces OpenRouter and rejects paid overrides |
 | `--verbose` | Full tool output instead of compact previews |
 | `--init [force]` | Bootstrap `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md` for the current repository |
+| `--setup [...]` | View or configure provider API keys and settings in `~/.config/omnicode/config.env` (`0o600`) |
 | `--` | Treat every following argument literally as prompt text (e.g. `-- --help me`) |
 
 `--free` and `--cost-max` together is an error (`ConflictingOptions`); other
@@ -60,11 +61,14 @@ beyond those keywords; override the model for ambiguous work.
 
 | Variable | Meaning / default |
 |---|---|
-| `PROVIDER` | `anthropic` or `openrouter`; otherwise OpenRouter when its key is set, Anthropic otherwise. `--free` forces `openrouter` |
-| `MODEL` | Strong model. Default: `claude-haiku-4-5` (Anthropic) or catalog-selected (OpenRouter) |
-| `FAST_MODEL` | Fast model. Default: `claude-haiku-4-5` (Anthropic) or catalog-selected (OpenRouter) |
+| `PROVIDER` | `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq`; otherwise auto-detected from configured API keys. `--free` forces `openrouter` |
+| `MODEL` | Strong model. Default: provider default or catalog-selected (OpenRouter) |
+| `FAST_MODEL` | Fast model. Default: provider default or catalog-selected (OpenRouter) |
+| `VOICE_MODEL` | Audio transcription model for `/voice`. Default: cheapest audio-capable model in the OpenRouter catalog (fallback `google/gemini-2.0-flash-lite-001`) |
 | `ANTHROPIC_API_KEY` | Key for direct Anthropic requests |
-| `OPENROUTER_API_KEY` | Key for OpenRouter requests |
+| `OPENROUTER_API_KEY` | Key for OpenRouter requests and `/voice` audio transcription |
+| `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY` | Keys for additional providers (manageable via `/setup`) |
+| `OMNICODE_CONFIG` | Optional path to the persistent config file (default: `$XDG_CONFIG_HOME/omnicode/config.env` or `~/.config/omnicode/config.env`) |
 | `API_URL` | Optional **complete Messages endpoint URL**, primarily for local testing |
 | `MODELS_URL` | Optional OpenRouter model catalog URL (public metadata; the API key is never sent to it) |
 | `OMNICODE_STATUS` | Status line mode: `pinned` (default), `inline`, `title`, or `off` |
@@ -102,6 +106,12 @@ REPL commands:
 
 | Command | Effect |
 |---|---|
+| `/setup` | Show configured provider API keys (masked), active settings, and config file path |
+| `/setup <provider> <key>` | Save an API key for `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq` (`0o600`) and activate it |
+| `/setup set <KEY> <VALUE>` | Persist a setting (`PROVIDER`, `MODEL`, `FAST_MODEL`, `VOICE_MODEL`, etc.) and apply it immediately |
+| `/setup unset <provider\|KEY>` | Remove a saved API key or setting |
+| `/voice [seconds\|file.wav]` | Record microphone audio (default 5s) or read an audio file, transcribe via cheap OpenRouter audio models, and run the spoken prompt |
+| `/voice model [MODEL]` | View or pin `VOICE_MODEL` for voice transcription |
 | `/init [force]` | Generate `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md`, then reload system instructions |
 | `/review [focus]` | Run the two-critic adversarial code review (Correctness/Security + Anti-Slop/Simplicity) on workspace changes |
 | `/model openrouter anthropic/claude-sonnet-4.5` | Pin a provider/model and clear history |

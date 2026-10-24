@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const Io = std.Io;
 
 /// Status line state shared by the REPL and the agent; it never affects model input.
@@ -91,20 +90,20 @@ pub const Clock = struct {
 
 /// Terminal columns from the TTY, then COLUMNS, then 80; clamped like other previews.
 pub fn terminalWidth(env: *const std.process.Environ.Map) usize {
-    if (builtin.os.tag == .linux) {
+    if (@hasDecl(std.posix.T, "IOCGWINSZ")) {
         var size: std.posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
-        const rc = std.os.linux.ioctl(1, std.os.linux.T.IOCGWINSZ, @intFromPtr(&size));
-        if (std.os.linux.errno(rc) == .SUCCESS and size.col > 0) return std.math.clamp(size.col, 40, 160);
+        const rc = std.posix.system.ioctl(1, std.posix.T.IOCGWINSZ, @intFromPtr(&size));
+        if (std.posix.errno(rc) == .SUCCESS and size.col > 0) return std.math.clamp(size.col, 40, 160);
     }
     return std.math.clamp(std.fmt.parseInt(usize, env.get("COLUMNS") orelse "80", 10) catch 80, 40, 160);
 }
 
 /// Terminal rows from the TTY; returns 0 when unavailable or smaller than the 10-row minimum.
 pub fn terminalRows() usize {
-    if (builtin.os.tag == .linux) {
+    if (@hasDecl(std.posix.T, "IOCGWINSZ")) {
         var size: std.posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
-        const rc = std.os.linux.ioctl(1, std.os.linux.T.IOCGWINSZ, @intFromPtr(&size));
-        if (std.os.linux.errno(rc) == .SUCCESS and size.row >= 10) return size.row;
+        const rc = std.posix.system.ioctl(1, std.posix.T.IOCGWINSZ, @intFromPtr(&size));
+        if (std.posix.errno(rc) == .SUCCESS and size.row >= 10) return size.row;
     }
     return 0;
 }

@@ -23,7 +23,7 @@ pub fn recordAudio(c: tools.Context, env: *const std.process.Environ.Map, second
     try c.dir.createDirPath(c.io, ".omnicode");
     const out_path = ".omnicode/voice.wav";
     const cmd = if (env.get("OMNICODE_VOICE_CMD")) |custom|
-        try std.fmt.allocPrint(c.a, "OMNICODE_VOICE_OUT={s} OMNICODE_VOICE_SECONDS={d} {s}", .{ out_path, secs, custom })
+        try std.fmt.allocPrint(c.a, "export OMNICODE_VOICE_OUT={s} OMNICODE_VOICE_SECONDS={d}; {s}", .{ out_path, secs, custom })
     else
         try std.fmt.allocPrint(
             c.a,

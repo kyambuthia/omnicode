@@ -708,7 +708,8 @@ class Integration(unittest.TestCase):
     def test_offline_commands_and_missing_key(self):
         self.skill()
         self.env.pop("ANTHROPIC_API_KEY")
-        for args in [("--help",), ("--skills",), ("--init",)]:
+        self.env.pop("OPENROUTER_API_KEY", None)
+        for args in [("--help",), ("--skills",), ("--init",), ("--setup",)]:
             self.assertEqual(self.run_agent(*args).returncode, 0)
         self.assertTrue((self.cwd / "OMNICODE.md").exists())
         self.assertTrue((self.cwd / ".omnicode/skills/verify/SKILL.md").exists())
@@ -716,6 +717,65 @@ class Integration(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("MissingApiKey", result.stderr)
         self.assertEqual(self.requests, [])
+
+    def test_setup_multi_provider_keys_and_voice_transcription(self):
+        # 1. Configure DeepSeek via offline --setup; verify config.env permissions and masked display.
+        self.env.pop("ANTHROPIC_API_KEY", None)
+        self.env.pop("OPENROUTER_API_KEY", None)
+        self.env.pop("PROVIDER", None)
+        self.env.pop("MODEL", None)
+        self.env.pop("FAST_MODEL", None)
+        setup_res = self.run_agent("--setup", "deepseek", "sk-deepseek-secret-9876")
+        self.assertEqual(setup_res.returncode, 0, setup_res.stderr)
+        self.assertIn("sk-d...9876", setup_res.stdout)
+        self.assertNotIn("secret", setup_res.stdout)
+        cfg_file = Path(self.tmp.name) / ".config/omnicode/config.env"
+        self.assertTrue(cfg_file.exists())
+        self.assertEqual(cfg_file.stat().st_mode & 0o777, 0o600)
+        # Subsequent run loads DEEPSEEK_API_KEY and PROVIDER=deepseek from config.env.
+        self.reply = lambda _: text("deepseek reply")
+        run_ds = self.run_agent("explain code")
+        self.assertEqual(run_ds.returncode, 0, run_ds.stderr)
+        self.assertEqual(self.requests[-1][0]["model"], "deepseek-chat")
+        self.assertEqual(self.requests[-1][1]["authorization"], "Bearer sk-deepseek-secret-9876")
+
+        # 2. In REPL: configure OpenRouter via /setup, transcribe a WAV file and a recorded voice clip via /voice.
+        self.requests.clear()
+        self.catalog_requests.clear()
+        self.catalog["data"].extend([
+            {"id": "expensive/audio-model", "pricing": {"prompt": "0.00001", "completion": "0.00002"},
+             "context_length": 65536, "supported_parameters": ["tools"],
+             "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]}},
+            {"id": "cheap/voice-flash", "pricing": {"prompt": "0.00000005", "completion": "0.0000001"},
+             "context_length": 65536, "supported_parameters": ["tools"],
+             "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]}},
+        ])
+        (self.cwd / "sample.wav").write_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt ")
+        self.env["OMNICODE_VOICE_CMD"] = 'printf "RIFFrecorded" > "$OMNICODE_VOICE_OUT"'
+        def voice_and_turn_reply(body):
+            content = body["messages"][0]["content"]
+            if isinstance(content, list) and any(b.get("type") == "input_audio" for b in content):
+                return {"choices": [{"message": {"content": "list project files"}}],
+                        "usage": {"input_tokens": 25, "output_tokens": 4, "cost": 0.00001}}
+            return text("voice command executed")
+        self.reply = voice_and_turn_reply
+        repl = self.run_agent(stdin=(
+            "/setup openrouter sk-or-voice-key-1234\n"
+            "/setup set PROVIDER openrouter\n"
+            "/setup\n"
+            "/voice sample.wav\n"
+            "/voice model custom/voice-model\n"
+            "/voice record 1\n"
+            "/exit\n"
+        ))
+        self.assertEqual(repl.returncode, 0, repl.stderr)
+        self.assertIn("sk-o...1234", repl.stdout)
+        self.assertEqual(repl.stdout.count("Voice: list project files"), 2)
+        self.assertEqual(repl.stdout.count("voice command executed"), 2)
+        # First /voice selected cheap/voice-flash from the OpenRouter catalog; second used pinned custom/voice-model.
+        audio_reqs = [r[0] for r in self.requests if isinstance(r[0]["messages"][0]["content"], list)]
+        self.assertEqual([r["model"] for r in audio_reqs], ["cheap/voice-flash", "custom/voice-model"])
+        self.assertEqual(audio_reqs[0]["messages"][0]["content"][1]["input_audio"]["format"], "wav")
 
     def test_init_project_instructions_and_adversarial_multi_agent_review(self):
         (self.cwd / "build.zig").write_text("// zig build")

@@ -26,6 +26,7 @@ pub const Agent = struct {
     compaction_budget: usize = max_compactions,
     last_input_tokens: u64 = 0,
     context_length: usize = 128 * 1024,
+    cached_catalog: ?Catalog = null,
     history: std.ArrayList(Message) = .empty,
     system: []const u8,
     schemas: j.Value,
@@ -65,9 +66,11 @@ pub const Agent = struct {
         var route = if (self.automatic) self.route.forTask(self.env, prompt) else self.route;
         var metadata = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer metadata.deinit();
+        defer self.cached_catalog = null;
         if (route.provider == .openrouter) {
             if (route.key.len == 0) return error.MissingApiKey;
-            const catalog = try ui.work("Refreshing model catalog...", Catalog.load, .{ metadata.allocator(), self.context.io, self.env });
+            const catalog = try self.loadCatalog(metadata.allocator(), ui);
+            self.cached_catalog = catalog;
             const requested = if (self.automatic) self.env.get(if (@import("router.zig").complex(prompt)) "MODEL" else "FAST_MODEL") else self.route.model;
             route = try catalog.select(route, requested, @import("router.zig").complex(prompt));
         } else if (route.mode == .free) return error.FreeRequiresOpenRouter;
@@ -208,7 +211,7 @@ pub const Agent = struct {
         var route = if (self.automatic) self.route.forTask(self.env, "lookup") else self.route;
         if (route.provider == .openrouter) {
             if (route.key.len == 0) return error.MissingApiKey;
-            const catalog = try ui.work("Refreshing model catalog...", Catalog.load, .{ sa, self.context.io, self.env });
+            const catalog = try self.loadCatalog(sa, ui);
             const requested = if (self.automatic) self.env.get("FAST_MODEL") else self.route.model;
             route = try catalog.select(route, requested, false);
         }
@@ -346,6 +349,11 @@ pub const Agent = struct {
         self.history = next;
     }
 
+    fn loadCatalog(self: *Agent, a: std.mem.Allocator, ui: Ui) !Catalog {
+        if (self.cached_catalog) |cat| return cat;
+        return ui.work("Refreshing model catalog...", Catalog.load, .{ a, self.context.io, self.env });
+    }
+
     fn request(self: *Agent, route: Route, body: []const u8) !j.Value {
         if (route.key.len == 0) return error.MissingApiKey;
         const a = self.context.a;
@@ -388,6 +396,11 @@ pub const Agent = struct {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const sa = scratch.allocator();
+        const owned_catalog = self.cached_catalog == null and self.route.provider == .openrouter and self.route.key.len > 0;
+        if (owned_catalog) self.cached_catalog = try self.loadCatalog(sa, ui);
+        defer if (owned_catalog) {
+            self.cached_catalog = null;
+        };
         var diff_ctx = self.context;
         diff_ctx.a = sa;
         const diff = try diff_ctx.collectDiff();
@@ -416,7 +429,7 @@ pub const Agent = struct {
         var route = if (self.automatic) self.route.forTask(self.env, if (strong) "implement" else "lookup") else self.route;
         if (route.provider == .openrouter) {
             if (route.key.len == 0) return error.MissingApiKey;
-            const catalog = try ui.work("Refreshing model catalog...", Catalog.load, .{ ca, self.context.io, self.env });
+            const catalog = try self.loadCatalog(ca, ui);
             const requested = if (self.automatic) self.env.get(if (strong) "MODEL" else "FAST_MODEL") else self.route.model;
             route = try catalog.select(route, requested, strong);
         } else if (route.mode == .free) return error.FreeRequiresOpenRouter;
@@ -431,6 +444,7 @@ pub const Agent = struct {
             .subagent = true,
             .turn_budget = 16,
             .compaction_budget = 1,
+            .cached_catalog = self.cached_catalog,
             .schemas = try j.parse(ca, if (read_only) tools.explore_schema else tools.edit_schema),
             .system = try ca.dupe(u8, system),
         };

@@ -475,7 +475,7 @@ flowchart LR
 4. Unit and integration tests covering `/exit`, default pinned status bar, `/init`,
    `OMNICODE.md`, and multi-agent adversarial review (`PASS` and `FAIL` verdicts).
 
-## Proposed: `/setup` multi-provider credential store, `/voice` OpenRouter audio input, and hardening
+## `/setup` multi-provider credential store, `/voice` OpenRouter audio input, and hardening (completed)
 
 ### 1. `/setup` and `--setup`: Multi-provider API keys and persistent configuration (`src/config.zig`, `src/router.zig`)
 

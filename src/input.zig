@@ -68,11 +68,15 @@ pub const Input = struct {
                 return error.InputCancelled;
             }
             if (pending != 0 or c == 27) {
-                sequence[pending] = c;
-                pending += 1;
+                if (pending < sequence.len) {
+                    sequence[pending] = c;
+                    pending += 1;
+                } else {
+                    pending = sequence.len + 1;
+                }
                 if (pending == 1 or (pending == 2 and c == '[')) continue;
-                if (pending < sequence.len and (c == '[' or (c >= '0' and c <= '9') or c == ';')) continue;
-                const escape = sequence[0..pending];
+                if (c == '[' or (c >= 0x20 and c <= 0x3f)) continue;
+                const escape = if (pending <= sequence.len) sequence[0..pending] else "";
                 if (std.mem.eql(u8, escape, "\x1b[200~")) paste = true;
                 if (std.mem.eql(u8, escape, "\x1b[201~")) paste = false;
                 if (!paste and std.mem.indexOfScalar(u8, self.bytes[0..n], '\n') == null and
