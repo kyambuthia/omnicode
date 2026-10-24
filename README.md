@@ -73,6 +73,7 @@ REPL commands:
 | `/help` | Show commands and configuration |
 | `/model` | Show current routing mode and models |
 | `/verbose on` or `/verbose off` | Switch future tool output between full and compact previews |
+| `/usage` | Show session token/cost totals, retained across clears and model changes |
 | `/details` | Recover the last tool result, up to 64 KiB; next tool call replaces it |
 | `/c` | Clear conversation and free session allocations |
 | `/q` or `exit` | Quit |
@@ -123,6 +124,40 @@ Pipes, dumb terminals, and `NO_COLOR` use canonical input. This is a basic
 composer: history navigation, arbitrary cursor movement, and a full-screen editor
 are not implemented; wide-character and wrapped-line backspace display is limited.
 Codex and fx references are recorded in [ROADMAP.md](ROADMAP.md).
+
+## Token and cost usage
+
+Each turn reports input/output tokens, cache reads/writes, and cost across every
+returned API response, including tool continuations and rejected truncated replies.
+`/usage` shows totals for the current process; `/c` and model changes preserve them.
+Input and cache counts are shown separately as reported by the Messages endpoint.
+
+Provider `usage.cost` takes precedence and is labeled `reported`. Otherwise,
+known default model rates produce a labeled `estimated` amount. Unknown prices or
+missing usage are explicitly unavailable; a partial known cost is labeled a
+subtotal. Requests that fail before a parseable response cannot contribute usage.
+Totals are in memory and are not an account-wide billing ledger.
+
+Fallback rates checked on 2026-10-24, USD per million tokens:
+
+| Model | Input | Output | Cache read | Cache write (5 min / 1 hour) |
+|---|---:|---:|---:|---:|
+| GPT-4.1 Nano | $0.10 | $0.40 | — | — |
+| GPT-4.1 Mini | $0.40 | $1.60 | — | — |
+| Claude Haiku 4.5 | $1.00 | $5.00 | $0.10 | $1.25 / $2.00 |
+
+For translated OpenAI cache usage, fallback cost stays unavailable unless the
+provider reports it; this avoids assuming that upstream cache counters share
+Anthropic's billing semantics. Rates are deliberately a small static table, so
+estimates may differ from future prices or negotiated rates. They exclude taxes
+and fees. No extra billing requests or pricing dependencies are added.
+
+References: [OpenRouter usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting),
+[Messages schema](https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-a-message),
+[model pricing catalog](https://openrouter.ai/api/v1/models), and
+[Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing).
+The general OpenRouter usage guide includes a cost field; its Messages schema
+example omits it, so the implementation supports both shapes.
 
 ## Skills
 

@@ -92,8 +92,9 @@ porting its Rust renderer or introducing a terminal framework.
 | [Diff presentation](https://github.com/openai/codex/blob/main/codex-rs/tui/src/diff_render.rs) | Red/green old/new replacement snippets after successful edits |
 | [Composer help and command discovery](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs) | Startup hints, explicit `/help`, routing status, and verbose-output controls |
 
-Keep the transcript in normal terminal scrollback. No raw-mode input, alternate
-screen, or keyboard shortcut claims that the implementation cannot fulfill.
+Keep the transcript in normal terminal scrollback. This first increment used
+canonical input; the later fx increment adds a scoped raw-input module. No
+alternate screen or keyboard shortcut claims that the implementation cannot fulfill.
 Honor `NO_COLOR`, redirected output, and dumb terminals. Sanitize untrusted
 terminal controls and preserve UTF-8 boundaries. Preserve tool data sent to the
 model; display formatting belongs in a small standalone renderer.
@@ -146,3 +147,18 @@ remain follow-on features, rather than prerequisites for the input module.
 Verification includes real PTY cancellation/EOF, paste submission, and termios
 restoration both during API requests and after exit. Terminal sequences follow
 [xterm's bracketed-paste protocol](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).
+
+
+## Economical routing and usage (completed)
+
+- [x] OpenRouter defaults: GPT-4.1 Nano for lookups, GPT-4.1 Mini for development;
+  direct Anthropic uses Haiku 4.5. Existing model overrides remain supported.
+- [x] Report per-turn input/output/cache tokens and provider cost or labeled
+  estimates. Keep missing metadata and unknown prices visible.
+- [x] `/usage` session totals survive conversation clears and model changes.
+- [x] Fake-server tests cover multiple responses, failures, estimates, and resets;
+  live defaults complete read/edit/command calls and return billed usage.
+
+Live Nano read round trip: 617 input tokens, 37 output tokens, two responses,
+$0.00007650 reported by OpenRouter. Session totals remained intact after `/c`.
+See README for pricing sources and estimation limits.
