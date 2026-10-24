@@ -396,3 +396,81 @@ flowchart LR
     S2 --> C["Subagents"]
     C --> S3["Pinned bar opt-in after terminal matrix"]
 ```
+
+## Proposed: `/exit`, `/init`, bottom-pinned status bar default, and adversarial multi-agent review
+
+### 1. `/exit` and bottom-pinned status bar by default
+
+- **`/exit`:** Support `/exit` alongside `/q` and `exit` to quit the REPL cleanly,
+  restoring any active scroll region and title stack.
+- **Bottom-pinned status bar by default:** Interactive terminals with at least 10 rows
+  now default to `Status.Mode.pinned`, reserving the bottom row via `DECSTBM`
+  (`\x1b[1;{rows-1}r`) and rendering the status line at `\x1b[{rows};1H` using cursor
+  save/restore (`\x1b7`…`\x1b8`). When `rows < 10` or size cannot be determined,
+  `statusBar` falls back to inline rendering. On exit (`/q`, `/exit`, `exit`, Ctrl-D,
+  or error), `resetScrollRegion` always resets `\x1b[r` and clears the bottom row.
+
+### 2. `/init` project onboarding and `OMNICODE.md` instructions
+
+- **`OMNICODE.md` loading:** When `Agent.init` builds the system prompt, if an
+  `OMNICODE.md` file exists in the working directory (up to 64 KiB), its contents are
+  appended to the system prompt under `Project instructions (OMNICODE.md):` so every
+  turn and subagent benefits from project conventions automatically.
+- **`/init` command (and `--init` CLI flag):** Inspects the workspace (`build.zig`,
+  `package.json`, `Cargo.toml`, `pyproject.toml`, `Makefile`, `go.mod`, directory
+  layout) and generates:
+  1. `OMNICODE.md` with build, test, format, and style rules tailored to the detected
+     stack (unless it already exists; `/init force` overwrites).
+  2. `.omnicode/skills/verify/SKILL.md` with concrete verification steps (unless it
+     already exists).
+  3. Reloads the agent's system prompt so the new instructions and skills take effect
+     immediately in the current session.
+
+### 3. Adversarial multi-agent review (`review` tool and `/review` command)
+
+#### Why single-agent self-review fails
+
+When the same model context both writes code and reviews it, confirmation bias and
+shared blind spots cause it to overlook subtle bugs, edge-case regressions, unhandled
+errors, security boundary violations, and "AI slop" (dead code, redundant abstractions,
+placeholder comments, unnecessary dependencies, or unverified claims).
+
+#### Adversarial multi-agent architecture
+
+```mermaid
+flowchart LR
+    U["Author Turn / Working Tree Diff"] --> G["Diff & Context Collector (git diff / status)"]
+    G --> C1["Critic 1: Correctness & Security (read-only subagent)"]
+    G --> C2["Critic 2: Anti-Slop & Simplicity (read-only subagent)"]
+    C1 --> J["Synthesizer / Gate: Verdict (PASS / FAIL + actionable findings)"]
+    C2 --> J
+    J -->|FAIL in /review or auto-review| A["Author Agent fixes findings"]
+```
+
+| Component | Responsibility |
+|---|---|
+| **Diff & Context Collector** | Runs `git status --short` and `git diff HEAD` (bounded to 64 KiB) in the workspace so critics inspect actual filesystem mutations rather than the author's claims |
+| **Critic 1: Correctness & Security** | Fresh read-only child `Agent` (`explore_schema` only, zero shared history with the author). Adversarial system prompt: assume the diff has bugs; hunt for logic errors, off-by-one, resource/arena leaks, error paths, race/timeout hazards, and security/credential issues. Must cite `file:line` |
+| **Critic 2: Anti-Slop & Minimalism** | Fresh read-only child `Agent` (`explore_schema` only). Adversarial system prompt: hunt for AI slop—unrequested features, dead code, verbose/speculative abstractions, comments that restate code, formatting drift, or missing tests for new behavior. Must cite `file:line` |
+| **Verdict Protocol** | Each critic must end its report with `VERDICT: PASS` or `VERDICT: FAIL` and a numbered list of concrete, falsifiable findings (`[severity] file:line — issue & fix`). Vague praise is forbidden |
+| **`review` tool** | Callable by the parent agent (`{"name":"review","input":{"focus":string?}}`). Runs both adversarial critics on the current working tree diff and returns the combined report and overall `VERDICT: PASS\|FAIL` |
+| **`/review [focus]` REPL command** | Runs the two-critic adversarial review directly from the REPL; if either critic reports `VERDICT: FAIL`, prints the findings and optionally feeds them into the agent to fix (`--review` or `/review fix`) |
+
+#### Why this prevents mistakes and slop
+
+1. **Context isolation:** Critics never see the author's chain-of-thought or excuses—only
+   the ground-truth `git diff` and the repository files they read via `read`/`grep`/`glob`.
+2. **Orthogonal incentives:** Splitting *Correctness/Security* from *Anti-Slop/Minimalism*
+   prevents a single reviewer from trading simplicity for defensive bloat or vice versa.
+3. **Read-only enforcement:** Critics use `read_only = true` (`explore_schema`), so they
+   cannot silently mutate files while reviewing.
+4. **Cost-aware routing:** Each critic is a bounded subagent whose token/cost usage rolls
+   into the turn and session `Usage` totals.
+
+### Implementation order
+
+1. Bottom-pinned status bar by default + `/exit` command.
+2. `/init` command, `--init` flag, and `OMNICODE.md` project instruction loading.
+3. Adversarial multi-agent `review` tool and `/review [focus]` command.
+4. Unit and integration tests covering `/exit`, default pinned status bar, `/init`,
+   `OMNICODE.md`, and multi-agent adversarial review (`PASS` and `FAIL` verdicts).

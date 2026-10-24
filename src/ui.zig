@@ -111,7 +111,7 @@ pub const Ui = struct {
             if (rows >= 10) {
                 try ui.out.print("\x1b7\x1b[1;{d}r\x1b[{d};1H\x1b[2K\x1b[2m", .{ rows - 1, rows });
                 try status_line.render(ui.out, ui.width, fields);
-                try ui.out.writeAll("\x1b[0m\x1b8");
+                try ui.out.writeAll("\x1b[0m\x1b8\x1b[A\n");
                 return;
             }
         }

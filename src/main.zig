@@ -21,7 +21,7 @@ const help =
     \\  /resume [name]         Resume saved session (default: latest)
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
-    \\  /q or exit             Quit (Ctrl-D also exits)
+    \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
     \\Config: PROVIDER=anthropic|openrouter, MODEL, FAST_MODEL, API_URL, MODELS_URL, OMNICODE_STATUS
     \\Keys: ANTHROPIC_API_KEY or OPENROUTER_API_KEY. Searches require rg.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
@@ -123,7 +123,7 @@ fn run(init: std.process.Init) !void {
         };
         const line = std.mem.trim(u8, value orelse break, " \t\r");
         if (line.len == 0) continue;
-        if (std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "exit")) break;
+        if (std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "/exit") or std.mem.eql(u8, line, "exit")) break;
         if (std.mem.eql(u8, line, "/usage")) {
             try ui.usageSummary(usage, "Session");
             continue;

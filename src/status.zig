@@ -4,7 +4,7 @@ const Io = std.Io;
 
 /// Status line state shared by the REPL and the agent; it never affects model input.
 pub const Status = struct {
-    mode: Mode = .inline_line,
+    mode: Mode = .pinned,
     clock: Clock = .{},
     home: []const u8 = "",
     model_bytes: [160]u8 = undefined,
