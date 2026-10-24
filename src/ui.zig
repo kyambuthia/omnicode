@@ -342,6 +342,8 @@ pub const Ui = struct {
         try ui.out.print("\n✗ {s}\n", .{@errorName(err)});
         try ui.style("\x1b[0m");
         const hint = switch (err) {
+            error.InsecureEndpoint => "Use HTTPS, or HTTP with a literal loopback address (127.0.0.1 or [::1]) for local testing.",
+            error.InvalidEndpoint => "Use a complete HTTP(S) endpoint URL without embedded credentials, fragments, or whitespace.",
             error.MissingApiKey => "Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or AN_ABLE_KEY for your selected provider.",
             error.NoFreeModels => "No eligible free tool models in the current catalog; no paid request was sent.",
             error.PaidModelInFreeMode => "Configured model is not verified free. Clear MODEL/FAST_MODEL or choose a free model.",

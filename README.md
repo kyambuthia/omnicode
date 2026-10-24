@@ -115,7 +115,11 @@ Direct Anthropic does not use the catalog: Haiku 4.5 serves both tiers unless ov
 Model IDs must match the selected provider and support tools. An explicit
 provider takes precedence over key-based selection. There is no silent provider
 fallback or automatic retry. For a custom endpoint, its authentication still
-follows `PROVIDER`; use HTTPS except for trusted loopback testing.
+follows `PROVIDER`; HTTPS is required except for HTTP to literal IPv4 loopback addresses
+(`127.0.0.0/8`) or IPv6 loopback (`[::1]`). This applies to `API_URL`,
+`MODELS_URL`, and `VOICE_URL`. Use `127.0.0.1` instead of `localhost` for local
+testing; DNS hostnames are not accepted for plaintext HTTP. Endpoint URLs must
+not contain embedded credentials, fragments, or whitespace.
 
 REPL commands:
 

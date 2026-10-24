@@ -30,4 +30,5 @@ test {
     _ = @import("voice.zig");
     _ = @import("secrets.zig");
     _ = @import("storage.zig");
+    _ = @import("http.zig");
 }

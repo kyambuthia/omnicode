@@ -128,6 +128,8 @@ fn writeEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, ent
 pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8, value: []const u8) !void {
     if (!isAllowedKey(key)) return error.InvalidConfigKey;
     if (value.len == 0 or std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidConfigValue;
+    if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
+        try @import("http.zig").validateEndpoint(value);
     const path = try configPath(a, env);
     var entries = try readEntries(a, io, dir, path);
     var replaced = false;

@@ -37,6 +37,39 @@ def model(id, prompt="0.000001", completion="0.000002", **pricing):
 
 
 class Integration(unittest.TestCase):
+    def test_unsafe_endpoints_are_rejected_before_network_or_persistence(self):
+        unsafe = f"http://localhost:{self.server.server_port}/v1/messages"
+        self.env["API_URL"] = unsafe
+        result = self.run_agent("list files")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("InsecureEndpoint", result.stderr)
+        self.assertEqual(self.requests, [])
+        self.env["API_URL"] = f"http://127.0.0.1:{self.server.server_port}/v1/messages"
+        self.env["PROVIDER"] = "openrouter"
+        self.env["MODELS_URL"] = unsafe
+        result = self.run_agent("list files")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("InsecureEndpoint", result.stderr)
+        self.assertEqual(self.catalog_requests, [])
+        self.assertEqual(self.requests, [])
+        self.env["PROVIDER"] = "anthropic"
+        self.env["VOICE_URL"] = unsafe
+        self.env["VOICE_MODEL"] = "fixture-voice"
+        (self.cwd / "clip.wav").write_bytes(b"RIFFfixtureWAVE")
+        result = self.run_agent(stdin="/voice clip.wav\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("InsecureEndpoint", result.stdout)
+        self.assertIn("literal loopback", result.stdout)
+        self.assertEqual(self.requests, [])
+        config = self.cwd / ".config/omnicode/config.env"
+        for args in (("--providers", "url", unsafe),
+                     ("--setup", "set", "VOICE_URL", unsafe),
+                     ("--setup", "set", "MODELS_URL", unsafe)):
+            result = self.run_agent(*args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("InsecureEndpoint", result.stderr)
+            self.assertFalse(config.exists())
+
     def test_shell_timeout_and_failed_checklist_recovery(self):
         def reply(_):
             if len(self.requests) == 1:
