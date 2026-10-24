@@ -68,6 +68,7 @@ REPL commands:
 | `/help` | Show commands and configuration |
 | `/model` | Show current routing mode and models |
 | `/verbose on` or `/verbose off` | Switch future tool output between full and compact previews |
+| `/details` | Recover the last tool result, up to 64 KiB; next tool call replaces it |
 | `/c` | Clear conversation and free session allocations |
 | `/q` or `exit` | Quit |
 
@@ -93,7 +94,9 @@ file diff. Writes report bytes written.
 Compact output retains the first three and last two lines, with an explicit
 hidden-line count. Long preview lines end in `...`. Use `--verbose` before a
 one-shot prompt, or `/verbose on` in the REPL, to show full output for subsequent
-tool calls (within the tool's existing collection limits).
+tool calls (within the tool's existing collection limits). `/details` shows the
+last tool result without preview truncation, retaining at most 64 KiB on a UTF-8
+boundary. It is replaced by the next tool result, including failures.
 
 Interactive terminals show a waiting indicator with elapsed seconds during
 model requests and tools. Color and animation are disabled when output is
@@ -102,10 +105,19 @@ redirected, `TERM=dumb`, or `NO_COLOR` is set. `COLUMNS` controls preview width
 file contents, commands, and tool output are neutralized for display; the original
 tool results still go to the model. UTF-8 characters are never cut mid-sequence.
 
-The interface keeps normal terminal scrolling and copy/paste. It uses canonical
-line input; a full-screen composer, input-history navigation, and streaming model
-text are outside this increment. Codex design references are recorded in
-[ROADMAP.md](ROADMAP.md#terminal-ui-increment).
+The interface keeps normal terminal scrolling and copy/paste. Styled terminal
+responses emphasize Markdown headings and dim backtick fence markers; fenced
+code stays literal. Plain output preserves Markdown source.
+
+When both input and output are interactive, a small raw-mode composer supports
+append, backspace, Ctrl-C to discard input, Ctrl-D on empty input to quit, and
+bracketed paste. Pasted newlines remain in one prompt until Enter is pressed.
+Input is capped at 16 KiB; overflow discards the prompt on submission. Terminal
+settings are restored on return, errors, and EOF, before model or tool work.
+Pipes, dumb terminals, and `NO_COLOR` use canonical input. This is a basic
+composer: history navigation, arbitrary cursor movement, and a full-screen editor
+are not implemented; wide-character and wrapped-line backspace display is limited.
+Codex and fx references are recorded in [ROADMAP.md](ROADMAP.md).
 
 ## Skills
 

@@ -123,17 +123,26 @@ Our adaptation should borrow the hierarchy, without copying fx's larger runtime.
 Implement each numbered item as an independently verified commit, splitting it
 further if it changes more than one behavior:
 
-1. Quiet routine chrome: neutral headings and completion, dim routing metadata;
+1. [x] Quiet routine chrome: neutral headings and completion, dim routing metadata;
    retain distinct failure and diff cues. Existing PTY tests verify styling and
    `NO_COLOR` behavior.
-2. Compact routine tool presentation; keep arguments, outcome, and omitted-output
+2. [x] Compact routine tool presentation; keep arguments, outcome, and omitted-output
    counts visible. Verify failures and verbose output before changing defaults.
-3. Retain bounded display details and add a command to recover the last omitted
+3. [x] Retain bounded display details and add a command to recover the last omitted
    output. Verify eviction and terminal-control sanitization.
-4. Render basic Markdown headings and code fences. Verify literal code content
+4. [x] Render basic Markdown headings and code fences. Verify literal code content
    and redirected output independently.
-5. Add an input module with terminal restoration and bracketed paste; test
+5. [x] Add an input module with terminal restoration and bracketed paste; test
    interruption and EOF before adding history or multiline editing in later commits.
 
 These are proposed Omnicode choices, not claims that fx uses the same design.
 Keep native scrollback and avoid new dependencies; measure LOC growth per change.
+
+
+Completed in separate commits: neutral styling, redundant tool-row removal,
+`/details` (one replaceable 64 KiB result), headings/backtick fences, and scoped
+raw input with bracketed paste. Input-history navigation and multiline editing
+remain follow-on features, rather than prerequisites for the input module.
+Verification includes real PTY cancellation/EOF, paste submission, and termios
+restoration both during API requests and after exit. Terminal sequences follow
+[xterm's bracketed-paste protocol](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).
