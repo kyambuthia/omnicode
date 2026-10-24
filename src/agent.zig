@@ -21,6 +21,9 @@ pub const Agent = struct {
     env: *const std.process.Environ.Map,
     route: Route,
     automatic: bool = true,
+    subagent: bool = false,
+    turn_budget: usize = max_turns,
+    compaction_budget: usize = max_compactions,
     history: std.ArrayList(Message) = .empty,
     system: []const u8,
     schemas: j.Value,
@@ -69,13 +72,13 @@ pub const Agent = struct {
         var turns: usize = 0;
         var compactions: usize = 0;
         while (true) {
-            if (turns == max_turns) {
-                if (compactions >= max_compactions) return error.TurnLimit;
+            if (turns == self.turn_budget) {
+                if (compactions >= self.compaction_budget) return error.TurnLimit;
                 try self.compact(ui, &usage, null);
                 compactions += 1;
                 turns = 0;
             }
-            if (self.history.items.len > compact_messages and compactions < max_compactions and self.history.items.len > 4) {
+            if (self.history.items.len > compact_messages and compactions < self.compaction_budget and self.history.items.len > 4) {
                 try self.compact(ui, &usage, null);
                 compactions += 1;
             }
@@ -85,7 +88,7 @@ pub const Agent = struct {
             const sa = scratch.allocator();
             const body = blk: {
                 const initial = try self.encodePayload(sa, route, self.history.items, true);
-                if (initial.len > compact_bytes and compactions < max_compactions and self.history.items.len > 2) {
+                if (initial.len > compact_bytes and compactions < self.compaction_budget and self.history.items.len > 2) {
                     try self.compact(ui, &usage, null);
                     compactions += 1;
                     break :blk try self.encodePayload(sa, route, self.history.items, true);
@@ -111,7 +114,10 @@ pub const Agent = struct {
                     try ui.toolStart(name, input);
                     const start = Io.Clock.awake.now(self.context.io);
                     tool_count += 1;
-                    const result = ui.work("Running tool...", tools.Context.run, .{ self.context, name, input }) catch |err|
+                    const result = (if (std.mem.eql(u8, name, "task"))
+                        self.runTask(input, ui, &usage)
+                    else
+                        ui.work("Running tool...", tools.Context.run, .{ self.context, name, input })) catch |err|
                         try std.fmt.allocPrint(a, "error: {s}", .{@errorName(err)});
                     // Invalid UTF-8 (e.g. binary output) must not corrupt JSON requests.
                     const text = if (std.unicode.utf8ValidateSlice(result)) result else "error: NonUtf8Output";
@@ -274,7 +280,128 @@ pub const Agent = struct {
             .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
         return @import("http.zig").fetch(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
     }
+
+    /// Delegate a self-contained investigation or sub-task to a depth-1 child agent.
+    fn runTask(self: *Agent, args: j.Value, ui: Ui, parent_usage: *Usage) ![]const u8 {
+        if (self.subagent) return error.NestedSubagent;
+        const prompt = try j.str(args, "prompt");
+        if (prompt.len == 0) return error.EmptyPrompt;
+        const mode = try j.optional(args, "mode", "explore");
+        const read_only = if (std.mem.eql(u8, mode, "explore")) true else if (std.mem.eql(u8, mode, "edit")) false else return error.InvalidTaskMode;
+        const tier = try j.optional(args, "tier", "");
+        const strong = if (std.mem.eql(u8, tier, "strong"))
+            true
+        else if (std.mem.eql(u8, tier, "fast"))
+            false
+        else if (tier.len == 0)
+            if (read_only) false else @import("router.zig").complex(prompt)
+        else
+            return error.InvalidTaskTier;
+        var child_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer child_arena.deinit();
+        const ca = child_arena.allocator();
+        var route = if (self.automatic) self.route.forTask(self.env, if (strong) "implement" else "lookup") else self.route;
+        if (route.provider == .openrouter) {
+            if (route.key.len == 0) return error.MissingApiKey;
+            const catalog = try ui.work("Refreshing model catalog...", Catalog.load, .{ ca, self.context.io, self.env });
+            const requested = if (self.automatic) self.env.get(if (strong) "MODEL" else "FAST_MODEL") else self.route.model;
+            route = try catalog.select(route, requested, strong);
+        } else if (route.mode == .free) return error.FreeRequiresOpenRouter;
+        const cwd = try std.process.currentPathAlloc(self.context.io, ca);
+        var child_ctx = self.context;
+        child_ctx.a = ca;
+        child_ctx.read_only = read_only;
+        var child: Agent = .{
+            .context = child_ctx,
+            .env = self.env,
+            .route = route,
+            .automatic = false,
+            .subagent = true,
+            .turn_budget = 16,
+            .compaction_budget = 1,
+            .schemas = try j.parse(ca, if (read_only) tools.explore_schema else tools.edit_schema),
+            .system = try std.fmt.allocPrint(ca, "You are a subagent ({s} mode). cwd: {s}\nDo the delegated task and finish with a concise, factual report. Available skills:\n{s}", .{ mode, cwd, try child_ctx.skills() }),
+        };
+        try child.history.append(ca, .{ .role = "user", .content = .{ .string = prompt } });
+        var child_ui = ui;
+        child_ui.indent = "  ";
+        child_ui.details = null;
+        var child_usage: Usage = .{};
+        defer if (child_usage.requests > 0) {
+            parent_usage.add(child_usage);
+            ui.usageSummary(child_usage, "  Subagent") catch {};
+        };
+        var turns: usize = 0;
+        var compactions: usize = 0;
+        var last_text: []const u8 = "";
+        while (true) {
+            if (turns == child.turn_budget) {
+                if (compactions >= child.compaction_budget) break;
+                child.compact(child_ui, &child_usage, null) catch break;
+                compactions += 1;
+                turns = 0;
+            }
+            if (child.history.items.len > compact_messages and compactions < child.compaction_budget and child.history.items.len > 4) {
+                child.compact(child_ui, &child_usage, null) catch break;
+                compactions += 1;
+            }
+            if (child.history.items.len > max_messages) break;
+            const body = child.encodePayload(ca, route, child.history.items, true) catch break;
+            if (body.len > max_bytes) break;
+            turns += 1;
+            const response = try ui.work("Subagent thinking...", Agent.request, .{ &child, route, body });
+            const delta = Usage.response(response, route);
+            child_usage.add(delta);
+            if (ui.usage) |total| total.add(delta);
+            const content = try validate(response);
+            try child.history.append(ca, .{ .role = "assistant", .content = content });
+            var results: std.ArrayList(j.Value) = .empty;
+            var turn_text: std.ArrayList(u8) = .empty;
+            for (content.array.items) |block| {
+                const kind = try j.str(block, "type");
+                if (std.mem.eql(u8, kind, "text")) {
+                    if (turn_text.items.len > 0) try turn_text.append(ca, '\n');
+                    try turn_text.appendSlice(ca, try j.str(block, "text"));
+                } else if (std.mem.eql(u8, kind, "tool_use")) {
+                    const name = try j.str(block, "name");
+                    const input = try j.get(block, "input");
+                    try child_ui.toolStart(name, input);
+                    const start = Io.Clock.awake.now(child.context.io);
+                    const result = (if (std.mem.eql(u8, name, "task"))
+                        @as(anyerror![]const u8, error.NestedSubagent)
+                    else
+                        ui.work("Running subagent tool...", tools.Context.run, .{ child.context, name, input })) catch |err|
+                        try std.fmt.allocPrint(ca, "error: {s}", .{@errorName(err)});
+                    const text = if (std.unicode.utf8ValidateSlice(result)) result else "error: NonUtf8Output";
+                    try child_ui.toolEnd(name, input, text, std.mem.startsWith(u8, text, "error:"), start);
+                    try results.append(ca, try j.parse(ca, try j.encode(ca, .{
+                        .type = "tool_result",
+                        .tool_use_id = try j.str(block, "id"),
+                        .content = text,
+                        .is_error = std.mem.startsWith(u8, text, "error:"),
+                    })));
+                }
+            }
+            if (turn_text.items.len > 0) last_text = turn_text.items;
+            if (results.items.len == 0) return capReport(self.context.a, if (last_text.len > 0) last_text else "(subagent completed without text report)");
+            try child.history.append(ca, .{ .role = "user", .content = .{ .array = results.toManaged(ca) } });
+        }
+        _ = child.retainCompletedWork(ca) catch false;
+        const fallback = if (last_text.len > 0)
+            try std.fmt.allocPrint(ca, "[subagent reached turn limit; partial report]\n{s}", .{last_text})
+        else if (child.history.items.len > 0 and child.history.items[0].content == .string)
+            try std.fmt.allocPrint(ca, "[subagent reached turn limit; partial report]\n{s}", .{child.history.items[0].content.string})
+        else
+            "[subagent reached turn limit]";
+        return capReport(self.context.a, fallback);
+    }
 };
+
+fn capReport(a: std.mem.Allocator, report: []const u8) ![]const u8 {
+    var len = @min(report.len, tools.limit);
+    while (len > 0 and !std.unicode.utf8ValidateSlice(report[0..len])) len -= 1;
+    return a.dupe(u8, report[0..len]);
+}
 
 // Validate the whole response before executing any tool, including on truncation.
 fn tailStart(history: []const Message) usize {

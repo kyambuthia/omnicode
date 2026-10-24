@@ -262,7 +262,7 @@ class Integration(unittest.TestCase):
         self.assertIn("check: Check the project", first["system"])
         self.assertNotIn("Run checks carefully", first["system"])
         self.assertEqual({t["name"] for t in first["tools"]},
-                         {"read", "write", "edit", "glob", "grep", "bash", "skill"})
+                         {"read", "write", "edit", "glob", "grep", "bash", "skill", "task"})
         self.assertEqual(first["model"], second["model"])
         messages = second["messages"]
         self.assertEqual([m["role"] for m in messages], ["user", "assistant", "user"])
@@ -278,6 +278,66 @@ class Integration(unittest.TestCase):
         self.assertIn("failure", results["failure"]["content"])
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
+
+    def test_subagent_task_isolation_explore_restrictions_and_limits(self):
+        (self.cwd / "secret.txt").write_text("hidden-intermediate-data\n")
+        def reply(body):
+            n = len(self.requests)
+            if n == 1:
+                return dict(tools(call("task", {"prompt": "inspect secret.txt", "mode": "explore"}, "t1")),
+                            usage={"input_tokens": 50, "output_tokens": 10, "cost": 0.001})
+            if n == 2:
+                # Subagent turn 1: read file, attempt forbidden write, attempt nested task.
+                return dict(tools(call("read", {"path": "secret.txt"}, "c1"),
+                                  call("write", {"path": "nope.txt", "content": "x"}, "c2"),
+                                  call("task", {"prompt": "nested"}, "c3")),
+                            usage={"input_tokens": 30, "output_tokens": 5, "cost": 0.0005})
+            if n == 3:
+                return dict(text("subagent final report: found 1 line"),
+                            usage={"input_tokens": 40, "output_tokens": 8, "cost": 0.0005})
+            return dict(text("parent finished"),
+                        usage={"input_tokens": 60, "output_tokens": 12, "cost": 0.001})
+        self.reply = reply
+        result = self.run_agent(stdin="fix bug with subagent\n/details\n/usage\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.cwd / "nope.txt").exists())
+        # Subagent explore mode uses fast-test-model while parent uses strong-test-model.
+        self.assertEqual([r[0]["model"] for r in self.requests],
+                         ["strong-test-model", "fast-test-model", "fast-test-model", "strong-test-model"])
+        # Subagent explore schema excludes write/edit/bash/task.
+        self.assertEqual({t["name"] for t in self.requests[1][0]["tools"]},
+                         {"read", "glob", "grep", "skill"})
+        # Subagent saw ReadOnlySubagent and NestedSubagent errors.
+        child_results = {r["tool_use_id"]: r for r in self.requests[2][0]["messages"][-1]["content"]}
+        self.assertIn("ReadOnlySubagent", child_results["c2"]["content"])
+        self.assertIn("NestedSubagent", child_results["c3"]["content"])
+        # Parent history never receives intermediate secret.txt content; only the final report.
+        parent_final = json.dumps(self.requests[3][0]["messages"])
+        self.assertNotIn("hidden-intermediate-data", parent_final)
+        self.assertIn("subagent final report: found 1 line", parent_final)
+        # UI indents child tools, /details holds the child report, and usage rolls up.
+        self.assertIn("  • read  secret.txt", result.stdout)
+        self.assertIn("Subagent usage · 70 in · 13 out", result.stdout)
+        self.assertIn("Turn usage · 180 in · 35 out", result.stdout)
+        self.assertIn("$0.00300000 reported", result.stdout)
+        # Edit-mode subagent and partial report when child hits its turn limit.
+        self.requests.clear()
+        def limit_reply(body):
+            if "tools" not in body:
+                return text("child compaction summary")
+            if "subagent" in body["system"]:
+                return {"stop_reason": "tool_use", "content": [
+                    {"type": "text", "text": "working on child step"},
+                    call("write", {"path": "child-edit.txt", "content": "edited"}, "cw"),
+                ]}
+            if len(self.requests) == 1:
+                return tools(call("task", {"prompt": "edit file", "mode": "edit", "tier": "strong"}, "t2"))
+            return text("parent handled partial report")
+        self.reply = limit_reply
+        result = self.run_agent("fix with edit subagent")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.cwd / "child-edit.txt").read_text(), "edited")
+        self.assertIn("partial report", self.requests[-1][0]["messages"][-1]["content"][0]["content"])
 
     def test_repl_history_skill_clear_and_model_override(self):
         self.skill()

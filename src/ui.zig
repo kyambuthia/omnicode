@@ -27,6 +27,7 @@ pub const Ui = struct {
     color: bool = false,
     interactive: bool = false,
     verbose: bool = false,
+    indent: []const u8 = "",
     width: usize = 80,
     details: ?*Details = null,
     usage: ?*Usage = null,
@@ -212,27 +213,33 @@ pub const Ui = struct {
         var n: usize = 0;
         while (lines.next()) |line| : (n += 1) {
             if (!ui.verbose and count > 5 and n >= 3 and n < count - 2) {
-                if (n == 3) try ui.out.print("    ... {d} lines hidden (/details or /verbose on)\n", .{count - 5});
+                if (n == 3) try ui.out.print("{s}    ... {d} lines hidden (/details or /verbose on)\n", .{ ui.indent, count - 5 });
                 continue;
             }
+            try ui.out.writeAll(ui.indent);
             try ui.out.writeAll("    ");
             try ui.out.writeAll(prefix);
-            try ui.safe(line, if (ui.verbose) std.math.maxInt(usize) else ui.width - 10);
+            try ui.safe(line, if (ui.verbose) std.math.maxInt(usize) else ui.width -| (10 + ui.indent.len));
             try ui.out.writeByte('\n');
         }
     }
 
     pub fn toolStart(ui: Ui, name: []const u8, args: j.Value) !void {
-        const key = if (std.mem.eql(u8, name, "bash")) "cmd" else if (std.mem.eql(u8, name, "skill")) "name" else if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) "pat" else "path";
+        const key = if (std.mem.eql(u8, name, "bash")) "cmd" else if (std.mem.eql(u8, name, "task")) "prompt" else if (std.mem.eql(u8, name, "skill")) "name" else if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) "pat" else "path";
+        try ui.out.writeAll(ui.indent);
         try ui.style("\x1b[1m");
         try ui.out.writeAll("• ");
         try ui.safe(name, 24);
         try ui.style("\x1b[0m");
         try ui.out.writeAll("  ");
-        try ui.safe(j.str(args, key) catch "(invalid arguments)", ui.width - 16);
+        try ui.safe(j.str(args, key) catch "(invalid arguments)", ui.width -| (16 + ui.indent.len));
         if (std.mem.eql(u8, key, "pat")) {
             try ui.out.writeAll(" in ");
             try ui.safe(j.optional(args, "path", ".") catch "?", 40);
+        } else if (std.mem.eql(u8, name, "task")) {
+            try ui.out.writeAll(" (");
+            try ui.safe(j.optional(args, "mode", "explore") catch "explore", 12);
+            try ui.out.writeByte(')');
         }
         try ui.out.writeByte('\n');
         try ui.out.flush();
@@ -240,6 +247,7 @@ pub const Ui = struct {
 
     pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp) !void {
         if (ui.details) |details| details.save(result);
+        try ui.out.writeAll(ui.indent);
         try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
         try ui.out.print("  {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
         try ui.elapsed(start);
@@ -252,7 +260,7 @@ pub const Ui = struct {
             try ui.preview(try j.str(args, "new"), "+ ");
             try ui.style("\x1b[0m");
         } else if (!failed and std.mem.eql(u8, name, "write")) {
-            try ui.out.print("    {d} bytes written\n", .{(try j.str(args, "content")).len});
+            try ui.out.print("{s}    {d} bytes written\n", .{ ui.indent, (try j.str(args, "content")).len });
         } else try ui.preview(result, "");
         try ui.out.flush();
     }

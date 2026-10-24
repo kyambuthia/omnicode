@@ -3,7 +3,16 @@ const j = @import("json.zig");
 const Io = std.Io;
 pub const limit = 64 * 1024;
 
-pub const schema =
+pub const explore_schema =
+    \\[
+    \\{"name":"read","description":"Read numbered lines, zero-based offset; max 1 MiB file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
+    \\{"name":"glob","description":"Find files using ripgrep glob rules; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+    \\{"name":"grep","description":"Search regex with ripgrep; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+    \\{"name":"skill","description":"Load instructions for an advertised skill by name","input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}
+    \\]
+;
+
+pub const edit_schema =
     \\[
     \\{"name":"read","description":"Read numbered lines, zero-based offset; max 1 MiB file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
     \\{"name":"write","description":"Create or overwrite a file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
@@ -15,17 +24,33 @@ pub const schema =
     \\]
 ;
 
+pub const schema =
+    \\[
+    \\{"name":"read","description":"Read numbered lines, zero-based offset; max 1 MiB file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
+    \\{"name":"write","description":"Create or overwrite a file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
+    \\{"name":"edit","description":"Replace exact nonempty text; must be unique unless all=true","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
+    \\{"name":"glob","description":"Find files using ripgrep glob rules; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+    \\{"name":"grep","description":"Search regex with ripgrep; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+    \\{"name":"bash","description":"Run shell command; 30s deadline, 64 KiB per output stream","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
+    \\{"name":"skill","description":"Load instructions for an advertised skill by name","input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
+    \\{"name":"task","description":"Delegate a self-contained investigation or sub-task to a subagent; returns only a final report","input_schema":{"type":"object","properties":{"prompt":{"type":"string"},"mode":{"type":"string","enum":["explore","edit"]},"tier":{"type":"string","enum":["fast","strong"]}},"required":["prompt"]}}
+    \\]
+;
+
 pub const Context = struct {
     a: j.Allocator,
     io: Io,
     dir: Io.Dir,
     skills_path: []const u8 = ".omnicode/skills",
+    read_only: bool = false,
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
         return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024));
     }
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
+        if (c.read_only and (std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "bash")))
+            return error.ReadOnlySubagent;
         if (std.mem.eql(u8, name, "skill")) return c.loadSkill(try j.str(args, "name"));
         if (std.mem.eql(u8, name, "write")) {
             const content = try j.str(args, "content");
@@ -140,6 +165,12 @@ test "file tools modify real files and reject ambiguous or invalid edits" {
     try std.testing.expectError(error.AmbiguousMatch, c.run("edit", edit));
     _ = try c.run("edit", try j.parse(c.a, "{\"path\":\"a\",\"old\":\"one\",\"new\":\"three\",\"all\":true}"));
     try std.testing.expectEqualStrings("three\ntwo\nthree", try c.readFile("a"));
+    var ro = c;
+    ro.read_only = true;
+    try std.testing.expectError(error.ReadOnlySubagent, ro.run("write", try j.parse(c.a, "{\"path\":\"b\",\"content\":\"x\"}")));
+    try std.testing.expectError(error.ReadOnlySubagent, ro.run("edit", edit));
+    try std.testing.expectError(error.ReadOnlySubagent, ro.run("bash", try j.parse(c.a, "{\"cmd\":\"true\"}")));
+    _ = try ro.run("read", try j.parse(c.a, "{\"path\":\"a\"}"));
     try std.testing.expectError(error.EmptyMatch, c.run("edit", try j.parse(c.a, "{\"path\":\"a\",\"old\":\"\",\"new\":\"x\"}")));
     try std.testing.expectError(error.ExpectedNaturalNumber, c.run("read", try j.parse(c.a, "{\"path\":\"a\",\"offset\":-1}")));
     try std.testing.expectError(error.FileNotFound, c.run("read", try j.parse(c.a, "{\"path\":\"missing\"}")));
