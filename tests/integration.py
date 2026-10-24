@@ -37,6 +37,33 @@ def model(id, prompt="0.000001", completion="0.000002", **pricing):
 
 
 class Integration(unittest.TestCase):
+    def test_private_state_replaces_permissive_files_and_links(self):
+        for kind, relative, args, stdin in (
+            ("config", ".config/omnicode/config.env", ("--setup", "openai", "fixture-key-private"), None),
+            ("vault", ".config/omnicode/secrets.env", ("--secrets", "set", "TOKEN", "fixture-token-private"), None),
+            ("session", ".omnicode/sessions/private.json", (), "/save private\n/q\n"),
+        ):
+            destination = self.cwd / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            for mode in ("permissive", "symlink", "hardlink"):
+                with self.subTest(kind=kind, mode=mode):
+                    destination.unlink(missing_ok=True)
+                    target = self.cwd / f"{kind}-{mode}-target"
+                    target.write_text("# original contents\n")
+                    if mode == "symlink":
+                        destination.symlink_to(target)
+                    elif mode == "hardlink":
+                        os.link(target, destination)
+                    else:
+                        destination.write_text("# original contents\n")
+                    destination.chmod(0o644)
+                    result = self.run_agent(*args, stdin=stdin)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(destination.is_symlink())
+                    self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(target.read_text(), "# original contents\n")
+                    self.assertNotEqual(destination.read_text(), "# original contents\n")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

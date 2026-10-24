@@ -365,7 +365,7 @@ pub const Agent = struct {
         const todo_text = if (self.context.todo) |t| t.slice() else "";
         const data = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
         if (data.len > max_bytes) return error.HistoryLimit;
-        try self.context.dir.writeFile(self.context.io, .{ .sub_path = path, .data = data });
+        try @import("storage.zig").writePrivate(self.context.io, self.context.dir, path, data);
     }
 
     /// Resume a saved session from `.omnicode/sessions/<name>.json`.

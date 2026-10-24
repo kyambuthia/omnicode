@@ -122,9 +122,7 @@ fn writeEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, ent
         try out.writer.print("{s}={s}\n", .{ e.key, e.val });
     }
     const data = try out.toOwnedSlice();
-    const file = try dir.createFile(io, path, .{ .truncate = true, .permissions = .fromMode(0o600) });
-    defer file.close(io);
-    try file.writeStreamingAll(io, data);
+    try @import("storage.zig").writePrivate(io, dir, path, data);
 }
 
 pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8, value: []const u8) !void {

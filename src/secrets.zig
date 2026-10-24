@@ -95,9 +95,7 @@ pub const Secrets = struct {
             try out.writer.print("{s}={s}\n", .{ self.nameAt(i), self.valAt(i) });
         }
         const data = try out.toOwnedSlice();
-        const file = try dir.createFile(io, path, .{ .truncate = true, .permissions = .fromMode(0o600) });
-        defer file.close(io);
-        try file.writeStreamingAll(io, data);
+        try @import("storage.zig").writePrivate(io, dir, path, data);
     }
 
     pub fn parseLines(self: *Secrets, text: []const u8) !usize {

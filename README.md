@@ -159,6 +159,11 @@ REPL commands:
 | `/c` | Clear conversation and free session allocations |
 | `/q`, `/exit`, or `exit` | Quit |
 
+Config, vault, and session saves use private (`0600`) temporary files and atomic
+replacement. Saving repairs loose permissions on an existing destination and
+replaces a destination symlink rather than modifying its target. Parent directory
+symlinks are still resolved normally; use a trusted configuration directory.
+
 ## Terminal interface
 
 The terminal keeps a scrollable transcript, with model responses separated from
