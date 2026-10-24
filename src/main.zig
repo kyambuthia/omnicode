@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("omnicode");
 const help =
     \\omnicode [--free|--cost-max] [--verbose] [prompt ...]       Run a task, or start a REPL without arguments.
+    \\omnicode --version         Print version (v0.2.0).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
     \\omnicode --setup [...]     View or configure provider API keys and settings.
@@ -70,9 +71,13 @@ fn run(init: std.process.Init) !void {
             prompt_only = true;
             first += 1;
             break;
-        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init") and !std.mem.eql(u8, arg, "--setup")) {
+        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--version") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init") and !std.mem.eql(u8, arg, "--setup")) {
             return error.UnknownOption;
         } else break;
+    }
+    if (!prompt_only and args.len > first and (std.mem.eql(u8, args[first], "--version") or std.mem.eql(u8, args[first], "-V"))) {
+        try out.writeAll("omnicode " ++ core.version ++ "\n");
+        return out.flush();
     }
     if (!prompt_only and args.len > first and (std.mem.eql(u8, args[first], "--help") or std.mem.eql(u8, args[first], "-h"))) {
         try out.writeAll(help);
@@ -274,6 +279,10 @@ fn run(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, line, "/help")) {
             try out.writeAll(help);
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/version")) {
+            try ui.note("omnicode " ++ core.version);
             continue;
         }
         if (std.mem.eql(u8, line, "/model")) {

@@ -709,8 +709,9 @@ class Integration(unittest.TestCase):
         self.skill()
         self.env.pop("ANTHROPIC_API_KEY")
         self.env.pop("OPENROUTER_API_KEY", None)
-        for args in [("--help",), ("--skills",), ("--init",), ("--setup",)]:
+        for args in [("--help",), ("--version",), ("--skills",), ("--init",), ("--setup",)]:
             self.assertEqual(self.run_agent(*args).returncode, 0)
+        self.assertIn("0.2.0", self.run_agent("--version").stdout)
         self.assertTrue((self.cwd / "OMNICODE.md").exists())
         self.assertTrue((self.cwd / ".omnicode/skills/verify/SKILL.md").exists())
         result = self.run_agent("list files")

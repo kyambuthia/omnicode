@@ -5,7 +5,17 @@ A small terminal coding agent in Zig, inspired by
 run commands, load project skills, and select a model by task complexity.
 No Zig package dependencies; native HTTP, TLS, and JSON use the standard library.
 
-## Build and run
+## Quick install (Linux x86_64 & aarch64)
+
+Install the prebuilt static Linux binary to `~/.local/bin/omnicode` (requires [ripgrep](https://github.com/BurntSushi/ripgrep) `rg` for `glob`/`grep` search):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kyambuthia/omnicode/main/install.sh | sh
+omnicode --setup openrouter 'your-key'
+omnicode
+```
+
+## Build from source
 
 Requires **Zig 0.17.0**, a POSIX system with `sh`, and
 [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) for glob/regex search.
@@ -31,7 +41,7 @@ work without a key or network connection. Do not put API keys in tracked files.
 
 ```text
 omnicode [--free|--cost-max] [--verbose] [--] [prompt ...]
-omnicode --skills | --init [force] | --setup [...] | --help
+omnicode --skills | --init [force] | --setup [...] | --version | --help
 ```
 
 | Option | Effect |

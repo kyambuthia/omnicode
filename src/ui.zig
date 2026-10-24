@@ -72,7 +72,7 @@ pub const Ui = struct {
 
     pub fn banner(ui: Ui, provider: []const u8, cwd: []const u8) !void {
         try ui.style("\x1b[1m");
-        try ui.out.writeAll("\n  omnicode\n");
+        try ui.out.writeAll("\n  omnicode v" ++ @import("root.zig").version ++ "\n");
         try ui.style("\x1b[0m");
         try ui.out.writeAll("  ");
         try ui.safe(cwd, ui.width - 4);
