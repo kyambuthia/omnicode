@@ -58,12 +58,20 @@ pub const Context = struct {
     skills_path: []const u8 = ".omnicode/skills",
     read_only: bool = false,
     todo: ?*Todo = null,
+    secrets: ?*@import("secrets.zig").Secrets = null,
+    env: ?*const std.process.Environ.Map = null,
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
         return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024));
     }
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
+        const out = try c.runRaw(name, args);
+        if (c.secrets) |s| return s.scrub(c.a, out, c.env);
+        return out;
+    }
+
+    fn runRaw(c: Context, name: []const u8, args: j.Value) ![]const u8 {
         if (c.read_only and (std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "todo")))
             return error.ReadOnlySubagent;
         if (std.mem.eql(u8, name, "todo")) {
@@ -122,6 +130,7 @@ pub const Context = struct {
         const result = try @import("deadline.zig").run(c.io, std.process.run, .{ c.a, c.io, std.process.RunOptions{
             .argv = argv,
             .cwd = .{ .dir = c.dir },
+            .environ_map = c.env,
             .stdout_limit = .limited(limit),
             .stderr_limit = .limited(limit),
         } }, milliseconds);

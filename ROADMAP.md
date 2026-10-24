@@ -536,3 +536,92 @@ flowchart LR
 2. Implement `src/voice.zig`, `Catalog.selectVoice` in `src/catalog.zig`, and `/voice` REPL command.
 3. Apply correctness & latency hardening (`src/input.zig`, `src/status.zig`, `src/agent.zig` catalog caching, `src/tools.zig` comptime schema generation, `.gitignore`, `.github/workflows/ci.yml`).
 4. Update `README.md` and `ROADMAP.md`, run full unit + integration suites, and commit.
+
+## `/secrets` zero-leak vault & scrubber and `/model` available-model browser & switcher (completed)
+
+### 1. `/secrets`: Zero-leak credential vault, subprocess injection, and output scrubbing (`src/secrets.zig`)
+
+#### Threat model: how secrets leak in coding agents
+
+Passwords, login tokens, database URLs, and API keys leak into chat feeds and remote LLM
+requests through four paths:
+1. **Tool output (`bash`, `read`, `grep`):** Running `env`, `cat .env`, `curl -v`, or reading
+   config files sends raw secret values in `tool_result` blocks to the model provider and
+   prints them to the terminal transcript and `/details`.
+2. **User prompts:** Pasting a command or snippet containing a password or token stores it
+   in `Agent.history` and sends it to the LLM.
+3. **Session files (`/save`):** Persisting `.omnicode/sessions/<name>.json` writes `history`
+   to disk in plaintext.
+4. **Input composer history (`src/input.zig`):** Typing `/secrets set ...` or `/setup ...`
+   stores the raw command in the Up/Down arrow history ring.
+
+#### Architecture: "Use Without Seeing" + Mandatory Redaction Scrubber
+
+```mermaid
+flowchart LR
+    V["/secrets set NAME VALUE<br/>(~/.config/omnicode/secrets.env 0o600)"] --> E["Child bash env ($NAME)"]
+    V --> S["Redaction Scrubber (secrets + *_API_KEY)"]
+    P["System Prompt: advertises secret NAMES only"] --> A["Agent runs: sh -c 'curl -H \"Bearer $TOKEN\"'"]
+    A --> E
+    E --> R["Raw tool output / file read / prompt"]
+    R --> S
+    S -->|"[REDACTED:NAME]"| C["LLM History + Terminal Feed + /details + /save"]
+```
+
+| Component | Design |
+|---|---|
+| **Storage (`secrets.env`)** | Stored at `$OMNICODE_SECRETS`, else `$XDG_CONFIG_HOME/omnicode/secrets.env`, else `$HOME/.config/omnicode/secrets.env` (fallback `.omnicode/secrets.env`) with `0o600` owner-only permissions |
+| **REPL & CLI commands** | `/secrets` or `/secrets list` (list secret names + masked lengths, never values), `/secrets set <NAME> <VALUE>` (save secret), `/secrets unset <NAME>` (remove secret), `/secrets load <file.env>` (import `.env` secrets without printing values), and offline `omnicode --secrets [...]` |
+| **Subprocess injection** | `Context.command` (`src/tools.zig`) injects all stored secrets into the child process `environ_map` so `bash` commands can reference `$NAME` directly |
+| **Name-only prompt advertisement** | `Agent.buildSystem` (`src/agent.zig`) appends `Available secret env vars (values hidden; reference as $NAME in bash): NAME1, NAME2` so the model uses secrets without ever seeing their values |
+| **Mandatory scrubber (`Secrets.scrub`)** | Scrubs every `Context.run` output, every user prompt entering `Agent.history`, and terminal previews—replacing any exact match of a secret value or configured `*_API_KEY` (length $\ge 4$) with `[REDACTED:<NAME>]` |
+| **History exclusion (`src/input.zig`)** | `Input.record` ignores lines starting with `/secrets` or `/setup` so raw credentials never enter Up/Down arrow history |
+
+---
+
+### 2. `/model`: Available-model listing, numbered selection, and non-destructive switching (`src/catalog.zig`, `src/router.zig`, `src/main.zig`)
+
+#### Goals
+
+1. **Show available models on `/model` (or `/model list`):** Users need to see what models
+   are currently available (both from the live OpenRouter catalog and configured providers)
+   along with pricing, context window, and an index number so they can switch immediately.
+2. **Switch models without wiping conversation history:** Changing models mid-session should
+   preserve `Agent.history` and `Todo` state instead of resetting the session arena.
+3. **Ergonomic switching syntax:** Support switching by index (`/model 2`), by model ID alone
+   (`/model anthropic/claude-sonnet-4.5` or `/model deepseek-reasoner`), by tier
+   (`/model fast`, `/model strong`, `/model auto`), or by explicit provider + model
+   (`/model openrouter google/gemini-2.5-pro`).
+
+#### Design
+
+| Command | Behavior |
+|---|---|
+| `/model` or `/model list` | Displays current provider/model and routing policy, followed by a numbered list (`[1]`, `[2]`, …) of currently available models: live top-ranked OpenRouter catalog models (with `$ in / $ out per 1M` and context window) when OpenRouter is active/configured, plus built-in fast/strong models for configured providers (`anthropic`, `deepseek`, `xai`, `openai`, `gemini`, `groq`) |
+| `/model <N>` | Switches directly to model `#N` from the available models list (e.g. `/model 1`) |
+| `/model <MODEL_ID>` | Pins `<MODEL_ID>` on the current or inferred provider (inferring `openrouter` for `vendor/model` IDs, or matching known provider prefixes like `claude-`, `deepseek-`, `grok-`, `gpt-`, `gemini-`, `llama-`) |
+| `/model <PROVIDER> <MODEL_ID>` | Switches to `<PROVIDER>` and pins `<MODEL_ID>` |
+| `/model fast [MODEL_ID]` | Switches to the fast tier model, or updates `FAST_MODEL` if `MODEL_ID` is given |
+| `/model strong [MODEL_ID]` | Switches to the strong tier model, or updates `MODEL` if `MODEL_ID` is given |
+| `/model auto` | Restores automatic fast/strong task routing |
+
+---
+
+### Implementation order
+
+```mermaid
+flowchart LR
+    S1["1. src/secrets.zig: vault (0o600), .env loader, and redaction scrubber"] --> S2["2. Wire secrets into Context.command, Context.run, Agent.buildSystem, and Input.record"]
+    S2 --> M1["3. Upgrade Catalog & Router to list available models with numbered indices"]
+    M1 --> M2["4. Upgrade /model in src/main.zig: list, #N selection, 1-arg/2-arg switch without clearing history"]
+    M2 --> T["5. Unit & integration tests + README/ROADMAP docs"]
+```
+
+1. **Increment 1 (`src/secrets.zig` + tool/prompt/input integration):**
+   - Implement `Secrets` vault (`load`, `set`, `unset`, `loadEnvFile`, `scrub`, `namesList`, `statusReport`).
+   - Inject secrets into `Context.command` child environment, scrub `Context.run` outputs and user prompts, advertise secret names in `Agent.buildSystem`, and exclude `/secrets` & `/setup` from `Input.record`.
+2. **Increment 2 (`/model` available-model browser & switcher):**
+   - Add `Catalog.formatAvailableModels` / provider model listing and numbered candidate cache.
+   - Update `/model` in `src/main.zig` to display available models, support `/model <N>`, `/model <MODEL_ID>`, `/model <PROVIDER> <MODEL_ID>`, `/model fast|strong|auto`, and preserve conversation history across model switches.
+3. **Increment 3 (Verification & documentation):**
+   - Add unit tests in `src/secrets.zig` and `src/catalog.zig`, and end-to-end integration tests in `tests/integration.py` verifying zero-leak secret scrubbing across `bash`/`read`/`grep` and `/model` listing & switching.

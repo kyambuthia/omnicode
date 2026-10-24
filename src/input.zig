@@ -11,6 +11,7 @@ pub const Input = struct {
 
     pub fn record(self: *Input, entry: []const u8) void {
         if (entry.len == 0 or std.mem.indexOfScalar(u8, entry, '\n') != null) return;
+        if (std.mem.startsWith(u8, entry, "/secrets") or std.mem.startsWith(u8, entry, "/setup")) return;
         if (self.count > 0) {
             const prev = (self.count - 1) % self.history.len;
             if (std.mem.eql(u8, self.history[prev][0..self.lengths[prev]], entry)) return;
@@ -136,6 +137,8 @@ test "input history records unique single-line entries and bounds capacity" {
     input.record("first");
     input.record("first");
     input.record("multi\nline");
+    input.record("/secrets set DB_PASS secret123");
+    input.record("/setup openrouter sk-or-123");
     input.record("second");
     try std.testing.expectEqual(2, input.count);
     try std.testing.expectEqualStrings("first", input.getHistory(0));

@@ -4,6 +4,7 @@ const router = @import("router.zig");
 const status = @import("status.zig");
 
 pub const allowed_keys = [_][]const u8{
+    "AN_ABLE_KEY",
     "OPENROUTER_API_KEY",
     "ANTHROPIC_API_KEY",
     "DEEPSEEK_API_KEY",
@@ -146,6 +147,7 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
     var out: Io.Writer.Allocating = .init(a);
     try out.writer.print("Config file: {s}\nProviders & API keys:\n", .{path});
     inline for (.{
+        router.Provider.abliteration,
         router.Provider.openrouter,
         router.Provider.anthropic,
         router.Provider.deepseek,

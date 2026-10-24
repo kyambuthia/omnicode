@@ -5,3 +5,4 @@ __pycache__/
 .omnicode/sessions/
 .omnicode/voice.wav
 .omnicode/config.env
+.omnicode/secrets.env

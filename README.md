@@ -36,12 +36,12 @@ export OPENROUTER_API_KEY='your-key'
 ./zig-out/bin/omnicode
 ```
 
-Use `zig build run -- 'your task'` during development. `--help`, `--skills`, `--init`, and `--setup`
+Use `zig build run -- 'your task'` during development. `--help`, `--version`, `--skills`, `--init`, `--setup`, and `--secrets`
 work without a key or network connection. Do not put API keys in tracked files.
 
 ```text
 omnicode [--free|--cost-max] [--verbose] [--] [prompt ...]
-omnicode --skills | --init [force] | --setup [...] | --version | --help
+omnicode --skills | --init [force] | --setup [...] | --secrets [...] | --version | --help
 ```
 
 | Option | Effect |
@@ -51,6 +51,7 @@ omnicode --skills | --init [force] | --setup [...] | --version | --help
 | `--verbose` | Full tool output instead of compact previews |
 | `--init [force]` | Bootstrap `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md` for the current repository |
 | `--setup [...]` | View or configure provider API keys and settings in `~/.config/omnicode/config.env` (`0o600`) |
+| `--secrets [...]` | Manage zero-leak secrets (passwords, logins, tokens) in `~/.config/omnicode/secrets.env` (`0o600`) |
 | `--` | Treat every following argument literally as prompt text (e.g. `-- --help me`) |
 
 `--free` and `--cost-max` together is an error (`ConflictingOptions`); other
@@ -71,7 +72,7 @@ beyond those keywords; override the model for ambiguous work.
 
 | Variable | Meaning / default |
 |---|---|
-| `PROVIDER` | `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq`; otherwise auto-detected from configured API keys. `--free` forces `openrouter` |
+| `PROVIDER` | `abliteration`, `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq`; otherwise auto-detected from configured API keys. `--free` forces `openrouter` |
 | `MODEL` | Strong model. Default: provider default or catalog-selected (OpenRouter) |
 | `FAST_MODEL` | Fast model. Default: provider default or catalog-selected (OpenRouter) |
 | `VOICE_MODEL` | Audio transcription model for `/voice`. Default: cheapest audio-capable model in the OpenRouter catalog (fallback `google/gemini-2.0-flash-lite-001`) |
@@ -117,20 +118,26 @@ REPL commands:
 | Command | Effect |
 |---|---|
 | `/setup` | Show configured provider API keys (masked), active settings, and config file path |
-| `/setup <provider> <key>` | Save an API key for `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq` (`0o600`) and activate it |
+| `/setup <provider> <key>` | Save an API key for `abliteration`, `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq` (`0o600`) and activate it |
 | `/setup set <KEY> <VALUE>` | Persist a setting (`PROVIDER`, `MODEL`, `FAST_MODEL`, `VOICE_MODEL`, etc.) and apply it immediately |
 | `/setup unset <provider\|KEY>` | Remove a saved API key or setting |
+| `/secrets` | List stored secret names and character lengths (values are never shown) |
+| `/secrets set <NAME> <VALUE>` | Store a secret (`0o600`): injected as `$NAME` in `bash`, advertised by name only, and scrubbed (`[REDACTED:NAME]`) from all tool outputs and prompts |
+| `/secrets unset <NAME>` | Remove a secret from the vault |
+| `/secrets load <file.env>` | Import secrets from a `.env` file into the vault and redaction scrubber |
 | `/voice [seconds\|file.wav]` | Record microphone audio (default 5s) or read an audio file, transcribe via cheap OpenRouter audio models, and run the spoken prompt |
 | `/voice model [MODEL]` | View or pin `VOICE_MODEL` for voice transcription |
 | `/init [force]` | Generate `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md`, then reload system instructions |
 | `/review [focus]` | Run the two-critic adversarial code review (Correctness/Security + Anti-Slop/Simplicity) on workspace changes |
-| `/model openrouter anthropic/claude-sonnet-4.5` | Pin a provider/model and clear history |
-| `/model anthropic claude-sonnet-4-5` | Pin a direct Anthropic model and clear history |
-| `/model auto` | Restore environment/default routing and clear history |
+| `/model` or `/model list` | Show current routing mode and a numbered list (`[1]`, `[2]`, …) of available models across the OpenRouter catalog and configured providers |
+| `/model <N>` | Switch directly to model `#N` from the `/model` list (preserves conversation) |
+| `/model <MODEL>` | Pin `<MODEL>` on the current or inferred provider (preserves conversation) |
+| `/model <PROVIDER> <MODEL>` | Switch to `<PROVIDER>` and pin `<MODEL>` (preserves conversation) |
+| `/model fast [MODEL]` or `/model strong [MODEL]` | Pin the fast or strong tier model (or update `FAST_MODEL`/`MODEL`) |
+| `/model auto` | Restore automatic fast/strong task routing (preserves conversation) |
 | `/skills` | List local skills |
 | `/skill NAME` | Add that skill's instructions to the conversation |
 | `/help` | Show commands and configuration |
-| `/model` | Show current routing mode and models |
 | `/verbose on` or `/verbose off` | Switch future tool output between full and compact previews |
 | `/status inline\|pinned\|title\|off` | Show the status line pinned to the bottom row (default), above the prompt, in the terminal title, or not at all |
 | `/usage` | Show session token/cost totals, retained across clears and model changes |

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const Provider = enum {
+    abliteration,
     anthropic,
     openrouter,
     deepseek,
@@ -11,6 +12,7 @@ pub const Provider = enum {
 
     pub fn envKey(self: Provider) []const u8 {
         return switch (self) {
+            .abliteration => "AN_ABLE_KEY",
             .anthropic => "ANTHROPIC_API_KEY",
             .openrouter => "OPENROUTER_API_KEY",
             .deepseek => "DEEPSEEK_API_KEY",
@@ -23,6 +25,7 @@ pub const Provider = enum {
 
     pub fn defaultUrl(self: Provider) []const u8 {
         return switch (self) {
+            .abliteration => "https://api.abliteration.ai/v1/messages",
             .anthropic => "https://api.anthropic.com/v1/messages",
             .openrouter => "https://openrouter.ai/api/v1/messages",
             .deepseek => "https://api.deepseek.com/anthropic/v1/messages",
@@ -35,6 +38,7 @@ pub const Provider = enum {
 
     pub fn defaultModel(self: Provider, strong: bool) []const u8 {
         return switch (self) {
+            .abliteration => if (strong) "abliterated-model-large-flash" else "abliterated-model",
             .anthropic => "claude-haiku-4-5",
             .openrouter => "auto",
             .deepseek => if (strong) "deepseek-reasoner" else "deepseek-chat",
@@ -43,6 +47,18 @@ pub const Provider = enum {
             .gemini => if (strong) "gemini-2.5-pro" else "gemini-2.5-flash",
             .groq => "llama-3.3-70b-versatile",
         };
+    }
+
+    pub fn infer(model_id: []const u8, fallback: Provider) Provider {
+        if (std.mem.indexOfScalar(u8, model_id, '/') != null) return .openrouter;
+        if (std.mem.startsWith(u8, model_id, "abliterated-")) return .abliteration;
+        if (std.mem.startsWith(u8, model_id, "claude-")) return .anthropic;
+        if (std.mem.startsWith(u8, model_id, "deepseek-")) return .deepseek;
+        if (std.mem.startsWith(u8, model_id, "grok-")) return .xai;
+        if (std.mem.startsWith(u8, model_id, "gpt-") or std.mem.startsWith(u8, model_id, "o1") or std.mem.startsWith(u8, model_id, "o3") or std.mem.startsWith(u8, model_id, "o4")) return .openai;
+        if (std.mem.startsWith(u8, model_id, "gemini-")) return .gemini;
+        if (std.mem.startsWith(u8, model_id, "llama-")) return .groq;
+        return fallback;
     }
 };
 
@@ -79,7 +95,7 @@ pub const Route = struct {
     }
 
     fn detectProvider(env: *const std.process.Environ.Map) []const u8 {
-        inline for (.{ Provider.openrouter, Provider.anthropic, Provider.deepseek, Provider.xai, Provider.openai, Provider.gemini, Provider.groq }) |p| {
+        inline for (.{ Provider.abliteration, Provider.openrouter, Provider.anthropic, Provider.deepseek, Provider.xai, Provider.openai, Provider.gemini, Provider.groq }) |p| {
             if (env.get(p.envKey())) |v| if (v.len > 0) return @tagName(p);
         }
         return "anthropic";

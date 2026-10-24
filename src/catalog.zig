@@ -1,6 +1,8 @@
 const std = @import("std");
 const j = @import("json.zig");
-const Route = @import("router.zig").Route;
+const router = @import("router.zig");
+const Route = router.Route;
+const Provider = router.Provider;
 const Price = @import("pricing.zig").Price;
 
 pub const Catalog = struct {
@@ -73,6 +75,122 @@ pub const Catalog = struct {
             }
         }
         return best;
+    }
+};
+
+pub const ModelMenu = struct {
+    pub const max_items = 32;
+    providers: [max_items]Provider = undefined,
+    models: [max_items][160]u8 = undefined,
+    model_lens: [max_items]usize = @splat(0),
+    count: usize = 0,
+
+    pub fn add(self: *ModelMenu, provider: Provider, model_id: []const u8) ?usize {
+        if (model_id.len == 0 or model_id.len > 160 or std.mem.eql(u8, model_id, "auto")) return null;
+        for (0..self.count) |i| {
+            if (self.providers[i] == provider and std.mem.eql(u8, self.models[i][0..self.model_lens[i]], model_id)) return null;
+        }
+        if (self.count >= max_items) return null;
+        const idx = self.count;
+        self.providers[idx] = provider;
+        @memcpy(self.models[idx][0..model_id.len], model_id);
+        self.model_lens[idx] = model_id.len;
+        self.count += 1;
+        return self.count;
+    }
+
+    pub fn get(self: *const ModelMenu, one_based: usize) ?struct { provider: Provider, model: []const u8 } {
+        if (one_based == 0 or one_based > self.count) return null;
+        const idx = one_based - 1;
+        return .{ .provider = self.providers[idx], .model = self.models[idx][0..self.model_lens[idx]] };
+    }
+
+    pub fn populateAndFormat(
+        self: *ModelMenu,
+        a: std.mem.Allocator,
+        io: std.Io,
+        env: *const std.process.Environ.Map,
+        route: Route,
+        fetch_catalog: bool,
+    ) ![]const u8 {
+        self.count = 0;
+        var out: std.Io.Writer.Allocating = .init(a);
+        try out.writer.writeAll("Available models:\n");
+        if (env.get("MODEL")) |m| {
+            if (self.add(route.provider, m)) |idx| {
+                const active = std.mem.eql(u8, route.model, m);
+                try out.writer.print("  [{d:>2}]{s} {s:<12} {s} (configured strong)\n", .{ idx, if (active) "*" else " ", @tagName(route.provider), m });
+            }
+        }
+        if (env.get("FAST_MODEL")) |m| {
+            if (self.add(route.provider, m)) |idx| {
+                const active = std.mem.eql(u8, route.model, m);
+                try out.writer.print("  [{d:>2}]{s} {s:<12} {s} (configured fast)\n", .{ idx, if (active) "*" else " ", @tagName(route.provider), m });
+            }
+        }
+        if (route.provider == .openrouter or fetch_catalog) {
+            if (Catalog.load(a, io, env)) |cat| {
+                var shown: usize = 0;
+                for (cat.models) |model| {
+                    if (shown >= 10) break;
+                    const id = j.str(model, "id") catch continue;
+                    const price = Price.parse(j.get(model, "pricing") catch continue) orelse continue;
+                    if (route.mode == .free and !price.free) continue;
+                    if (!contains(model, "supported_parameters", "tools") or
+                        !contains(j.get(model, "architecture") catch .null, "output_modalities", "text")) continue;
+                    const ctx = j.number(model, "context_length", 0) catch 0;
+                    if (ctx < 32768) continue;
+                    const top = j.get(model, "top_provider") catch .null;
+                    if ((j.number(top, "max_completion_tokens", 8192) catch 8192) < 8192) continue;
+                    if (std.mem.startsWith(u8, id, "openrouter/") or std.mem.startsWith(u8, id, "~") or
+                        (std.mem.indexOfScalar(u8, id, ':') != null and !std.mem.endsWith(u8, id, ":free"))) continue;
+                    if (self.add(.openrouter, id)) |idx| {
+                        const active = route.provider == .openrouter and std.mem.eql(u8, route.model, id);
+                        if (price.free) {
+                            try out.writer.print("  [{d:>2}]{s} openrouter   {s:<34} · {d}k ctx · free\n", .{ idx, if (active) "*" else " ", id, ctx / 1024 });
+                        } else {
+                            try out.writer.print("  [{d:>2}]{s} openrouter   {s:<34} · {d}k ctx · ${d:.2}/${d:.2} per 1M\n", .{
+                                idx, if (active) "*" else " ", id, ctx / 1024, price.input * 1_000_000, price.output * 1_000_000,
+                            });
+                        }
+                        shown += 1;
+                    }
+                }
+            } else |_| {}
+        }
+        if (route.mode != .free) {
+            const presets = [_]struct { p: Provider, m: []const u8, tier: []const u8 }{
+                .{ .p = .anthropic, .m = "claude-haiku-4-5", .tier = "fast" },
+                .{ .p = .anthropic, .m = "claude-sonnet-4-5", .tier = "strong" },
+                .{ .p = .deepseek, .m = "deepseek-chat", .tier = "fast" },
+                .{ .p = .deepseek, .m = "deepseek-reasoner", .tier = "strong" },
+                .{ .p = .xai, .m = "grok-3-mini", .tier = "fast" },
+                .{ .p = .xai, .m = "grok-4", .tier = "strong" },
+                .{ .p = .openai, .m = "gpt-4.1-mini", .tier = "fast" },
+                .{ .p = .openai, .m = "gpt-4.1", .tier = "strong" },
+                .{ .p = .gemini, .m = "gemini-2.5-flash", .tier = "fast" },
+                .{ .p = .gemini, .m = "gemini-2.5-pro", .tier = "strong" },
+                .{ .p = .groq, .m = "llama-3.3-70b-versatile", .tier = "fast/strong" },
+                .{ .p = .abliteration, .m = "abliterated-model", .tier = "fast" },
+                .{ .p = .abliteration, .m = "abliterated-model-large-flash", .tier = "strong" },
+            };
+            for (presets) |item| {
+                if (self.add(item.p, item.m)) |idx| {
+                    const active = route.provider == item.p and std.mem.eql(u8, route.model, item.m);
+                    const has_key = if (env.get(item.p.envKey())) |v| v.len > 0 else false;
+                    try out.writer.print("  [{d:>2}]{s} {s:<12} {s:<30} · {s}{s}\n", .{
+                        idx,
+                        if (active) "*" else " ",
+                        @tagName(item.p),
+                        item.m,
+                        item.tier,
+                        if (has_key) " · key ready" else "",
+                    });
+                }
+            }
+        }
+        try out.writer.writeAll("Switch: /model <number> | /model <MODEL> | /model <PROVIDER> <MODEL> | /model fast|strong|auto\n");
+        return out.toOwnedSlice();
     }
 };
 

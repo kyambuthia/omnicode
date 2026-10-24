@@ -6,17 +6,20 @@ const help =
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
     \\omnicode --setup [...]     View or configure provider API keys and settings.
+    \\omnicode --secrets [...]   Manage zero-leak secrets (passwords, tokens, logins).
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
+    \\  /secrets [...]         Manage zero-leak secrets (injected in bash, scrubbed from chat)
     \\  /voice [sec|file]      Record or transcribe audio via cheap OpenRouter voice models
     \\  /init [force]          Bootstrap OMNICODE.md and verify skill
     \\  /review [focus]        Run adversarial multi-agent code review
-    \\  /model                 Show the current routing mode
-    \\  /model auto            Select fast/strong models automatically
-    \\  /model PROVIDER MODEL  Pin a model (clears conversation)
+    \\  /model [list]          Show current routing and numbered list of available models
+    \\  /model <N|MODEL>       Switch to model #N or MODEL (preserves conversation)
+    \\  /model PROVIDER MODEL  Switch provider and pin MODEL
+    \\  /model auto|fast|strong  Select automatic routing or pin fast/strong tier
     \\  /skills, /skill NAME   List or load project instructions
     \\  /verbose on|off        Show full output for future tool calls
     \\  /status inline|pinned|title|off  Status line: provider, model, directory, local time
@@ -29,7 +32,7 @@ const help =
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
-    \\Config: PROVIDER=anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL
+    \\Config: PROVIDER=abliteration|anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL
     \\Keys: OPENROUTER_API_KEY, ANTHROPIC_API_KEY, etc. (or run /setup). Searches require rg.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
@@ -45,6 +48,9 @@ pub fn main(init: std.process.Init) void {
 fn run(init: std.process.Init) !void {
     const a = init.arena.allocator();
     core.config.loadIntoEnv(a, init.io, .cwd(), init.environ_map) catch {};
+    var secrets: core.Secrets = .{};
+    secrets.load(a, init.io, .cwd(), init.environ_map) catch {};
+    secrets.injectEnv(init.environ_map) catch {};
     const args = try init.minimal.args.toSlice(a);
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.Writer.init(.stdout(), init.io, &output_buffer);
@@ -71,7 +77,7 @@ fn run(init: std.process.Init) !void {
             prompt_only = true;
             first += 1;
             break;
-        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--version") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init") and !std.mem.eql(u8, arg, "--setup")) {
+        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--version") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init") and !std.mem.eql(u8, arg, "--setup") and !std.mem.eql(u8, arg, "--secrets")) {
             return error.UnknownOption;
         } else break;
     }
@@ -83,7 +89,7 @@ fn run(init: std.process.Init) !void {
         try out.writeAll(help);
         return out.flush();
     }
-    const context: core.Context = .{ .a = a, .io = init.io, .dir = .cwd() };
+    const context: core.Context = .{ .a = a, .io = init.io, .dir = .cwd(), .secrets = &secrets, .env = init.environ_map };
     if (!prompt_only and args.len == first + 1 and std.mem.eql(u8, args[first], "--skills")) {
         const skills = try context.skills();
         try ui.skills(skills);
@@ -104,13 +110,22 @@ fn run(init: std.process.Init) !void {
         try full.preview(msg, "");
         return out.flush();
     }
+    if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--secrets")) {
+        const rest = try std.mem.join(a, " ", args[first + 1 ..]);
+        const msg = try secrets.execute(a, init.io, .cwd(), init.environ_map, rest);
+        var full = ui;
+        full.verbose = true;
+        try full.preview(msg, "");
+        return out.flush();
+    }
     var route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
     route.mode = mode;
     var automatic = true;
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
     var todo: core.Todo = .{};
-    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo }, init.environ_map, route);
+    var menu: core.ModelMenu = .{};
+    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets }, init.environ_map, route);
     if (args.len > first) {
         agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
             try ui.errorMessage(err);
@@ -207,7 +222,7 @@ fn run(init: std.process.Init) !void {
             const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
             const name = if (raw.len > 0) raw else "latest";
             var fresh = std.heap.ArenaAllocator.init(init.gpa);
-            var candidate = try core.Agent.init(.{ .a = fresh.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo }, init.environ_map, route);
+            var candidate = try core.Agent.init(.{ .a = fresh.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets }, init.environ_map, route);
             candidate.automatic = automatic;
             candidate.loadSession(name) catch |err| {
                 fresh.deinit();
@@ -241,6 +256,18 @@ fn run(init: std.process.Init) !void {
                 route.key = init.environ_map.get(route.provider.envKey()) orelse route.key;
                 agent.route = route;
             }
+            var full = ui;
+            full.verbose = true;
+            try full.preview(msg, "");
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/secrets") or std.mem.startsWith(u8, line, "/secrets ")) {
+            const rest = if (line.len > 9) std.mem.trim(u8, line[9..], " \t") else "";
+            const msg = secrets.execute(a, init.io, .cwd(), init.environ_map, rest) catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            try agent.refreshSystem();
             var full = ui;
             full.verbose = true;
             try full.preview(msg, "");
@@ -285,7 +312,7 @@ fn run(init: std.process.Init) !void {
             try ui.note("omnicode " ++ core.version);
             continue;
         }
-        if (std.mem.eql(u8, line, "/model")) {
+        if (std.mem.eql(u8, line, "/model") or std.mem.eql(u8, line, "/model list")) {
             try ui.note(if (mode == .free) "--free: live zero-price tool models only; paid overrides are rejected." else "--cost-max (default): optimize live catalog prices within the ranked candidate pool.");
             if (automatic and route.provider == .openrouter) {
                 try ui.note("Automatic model selection refreshes from OpenRouter before each turn.");
@@ -293,6 +320,10 @@ fn run(init: std.process.Init) !void {
                 try ui.route(@tagName(route.provider), route.model);
                 if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
             }
+            const list = try menu.populateAndFormat(a, init.io, init.environ_map, route, std.mem.eql(u8, line, "/model list"));
+            var full = ui;
+            full.verbose = true;
+            try full.preview(list, "");
             continue;
         }
         if (std.mem.eql(u8, line, "/status") or std.mem.startsWith(u8, line, "/status ")) {
@@ -318,29 +349,71 @@ fn run(init: std.process.Init) !void {
         }
         if (std.mem.startsWith(u8, line, "/model ")) {
             var parts = std.mem.tokenizeScalar(u8, line[7..], ' ');
-            const provider = parts.next() orelse continue;
-            if (std.mem.eql(u8, provider, "auto") and parts.next() == null) {
-                route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
-                automatic = true;
-            } else {
-                const model = parts.next() orelse {
-                    try out.writeAll("usage: /model auto | /model PROVIDER MODEL\n");
-                    continue;
-                };
-                if (parts.next() != null) {
-                    try out.writeAll("too many model arguments\n");
-                    continue;
-                }
-                if (mode == .free and !std.mem.eql(u8, provider, "openrouter")) {
-                    try ui.note("--free requires OpenRouter; provider switch rejected.");
-                    continue;
-                }
-                route = core.Route.init(init.environ_map, provider, try a.dupe(u8, model)) catch |err| {
-                    try out.print("error: {s}\n", .{@errorName(err)});
-                    continue;
-                };
-                automatic = false;
+            const first_tok = parts.next() orelse continue;
+            const second_tok = parts.next();
+            if (parts.next() != null) {
+                try out.writeAll("too many model arguments\n");
+                continue;
             }
+            if (std.mem.eql(u8, first_tok, "auto") and second_tok == null) {
+                route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
+                route.mode = mode;
+                automatic = true;
+                agent.route = route;
+                agent.automatic = true;
+                status.model_len = 0;
+                try ui.note("Switched to automatic fast/strong model routing.");
+                continue;
+            }
+            if (std.mem.eql(u8, first_tok, "fast") or std.mem.eql(u8, first_tok, "strong")) {
+                const is_strong = std.mem.eql(u8, first_tok, "strong");
+                if (second_tok) |custom| {
+                    try init.environ_map.put(if (is_strong) "MODEL" else "FAST_MODEL", try a.dupe(u8, custom));
+                }
+                const target = route.forTask(init.environ_map, if (is_strong) "implement" else "lookup").model;
+                route.model = try a.dupe(u8, target);
+                automatic = false;
+                agent.route = route;
+                agent.automatic = false;
+                status.setModel(route.model);
+                try ui.route(@tagName(route.provider), route.model);
+                continue;
+            }
+            var target_provider: []const u8 = @tagName(route.provider);
+            var target_model: []const u8 = first_tok;
+            if (second_tok) |m| {
+                target_provider = first_tok;
+                target_model = m;
+            } else if (std.fmt.parseInt(usize, first_tok, 10) catch null) |num| {
+                if (menu.count == 0) _ = try menu.populateAndFormat(a, init.io, init.environ_map, route, false);
+                const choice = menu.get(num) orelse {
+                    try out.writeAll("Invalid model number. Run /model to list available models.\n");
+                    continue;
+                };
+                target_provider = @tagName(choice.provider);
+                target_model = choice.model;
+            } else if (std.meta.stringToEnum(core.Provider, first_tok) != null) {
+                try out.writeAll("usage: /model [list] | /model <number> | /model auto | /model [PROVIDER] MODEL\n");
+                continue;
+            } else {
+                const inferred = core.Provider.infer(first_tok, if (mode == .free) .openrouter else route.provider);
+                target_provider = @tagName(inferred);
+            }
+            if (mode == .free and !std.mem.eql(u8, target_provider, "openrouter")) {
+                try ui.note("--free requires OpenRouter; provider switch rejected.");
+                continue;
+            }
+            route = core.Route.init(init.environ_map, target_provider, try a.dupe(u8, target_model)) catch |err| {
+                try out.print("error: {s}\n", .{@errorName(err)});
+                continue;
+            };
+            route.mode = mode;
+            automatic = false;
+            agent.route = route;
+            agent.automatic = false;
+            status.setModel(route.model);
+            try ui.route(@tagName(route.provider), route.model);
+            continue;
         } else if (std.mem.startsWith(u8, line, "/skill ")) {
             const body = agent.context.loadSkill(line[7..]) catch |err| {
                 try out.print("error: {s}\n", .{@errorName(err)});
@@ -420,7 +493,7 @@ fn run(init: std.process.Init) !void {
         _ = arena.reset(.free_all);
         todo.len = 0;
         route.mode = mode;
-        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo }, init.environ_map, route);
+        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets }, init.environ_map, route);
         agent.automatic = automatic;
         try out.writeAll("Conversation cleared.\n");
     }

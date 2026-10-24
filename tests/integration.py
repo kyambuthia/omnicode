@@ -709,7 +709,7 @@ class Integration(unittest.TestCase):
         self.skill()
         self.env.pop("ANTHROPIC_API_KEY")
         self.env.pop("OPENROUTER_API_KEY", None)
-        for args in [("--help",), ("--version",), ("--skills",), ("--init",), ("--setup",)]:
+        for args in [("--help",), ("--version",), ("--skills",), ("--init",), ("--setup",), ("--secrets",)]:
             self.assertEqual(self.run_agent(*args).returncode, 0)
         self.assertIn("0.2.0", self.run_agent("--version").stdout)
         self.assertTrue((self.cwd / "OMNICODE.md").exists())
@@ -818,6 +818,54 @@ class Integration(unittest.TestCase):
             "strong-test-model", "strong-test-model", "fast-test-model",
             "strong-test-model", "strong-test-model", "fast-test-model",
         ])
+
+    def test_secrets_vault_scrubbing_and_model_browser_switching(self):
+        (self.cwd / ".env.secret").write_text("export LOGIN_TOKEN='tok_live_ultra_secret_777'\n")
+        self.env["DEEPSEEK_API_KEY"] = "sk-deepseek-key-1111"
+        def reply(body):
+            if isinstance(body["messages"][-1]["content"], str) and len(self.requests) == 1:
+                return tools(
+                    call("bash", {"cmd": 'printf "db=%s tok=%s" "$DB_PASS" "$LOGIN_TOKEN"'}, "sb1"),
+                    call("read", {"path": ".env.secret"}, "sr1"),
+                )
+            return text("completed securely")
+        self.reply = reply
+        result = self.run_agent(stdin=(
+            "/secrets set DB_PASS hunter2_super_secret\n"
+            "/secrets load .env.secret\n"
+            "/secrets\n"
+            "check login using hunter2_super_secret\n"
+            "/details\n"
+            "/model list\n"
+            "/model 2\n"
+            "second turn on model #2\n"
+            "/model deepseek-reasoner\n"
+            "third turn on inferred deepseek\n"
+            "/exit\n"
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        secrets_file = Path(self.tmp.name) / ".config/omnicode/secrets.env"
+        self.assertTrue(secrets_file.exists())
+        self.assertEqual(secrets_file.stat().st_mode & 0o777, 0o600)
+        # Raw secrets must never appear anywhere in stdout or outbound LLM messages/tool_results.
+        self.assertNotIn("hunter2_super_secret", result.stdout)
+        self.assertNotIn("tok_live_ultra_secret_777", result.stdout)
+        all_requests_json = json.dumps([r[0] for r in self.requests])
+        self.assertNotIn("hunter2_super_secret", all_requests_json)
+        self.assertNotIn("tok_live_ultra_secret_777", all_requests_json)
+        # System prompt advertises secret names only.
+        self.assertIn("Available secret env vars (values hidden; reference as $NAME in bash): DB_PASS, LOGIN_TOKEN", self.requests[0][0]["system"])
+        # User prompt and tool results have secrets scrubbed to [REDACTED:<NAME>].
+        self.assertIn("[REDACTED:DB_PASS]", self.requests[0][0]["messages"][0]["content"])
+        tool_outputs = {r["tool_use_id"]: r["content"] for r in self.requests[1][0]["messages"][-1]["content"]}
+        self.assertEqual(tool_outputs["sb1"], "db=[REDACTED:DB_PASS] tok=[REDACTED:LOGIN_TOKEN]")
+        self.assertIn("[REDACTED:LOGIN_TOKEN]", tool_outputs["sr1"])
+        # /model list showed numbered models and switching by #2 and by model ID preserved conversation history!
+        self.assertIn("Available models:", result.stdout)
+        self.assertEqual([r[0]["model"] for r in self.requests], [
+            "fast-test-model", "fast-test-model", "fast-test-model", "deepseek-reasoner"
+        ])
+        self.assertGreaterEqual(len(self.requests[-1][0]["messages"]), 5)
 
 
 if __name__ == "__main__":

@@ -327,7 +327,7 @@ pub const Ui = struct {
         try ui.out.print("\n✗ {s}\n", .{@errorName(err)});
         try ui.style("\x1b[0m");
         const hint = switch (err) {
-            error.MissingApiKey => "Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY for your selected provider.",
+            error.MissingApiKey => "Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or AN_ABLE_KEY for your selected provider.",
             error.NoFreeModels => "No eligible free tool models in the current catalog; no paid request was sent.",
             error.PaidModelInFreeMode => "Configured model is not verified free. Clear MODEL/FAST_MODEL or choose a free model.",
             error.ModelUnavailable => "No eligible model in the live catalog. Check model overrides and MODELS_URL.",
@@ -340,6 +340,8 @@ pub const Ui = struct {
             error.InvalidConfigKey, error.InvalidSetupCommand => "Usage: /setup <provider> <key> | /setup set <KEY> <VALUE> | /setup unset <KEY>",
             error.VoiceRecordFailed => "Audio recording failed. Install arecord/sox/ffmpeg, set OMNICODE_VOICE_CMD, or pass /voice <file.wav>.",
             error.EmptyAudio, error.EmptyTranscript => "Voice input produced no transcription.",
+            error.InvalidSecretName, error.InvalidSecretValue, error.InvalidSecretsCommand => "Usage: /secrets set <NAME> <VALUE> | /secrets unset <NAME> | /secrets load <file.env>",
+            error.SecretNotFound => "Secret not found in vault.",
             else => "Use /help for commands and check your provider/model configuration.",
         };
         try ui.out.print("  {s}\n", .{hint});

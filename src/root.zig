@@ -11,8 +11,11 @@ pub const Clock = @import("status.zig").Clock;
 pub const shortenHome = @import("status.zig").shortenHome;
 pub const terminalWidth = @import("status.zig").terminalWidth;
 pub const Route = @import("router.zig").Route;
+pub const Provider = @import("router.zig").Provider;
+pub const ModelMenu = @import("catalog.zig").ModelMenu;
 pub const config = @import("config.zig");
 pub const voice = @import("voice.zig");
+pub const Secrets = @import("secrets.zig").Secrets;
 
 test {
     _ = @import("router.zig");
@@ -25,4 +28,5 @@ test {
     _ = @import("input.zig");
     _ = @import("config.zig");
     _ = @import("voice.zig");
+    _ = @import("secrets.zig");
 }
