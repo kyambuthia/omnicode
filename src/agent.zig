@@ -178,9 +178,14 @@ pub const Agent = struct {
     }
 
     fn encodePayload(self: *const Agent, a: std.mem.Allocator, route: Route, messages: []const Message, with_tools: bool) ![]const u8 {
+        const default_max: usize = if (with_tools) 32768 else 4096;
+        const max_tok = if (with_tools)
+            if (self.env.get("MAX_TOKENS")) |v| std.fmt.parseInt(usize, v, 10) catch default_max else default_max
+        else
+            default_max;
         var payload = try j.parse(a, try j.encode(a, .{
             .model = route.model,
-            .max_tokens = @as(usize, if (with_tools) 8192 else 2048),
+            .max_tokens = max_tok,
             .system = self.system,
             .messages = messages,
         }));
@@ -587,9 +592,10 @@ fn extractGoal(first: Message) []const u8 {
 
 fn validate(response: j.Value) !j.Value {
     const stop = try j.str(response, "stop_reason");
-    if (!std.mem.eql(u8, stop, "end_turn") and !std.mem.eql(u8, stop, "tool_use")) return error.IncompleteResponse;
-    const content = try j.get(response, "content");
-    if (content != .array or content.array.items.len == 0 or content.array.items.len > 64) return error.InvalidResponse;
+    const is_max_tokens = std.mem.eql(u8, stop, "max_tokens");
+    if (!std.mem.eql(u8, stop, "end_turn") and !std.mem.eql(u8, stop, "tool_use") and !is_max_tokens) return error.IncompleteResponse;
+    const content = j.get(response, "content") catch |err| return if (is_max_tokens) error.IncompleteResponse else err;
+    if (content != .array or content.array.items.len == 0 or content.array.items.len > 64) return if (is_max_tokens) error.IncompleteResponse else error.InvalidResponse;
     var calls: usize = 0;
     var texts: usize = 0;
     for (content.array.items, 0..) |block, i| {
@@ -602,6 +608,7 @@ fn validate(response: j.Value) !j.Value {
         } else if (std.mem.eql(u8, kind, "redacted_thinking")) {
             _ = try j.str(block, "data");
         } else if (std.mem.eql(u8, kind, "tool_use")) {
+            if (is_max_tokens) return error.IncompleteResponse;
             calls += 1;
             const id = try j.str(block, "id");
             if (id.len == 0) return error.InvalidResponse;
@@ -613,8 +620,8 @@ fn validate(response: j.Value) !j.Value {
             }
         } else return error.UnsupportedContent;
     }
-    if (calls == 0 and texts == 0) return error.InvalidResponse;
-    if ((calls != 0) != std.mem.eql(u8, stop, "tool_use")) return error.InvalidResponse;
+    if (calls == 0 and texts == 0) return if (is_max_tokens) error.IncompleteResponse else error.InvalidResponse;
+    if (!is_max_tokens and (calls != 0) != std.mem.eql(u8, stop, "tool_use")) return error.InvalidResponse;
     return content;
 }
 

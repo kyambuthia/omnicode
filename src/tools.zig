@@ -121,8 +121,24 @@ pub const Context = struct {
         }
         if (std.mem.eql(u8, name, "bash")) return c.command(&.{ "sh", "-c", try j.str(args, "cmd") }, false, 30_000);
         const path = try j.optional(args, "path", ".");
-        if (std.mem.eql(u8, name, "glob")) return c.command(&.{ "rg", "--no-config", "--files", "--glob", try j.str(args, "pat"), "--", path }, true, 30_000);
-        if (std.mem.eql(u8, name, "grep")) return c.command(&.{ "rg", "--no-config", "--color=never", "-n", "-m", "50", "--", try j.str(args, "pat"), path }, true, 30_000);
+        if (std.mem.eql(u8, name, "glob")) return c.command(&.{
+            "rg",           "--no-config",          "--files",
+            "--glob",       "!.git",                "--glob",
+            "!.venv",       "--glob",               "!venv",
+            "--glob",       "!node_modules",        "--glob",
+            "!__pycache__", "--glob",               "!.zig-cache",
+            "--glob",       try j.str(args, "pat"), "--",
+            path,
+        }, true, 30_000);
+        if (std.mem.eql(u8, name, "grep")) return c.command(&.{
+            "rg",           "--no-config",          "--color=never",
+            "-n",           "-m",                   "50",
+            "--glob",       "!.git",                "--glob",
+            "!.venv",       "--glob",               "!venv",
+            "--glob",       "!node_modules",        "--glob",
+            "!__pycache__", "--glob",               "!.zig-cache",
+            "--",           try j.str(args, "pat"), path,
+        }, true, 30_000);
         return error.UnknownTool;
     }
 
