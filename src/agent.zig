@@ -100,33 +100,11 @@ pub const Agent = struct {
     fn request(self: *Agent, route: Route, body: []const u8) !j.Value {
         if (route.key.len == 0) return error.MissingApiKey;
         const a = self.context.a;
-        const buffer = try std.heap.page_allocator.alloc(u8, max_bytes);
-        defer std.heap.page_allocator.free(buffer);
-        var writer = Io.Writer.fixed(buffer);
-        var client: std.http.Client = .{ .allocator = std.heap.page_allocator, .io = self.context.io };
-        defer client.deinit();
         const auth: std.http.Header = if (route.provider == .anthropic)
             .{ .name = "x-api-key", .value = route.key }
         else
             .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
-        const response = try @import("deadline.zig").run(self.context.io, std.http.Client.fetch, .{
-            &client,
-            std.http.Client.FetchOptions{
-                .location = .{ .url = route.url },
-                .payload = body,
-                .response_writer = &writer,
-                .redirect_behavior = .unhandled,
-                .headers = .{ .content_type = .{ .override = "application/json" } },
-                // Zig 0.17 does not emit privileged_headers; redirects stay disabled.
-                .extra_headers = &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } },
-            },
-        }, 120_000);
-        if (response.status != .ok) {
-            // Avoid printing server bodies, which can reflect credentials or file content.
-            std.debug.print("API HTTP {d}\n", .{@backingInt(response.status)});
-            return error.ApiError;
-        }
-        return j.parse(a, writer.buffered());
+        return @import("http.zig").fetch(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
     }
 };
 
