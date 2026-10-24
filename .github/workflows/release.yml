@@ -20,7 +20,7 @@ jobs:
         run: |
           mkdir -p dist
           for arch in x86_64 aarch64; do
-            zig build -Doptimize=ReleaseSafe -Dtarget=${arch}-linux-musl --prefix "dist/${arch}"
+            zig build -Doptimize=ReleaseSafe -Dtarget=${arch}-linux --prefix "dist/${arch}"
             cp "dist/${arch}/bin/omnicode" dist/omnicode
             tar -czf "dist/omnicode-linux-${arch}.tar.gz" -C dist omnicode
             rm -f dist/omnicode
