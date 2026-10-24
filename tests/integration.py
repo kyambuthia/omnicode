@@ -262,7 +262,7 @@ class Integration(unittest.TestCase):
         self.assertIn("check: Check the project", first["system"])
         self.assertNotIn("Run checks carefully", first["system"])
         self.assertEqual({t["name"] for t in first["tools"]},
-                         {"read", "write", "edit", "glob", "grep", "bash", "skill", "todo", "task"})
+                         {"read", "write", "edit", "glob", "grep", "bash", "skill", "todo", "task", "review"})
         self.assertEqual(first["model"], second["model"])
         messages = second["messages"]
         self.assertEqual([m["role"] for m in messages], ["user", "assistant", "user"])
@@ -708,12 +708,55 @@ class Integration(unittest.TestCase):
     def test_offline_commands_and_missing_key(self):
         self.skill()
         self.env.pop("ANTHROPIC_API_KEY")
-        for args in [("--help",), ("--skills",)]:
+        for args in [("--help",), ("--skills",), ("--init",)]:
             self.assertEqual(self.run_agent(*args).returncode, 0)
+        self.assertTrue((self.cwd / "OMNICODE.md").exists())
+        self.assertTrue((self.cwd / ".omnicode/skills/verify/SKILL.md").exists())
         result = self.run_agent("list files")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("MissingApiKey", result.stderr)
         self.assertEqual(self.requests, [])
+
+    def test_init_project_instructions_and_adversarial_multi_agent_review(self):
+        (self.cwd / "build.zig").write_text("// zig build")
+        (self.cwd / "target.zig").write_text("pub fn add(a: i32, b: i32) i32 { return a + b; }\n")
+        def reply(body):
+            sys_prompt = body["system"]
+            if "Correctness & Security Critic" in sys_prompt:
+                # Critic 1 inspects target.zig first, then passes.
+                if len(body["messages"]) == 1:
+                    return tools(call("read", {"path": "target.zig"}, "rc1"))
+                return text("target.zig:1 checked arithmetic bounds.\nVERDICT: PASS")
+            if "Anti-Slop & Simplicity Critic" in sys_prompt:
+                # Critic 2 flags slop on the first review call, then passes on /review.
+                if "focus: strict" in body["messages"][0]["content"]:
+                    return text("target.zig:1 unused helper wrapper.\nVERDICT: FAIL")
+                return text("Minimal implementation.\nVERDICT: PASS")
+            # Parent agent calls review tool on first turn, then finishes.
+            if isinstance(body["messages"][-1]["content"], str):
+                return tools(call("review", {"focus": "focus: strict"}, "rev1"))
+            return text("addressed review findings")
+        self.reply = reply
+        result = self.run_agent(stdin="/init\n/init\n/init force\nimplement feature\n/review final check\n/details\n/exit\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Initialized OMNICODE.md", result.stdout)
+        self.assertIn("AlreadyInitialized", result.stdout)
+        # OMNICODE.md is injected into the system prompt after /init.
+        self.assertIn("Project instructions (OMNICODE.md):", self.requests[0][0]["system"])
+        self.assertIn("zig build test", self.requests[0][0]["system"])
+        # First review (via tool): Correctness Critic used read tool and passed; Anti-Slop Critic failed -> OVERALL VERDICT: FAIL.
+        tool_reply = self.requests[4][0]["messages"][-1]["content"][0]["content"]
+        self.assertIn("=== Correctness & Security Critic ===", tool_reply)
+        self.assertIn("=== Anti-Slop & Simplicity Critic ===", tool_reply)
+        self.assertIn("OVERALL VERDICT: FAIL", tool_reply)
+        # Second review (via /review REPL command): both critics pass -> OVERALL VERDICT: PASS.
+        self.assertIn("OVERALL VERDICT: PASS", result.stdout)
+        # Critic models: strong-test-model for correctness critic (2 turns each), fast-test-model for anti-slop critic (1 turn each).
+        critic_models = [r[0]["model"] for r in self.requests if "Critic" in r[0]["system"]]
+        self.assertEqual(critic_models, [
+            "strong-test-model", "strong-test-model", "fast-test-model",
+            "strong-test-model", "strong-test-model", "fast-test-model",
+        ])
 
 
 if __name__ == "__main__":

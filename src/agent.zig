@@ -139,6 +139,8 @@ pub const Agent = struct {
                     tool_count += 1;
                     const result = (if (std.mem.eql(u8, name, "task"))
                         self.runTask(input, ui, &usage)
+                    else if (std.mem.eql(u8, name, "review"))
+                        self.runReview(input, ui, &usage)
                     else
                         ui.work("Running tool...", tools.Context.run, .{ self.context, name, input })) catch |err|
                         try std.fmt.allocPrint(a, "error: {s}", .{@errorName(err)});
@@ -370,6 +372,44 @@ pub const Agent = struct {
             if (read_only) false else @import("router.zig").complex(prompt)
         else
             return error.InvalidTaskTier;
+        const cwd = try std.process.currentPathAlloc(self.context.io, self.context.a);
+        const system = try buildSystem(self.context, cwd, mode);
+        return self.runChild(system, prompt, read_only, strong, "Subagent", ui, parent_usage);
+    }
+
+    /// Run a two-critic adversarial code review (Correctness/Security + Anti-Slop/Simplicity) in isolated read-only subagent contexts.
+    pub fn runReview(self: *Agent, args: j.Value, ui: Ui, parent_usage: *Usage) ![]const u8 {
+        const focus = if (args == .object) try j.optional(args, "focus", "") else "";
+        return self.runReviewFocus(focus, ui, parent_usage);
+    }
+
+    pub fn runReviewFocus(self: *Agent, focus: []const u8, ui: Ui, parent_usage: *Usage) ![]const u8 {
+        if (self.subagent) return error.NestedSubagent;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const sa = scratch.allocator();
+        var diff_ctx = self.context;
+        diff_ctx.a = sa;
+        const diff = try diff_ctx.collectDiff();
+        const cwd = try std.process.currentPathAlloc(self.context.io, sa);
+        const instructions = try diff_ctx.projectInstructions();
+        const extra = if (instructions.len > 0)
+            try std.fmt.allocPrint(sa, "\nProject instructions (OMNICODE.md):\n{s}", .{instructions})
+        else
+            "";
+        const focus_line = if (focus.len > 0)
+            try std.fmt.allocPrint(sa, "Review focus: {s}\n\n", .{focus})
+        else
+            "";
+        const review_prompt = try std.fmt.allocPrint(sa, "{s}Workspace git status & diff:\n{s}\n\nInspect modified or relevant files using read/grep/glob if needed. Cite exact file:line locations for every finding. End your response with a final line: VERDICT: PASS or VERDICT: FAIL.", .{ focus_line, diff });
+        const correctness_sys = try std.fmt.allocPrint(sa, "You are the adversarial Correctness & Security Critic (read-only). cwd: {s}\nAssume the changes contain subtle bugs. Hunt for logic errors, off-by-one mistakes, unhandled errors, broken edge cases, race conditions, resource leaks, and security/boundary issues. Reject hand-waving. Cite exact file:line locations. If no defects exist, state so briefly. End with a final line: VERDICT: PASS or VERDICT: FAIL.{s}", .{ cwd, extra });
+        const slop_sys = try std.fmt.allocPrint(sa, "You are the adversarial Anti-Slop & Simplicity Critic (read-only). cwd: {s}\nHunt ruthlessly for AI slop: dead code, speculative abstractions, single-use wrappers, comments that merely restate the code, style drift, unnecessary allocations, and missing tests for changed behavior. Cite exact file:line locations. If the code is minimal and idiomatic, state so briefly. End with a final line: VERDICT: PASS or VERDICT: FAIL.{s}", .{ cwd, extra });
+        const critic1 = try self.runChild(correctness_sys, review_prompt, true, true, "Critic (correctness)", ui, parent_usage);
+        const critic2 = try self.runChild(slop_sys, review_prompt, true, false, "Critic (anti-slop)", ui, parent_usage);
+        return synthesizeReview(self.context.a, critic1, critic2);
+    }
+
+    fn runChild(self: *Agent, system: []const u8, prompt: []const u8, read_only: bool, strong: bool, label: []const u8, ui: Ui, parent_usage: ?*Usage) ![]const u8 {
         var child_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer child_arena.deinit();
         const ca = child_arena.allocator();
@@ -380,7 +420,6 @@ pub const Agent = struct {
             const requested = if (self.automatic) self.env.get(if (strong) "MODEL" else "FAST_MODEL") else self.route.model;
             route = try catalog.select(route, requested, strong);
         } else if (route.mode == .free) return error.FreeRequiresOpenRouter;
-        const cwd = try std.process.currentPathAlloc(self.context.io, ca);
         var child_ctx = self.context;
         child_ctx.a = ca;
         child_ctx.read_only = read_only;
@@ -393,16 +432,18 @@ pub const Agent = struct {
             .turn_budget = 16,
             .compaction_budget = 1,
             .schemas = try j.parse(ca, if (read_only) tools.explore_schema else tools.edit_schema),
-            .system = try buildSystem(child_ctx, cwd, mode),
+            .system = try ca.dupe(u8, system),
         };
         try child.history.append(ca, .{ .role = "user", .content = .{ .string = prompt } });
         var child_ui = ui;
         child_ui.indent = "  ";
         child_ui.details = null;
         var child_usage: Usage = .{};
+        const summary_label = try std.fmt.allocPrint(ca, "  {s}", .{label});
+        const work_label = try std.fmt.allocPrint(ca, "{s} thinking...", .{label});
         defer if (child_usage.requests > 0) {
-            parent_usage.add(child_usage);
-            ui.usageSummary(child_usage, "  Subagent") catch {};
+            if (parent_usage) |pu| pu.add(child_usage);
+            ui.usageSummary(child_usage, summary_label) catch {};
         };
         var turns: usize = 0;
         var compactions: usize = 0;
@@ -422,7 +463,7 @@ pub const Agent = struct {
             const body = child.encodePayload(ca, route, child.history.items, true) catch break;
             if (body.len > max_bytes) break;
             turns += 1;
-            const response = try ui.work("Subagent thinking...", Agent.request, .{ &child, route, body });
+            const response = try ui.work(work_label, Agent.request, .{ &child, route, body });
             const delta = Usage.response(response, route);
             child_usage.add(delta);
             if (ui.usage) |total| total.add(delta);
@@ -440,7 +481,7 @@ pub const Agent = struct {
                     const input = try j.get(block, "input");
                     try child_ui.toolStart(name, input);
                     const start = Io.Clock.awake.now(child.context.io);
-                    const result = (if (std.mem.eql(u8, name, "task"))
+                    const result = (if (std.mem.eql(u8, name, "task") or std.mem.eql(u8, name, "review"))
                         @as(anyerror![]const u8, error.NestedSubagent)
                     else
                         ui.work("Running subagent tool...", tools.Context.run, .{ child.context, name, input })) catch |err|
@@ -469,6 +510,21 @@ pub const Agent = struct {
         return capReport(self.context.a, fallback);
     }
 };
+
+fn criticPassed(report: []const u8) bool {
+    if (std.mem.indexOf(u8, report, "VERDICT: FAIL") != null) return false;
+    return std.mem.indexOf(u8, report, "VERDICT: PASS") != null;
+}
+
+pub fn synthesizeReview(a: std.mem.Allocator, correctness: []const u8, anti_slop: []const u8) ![]const u8 {
+    const pass = criticPassed(correctness) and criticPassed(anti_slop);
+    const full = try std.fmt.allocPrint(
+        a,
+        "=== Correctness & Security Critic ===\n{s}\n\n=== Anti-Slop & Simplicity Critic ===\n{s}\n\nOVERALL VERDICT: {s}",
+        .{ correctness, anti_slop, if (pass) "PASS" else "FAIL" },
+    );
+    return capReport(a, full);
+}
 
 fn capReport(a: std.mem.Allocator, report: []const u8) ![]const u8 {
     var len = @min(report.len, tools.limit);
@@ -583,4 +639,8 @@ test "compaction preserves original goal, tool pairs, and retains completed work
     try agent.loadSession("checkpoint");
     try std.testing.expectEqual(1, agent.history.items.len);
     try std.testing.expectEqualStrings("1. [x] persisted\n", todo.slice());
+    const pass_report = try synthesizeReview(a, "No bugs.\nVERDICT: PASS", "Clean.\nVERDICT: PASS");
+    try std.testing.expect(std.mem.endsWith(u8, pass_report, "OVERALL VERDICT: PASS"));
+    const fail_report = try synthesizeReview(a, "No bugs.\nVERDICT: PASS", "src/a.zig:4 dead wrapper.\nVERDICT: FAIL");
+    try std.testing.expect(std.mem.endsWith(u8, fail_report, "OVERALL VERDICT: FAIL"));
 }

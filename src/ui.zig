@@ -11,7 +11,7 @@ pub const Details = struct {
     present: bool = false,
     truncated: bool = false,
 
-    fn save(self: *Details, text: []const u8) void {
+    pub fn save(self: *Details, text: []const u8) void {
         self.len = @min(text.len, self.bytes.len);
         while (self.len > 0 and !std.unicode.utf8ValidateSlice(text[0..self.len])) self.len -= 1;
         @memcpy(self.bytes[0..self.len], text[0..self.len]);
@@ -255,6 +255,9 @@ pub const Ui = struct {
         try ui.out.writeAll("  ");
         if (std.mem.eql(u8, name, "todo")) {
             try ui.out.writeAll("checklist");
+        } else if (std.mem.eql(u8, name, "review")) {
+            const focus = j.optional(args, "focus", "") catch "";
+            try ui.safe(if (focus.len > 0) focus else "working tree", ui.width -| (16 + ui.indent.len));
         } else {
             try ui.safe(j.str(args, key) catch "(invalid arguments)", ui.width -| (16 + ui.indent.len));
         }

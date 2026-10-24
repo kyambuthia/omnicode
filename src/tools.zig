@@ -35,7 +35,8 @@ pub const schema =
     \\{"name":"bash","description":"Run shell command; 30s deadline, 64 KiB per output stream","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
     \\{"name":"skill","description":"Load instructions for an advertised skill by name","input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
     \\{"name":"todo","description":"Read or replace the session checklist that survives context compaction","input_schema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"task":{"type":"string"},"done":{"type":"boolean"}},"required":["task","done"]}}}}},
-    \\{"name":"task","description":"Delegate a self-contained investigation or sub-task to a subagent; returns only a final report","input_schema":{"type":"object","properties":{"prompt":{"type":"string"},"mode":{"type":"string","enum":["explore","edit"]},"tier":{"type":"string","enum":["fast","strong"]}},"required":["prompt"]}}
+    \\{"name":"task","description":"Delegate a self-contained investigation or sub-task to a subagent; returns only a final report","input_schema":{"type":"object","properties":{"prompt":{"type":"string"},"mode":{"type":"string","enum":["explore","edit"]},"tier":{"type":"string","enum":["fast","strong"]}},"required":["prompt"]}},
+    \\{"name":"review","description":"Run adversarial multi-agent code review (Correctness/Security critic + Anti-Slop/Simplicity critic) on current changes; returns findings and OVERALL VERDICT: PASS|FAIL","input_schema":{"type":"object","properties":{"focus":{"type":"string"}}}}
     \\]
 ;
 
@@ -235,6 +236,17 @@ pub const Context = struct {
             try c.dir.writeFile(c.io, .{ .sub_path = skill_file, .data = verify_skill });
         }
         return "Initialized OMNICODE.md and .omnicode/skills/verify/SKILL.md.";
+    }
+
+    pub fn collectDiff(c: Context) ![]const u8 {
+        const raw = c.command(&.{ "sh", "-c", "git status --short 2>/dev/null; printf '\\n---\\n'; git diff HEAD 2>/dev/null || git diff 2>/dev/null" }, false, 15_000) catch
+            return "(git diff unavailable; use glob/read to inspect files)";
+        if (std.mem.startsWith(u8, raw, "error:")) return "(not a git repository; use glob/read to inspect files)";
+        const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+        if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "---")) return "(working tree clean; inspect recent files with glob/read)";
+        var max = @min(raw.len, limit / 2);
+        while (max > 0 and !std.unicode.utf8ValidateSlice(raw[0..max])) max -= 1;
+        return raw[0..max];
     }
 };
 

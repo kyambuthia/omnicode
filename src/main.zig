@@ -222,6 +222,23 @@ fn run(init: std.process.Init) !void {
             try ui.note(msg);
             continue;
         }
+        if (std.mem.eql(u8, line, "/review") or std.mem.startsWith(u8, line, "/review ")) {
+            const focus = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
+            var rev_usage: core.Usage = .{};
+            const report = agent.runReviewFocus(focus, ui, &rev_usage) catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            if (ui.details) |d| d.save(report);
+            var full = ui;
+            full.verbose = true;
+            try full.preview(report, "");
+            try agent.history.append(arena.allocator(), .{
+                .role = "user",
+                .content = .{ .string = try std.fmt.allocPrint(arena.allocator(), "[Adversarial Review]\n{s}", .{report}) },
+            });
+            continue;
+        }
         if (std.mem.eql(u8, line, "/help")) {
             try out.writeAll(help);
             continue;
