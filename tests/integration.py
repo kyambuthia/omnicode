@@ -181,6 +181,35 @@ class Integration(unittest.TestCase):
         self.assertNotIn(json.dumps(secret)[1:-1], json.dumps(outbound))
         self.assertEqual(json.loads((sessions / "legacy.json").read_text()), legacy)
 
+    def test_child_report_redaction_precedes_truncation(self):
+        secret = "private-report-token-997"
+        report = "x" * (64 * 1024 - 8) + secret + "x" * 1000 + "\nfinal report footer"
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("task", {"prompt": "inspect files", "mode": "explore"}, "child"))
+            if len(self.requests) == 2:
+                return text(report)
+            return text("parent completed")
+        self.reply = reply
+        result = self.run_agent(stdin=f"/secrets set TOKEN {secret}\ninspect project\n/details\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = self.requests[-1][0]["messages"][-1]["content"][0]["content"]
+        self.assertLessEqual(len(content.encode()), 64 * 1024)
+        self.assertIn("report truncated", content)
+        self.assertTrue(content.endswith("final report footer"))
+        self.assertNotIn(secret[:8], content)
+        self.assertNotIn(secret[:8], result.stdout + result.stderr)
+
+    def test_review_requires_exact_final_pass_verdict(self):
+        for report in ("VERDICT: PASS\nReview is still unfinished",
+                       "x" * 40000 + "\nVERDICT: FAIL\n" + "x" * 40000 + "\nVERDICT: PASS"):
+            with self.subTest(length=len(report)):
+                self.reply = lambda body: text(report) if "Correctness & Security Critic" in body["system"] else text("No findings.\nVERDICT: PASS")
+                result = self.run_agent(stdin="/review\n/details\n/q\n")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("OVERALL VERDICT: FAIL", result.stdout)
+                self.assertNotIn("OVERALL VERDICT: PASS", result.stdout)
+
     def test_redaction_precedes_command_and_skill_truncation(self):
         head_secret = "HDsecretTokenPrivate998"
         tail_secret = "TLsecretTokenPrivate998"

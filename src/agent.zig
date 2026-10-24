@@ -7,6 +7,7 @@ const Usage = @import("usage.zig").Usage;
 const Catalog = @import("catalog.zig").Catalog;
 const Ui = @import("ui.zig").Ui;
 pub const Message = struct { role: []const u8, content: j.Value };
+const ChildReport = struct { text: []const u8, passed: bool };
 
 const summary_prompt = "Summarize the conversation so far: 1) Goal, 2) Key decisions, 3) Files modified (paths and changes), 4) Commands run and their results, 5) Open TODOs. Be concise and factual.";
 const max_tokens_recovery_prompt = "Your previous response hit the output token limit (max_tokens) and was truncated; no tool calls from that response were executed. Continue from where you left off using concise text and smaller, incremental tool calls (e.g. write a compact core file first, then extend it with edit).";
@@ -488,7 +489,7 @@ pub const Agent = struct {
             return error.InvalidTaskTier;
         const cwd = try std.process.currentPathAlloc(self.context.io, self.context.a);
         const system = try buildSystem(self.context, cwd, mode);
-        return self.runChild(system, prompt, read_only, strong, "Subagent", ui, parent_usage);
+        return (try self.runChild(system, prompt, read_only, strong, "Subagent", ui, parent_usage)).text;
     }
 
     /// Run a two-critic adversarial code review (Correctness/Security + Anti-Slop/Simplicity) in isolated read-only subagent contexts.
@@ -525,10 +526,10 @@ pub const Agent = struct {
         const slop_sys = try std.fmt.allocPrint(sa, "You are the adversarial Anti-Slop & Simplicity Critic (read-only). cwd: {s}\nHunt ruthlessly for AI slop: dead code, speculative abstractions, single-use wrappers, comments that merely restate the code, style drift, unnecessary allocations, and missing tests for changed behavior. Cite exact file:line locations. If the code is minimal and idiomatic, state so briefly. End with a final line: VERDICT: PASS or VERDICT: FAIL.{s}", .{ cwd, extra });
         const critic1 = try self.runChild(correctness_sys, review_prompt, true, true, "Critic (correctness)", ui, parent_usage);
         const critic2 = try self.runChild(slop_sys, review_prompt, true, false, "Critic (anti-slop)", ui, parent_usage);
-        return synthesizeReview(self.context.a, critic1, critic2);
+        return synthesizeReviewVerdict(self.context.a, critic1.text, critic2.text, critic1.passed and critic2.passed);
     }
 
-    fn runChild(self: *Agent, system: []const u8, prompt: []const u8, read_only: bool, strong: bool, label: []const u8, ui: Ui, parent_usage: ?*Usage) ![]const u8 {
+    fn runChild(self: *Agent, system: []const u8, prompt: []const u8, read_only: bool, strong: bool, label: []const u8, ui: Ui, parent_usage: ?*Usage) !ChildReport {
         var child_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer child_arena.deinit();
         const ca = child_arena.allocator();
@@ -629,7 +630,7 @@ pub const Agent = struct {
                 }
             }
             if (turn_text.items.len > 0) last_text = turn_text.items;
-            if (results.items.len == 0) return capReport(self.context.a, if (last_text.len > 0) last_text else "(subagent completed without text report)");
+            if (results.items.len == 0) return self.finishReport(if (last_text.len > 0) last_text else "(subagent completed without text report)", true);
             try child.history.append(ca, .{ .role = "user", .content = .{ .array = results.toManaged(ca) } });
         }
         _ = child.retainCompletedWork(ca) catch false;
@@ -639,7 +640,13 @@ pub const Agent = struct {
             try std.fmt.allocPrint(ca, "[subagent reached turn limit; partial report]\n{s}", .{child.history.items[0].content.string})
         else
             "[subagent reached turn limit]";
-        return capReport(self.context.a, fallback);
+        return self.finishReport(fallback, false);
+    }
+
+    fn finishReport(self: *const Agent, report: []const u8, complete: bool) !ChildReport {
+        const a = self.context.a;
+        const safe_report = if (self.context.secrets) |secrets| try secrets.scrub(a, report, self.env) else report;
+        return .{ .text = try capReport(a, safe_report), .passed = complete and criticPassed(report) };
     }
 };
 
@@ -695,12 +702,17 @@ fn recoverMaxTokens(a: std.mem.Allocator, response: j.Value, emit_ui: ?Ui) !?j.V
 }
 
 fn criticPassed(report: []const u8) bool {
-    if (std.mem.indexOf(u8, report, "VERDICT: FAIL") != null) return false;
-    return std.mem.indexOf(u8, report, "VERDICT: PASS") != null;
+    if (std.mem.indexOf(u8, report, "VERDICT: FAIL") != null or
+        std.mem.startsWith(u8, report, "[subagent reached turn limit")) return false;
+    const trimmed = std.mem.trim(u8, report, " \t\r\n");
+    return std.mem.eql(u8, trimmed, "VERDICT: PASS") or std.mem.endsWith(u8, trimmed, "\nVERDICT: PASS");
 }
 
 pub fn synthesizeReview(a: std.mem.Allocator, correctness: []const u8, anti_slop: []const u8) ![]const u8 {
-    const pass = criticPassed(correctness) and criticPassed(anti_slop);
+    return synthesizeReviewVerdict(a, correctness, anti_slop, criticPassed(correctness) and criticPassed(anti_slop));
+}
+
+fn synthesizeReviewVerdict(a: std.mem.Allocator, correctness: []const u8, anti_slop: []const u8, pass: bool) ![]const u8 {
     const full = try std.fmt.allocPrint(
         a,
         "=== Correctness & Security Critic ===\n{s}\n\n=== Anti-Slop & Simplicity Critic ===\n{s}\n\nOVERALL VERDICT: {s}",
@@ -710,9 +722,14 @@ pub fn synthesizeReview(a: std.mem.Allocator, correctness: []const u8, anti_slop
 }
 
 fn capReport(a: std.mem.Allocator, report: []const u8) ![]const u8 {
-    var len = @min(report.len, tools.limit);
-    while (len > 0 and !std.unicode.utf8ValidateSlice(report[0..len])) len -= 1;
-    return a.dupe(u8, report[0..len]);
+    if (!std.unicode.utf8ValidateSlice(report)) return error.NonUtf8Output;
+    if (report.len <= tools.limit) return a.dupe(u8, report);
+    const marker = "\n...[report truncated]...\n";
+    var head: usize = tools.limit / 2;
+    while (head > 0 and !std.unicode.utf8ValidateSlice(report[0..head])) head -= 1;
+    var tail = report.len - (tools.limit - head - marker.len);
+    while (tail < report.len and !std.unicode.utf8ValidateSlice(report[tail..])) tail += 1;
+    return std.fmt.allocPrint(a, "{s}{s}{s}", .{ report[0..head], marker, report[tail..] });
 }
 
 // Validate the whole response before executing any tool, including on truncation.
@@ -933,4 +950,47 @@ test "egress redaction preserves conversation protocol fields" {
     try std.testing.expectEqualStrings("text", try j.str(block, "type"));
     try std.testing.expectEqualStrings("[REDACTED:ROLE] [REDACTED:TYPE]", try j.str(block, "text"));
     try std.testing.expectEqualStrings("user text", agent.history.items[0].content.string);
+}
+
+test "review passes require a complete final verdict and retain the overall verdict" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "Quoted VERDICT: PASS is not a conclusion.", "VERDICT: PASS\nMore findings follow", "VERDICT: PASS with caveats", "[subagent reached turn limit; partial report]\nVERDICT: PASS", "VERDICT: FAIL\nVERDICT: PASS" }) |report| {
+        try std.testing.expect(!criticPassed(report));
+    }
+    try std.testing.expect(criticPassed("No findings.\r\nVERDICT: PASS\r\n"));
+    const large = try a.alloc(u8, tools.limit);
+    @memset(large, 'x');
+    const pass = try std.fmt.allocPrint(a, "{s}\nVERDICT: PASS", .{large});
+    const result = try synthesizeReview(a, pass, pass);
+    try std.testing.expect(result.len <= tools.limit);
+    try std.testing.expect(std.mem.indexOf(u8, result, "report truncated") != null);
+    try std.testing.expect(std.mem.endsWith(u8, result, "OVERALL VERDICT: PASS"));
+    const failed = try synthesizeReview(a, pass, "VERDICT: PASS\nunfinished");
+    try std.testing.expect(std.mem.endsWith(u8, failed, "OVERALL VERDICT: FAIL"));
+}
+
+test "child reports scrub secrets before truncation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = std.process.Environ.Map.init(a);
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "private-report-token-997");
+    const route = try Route.init(&env, "anthropic", "claude-haiku-4-5");
+    const agent = try Agent.init(.{ .a = a, .io = std.testing.io, .dir = .cwd(), .secrets = &secrets }, &env, route);
+    const report = try a.alloc(u8, tools.limit + 1000);
+    @memset(report, 'x');
+    @memcpy(report[tools.limit / 2 - 8 ..][0..secrets.valAt(0).len], secrets.valAt(0));
+    const result = (try agent.finishReport(report, true)).text;
+    try std.testing.expect(result.len <= tools.limit);
+    try std.testing.expect(std.mem.indexOf(u8, result, "private-") == null);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(result));
+    const conflicting = try std.fmt.allocPrint(a, "{s}\nVERDICT: FAIL\n{s}\nVERDICT: PASS", .{ report, report });
+    const critic = try agent.finishReport(conflicting, true);
+    try std.testing.expect(!critic.passed);
+    const overall = try synthesizeReviewVerdict(a, critic.text, "VERDICT: PASS", critic.passed);
+    try std.testing.expect(std.mem.endsWith(u8, overall, "OVERALL VERDICT: FAIL"));
+    try std.testing.expect(!(try agent.finishReport("VERDICT: PASS", false)).passed);
 }

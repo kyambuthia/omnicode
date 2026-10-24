@@ -192,6 +192,10 @@ Assistant text and tool previews redact registered values before terminal render
 arguments.
 Command output and skill descriptions are scrubbed before truncation, so a
 preview boundary cannot expose a fragment of a registered value.
+Subagent reports are also scrubbed before truncation and retain their head and
+tail. Review output retains the overall verdict within its 64 KiB limit. A critic
+passes only with an exact final `VERDICT: PASS` line; turn-limit reports and
+reports containing `VERDICT: FAIL` are treated as failures.
 
 Checklist replacements apply only after all items validate and fit the 4 KiB
 limit. A rejected replacement preserves the previous checklist.
