@@ -227,7 +227,7 @@ fn run(init: std.process.Init) !void {
             const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
             const name = if (raw.len > 0) raw else "latest";
             agent.loadSession(name) catch |err| {
-                try out.print("error: {s}\n", .{@errorName(err)});
+                try ui.errorMessage(err);
                 continue;
             };
             agent.resetArena(&arena) catch {};

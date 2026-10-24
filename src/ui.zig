@@ -342,6 +342,7 @@ pub const Ui = struct {
         try ui.out.print("\n✗ {s}\n", .{@errorName(err)});
         try ui.style("\x1b[0m");
         const hint = switch (err) {
+            error.InvalidSession => "Saved session is malformed or unsupported; the current conversation and checklist were kept.",
             error.InsecureEndpoint => "Use HTTPS, or HTTP with a literal loopback address (127.0.0.1 or [::1]) for local testing.",
             error.InvalidEndpoint => "Use a complete HTTP(S) endpoint URL without embedded credentials, fragments, or whitespace.",
             error.MissingApiKey => "Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or AN_ABLE_KEY for your selected provider.",

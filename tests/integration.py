@@ -37,6 +37,41 @@ def model(id, prompt="0.000001", completion="0.000002", **pricing):
 
 
 class Integration(unittest.TestCase):
+    def test_invalid_sessions_preserve_live_history_and_checklist(self):
+        sessions = self.cwd / ".omnicode/sessions"
+        sessions.mkdir(parents=True)
+        def reply(_):
+            if len(self.requests) == 1:
+                return tools(call("todo", {"items": [{"task": "keep progress", "done": True}]}))
+            return text("original answer")
+        self.reply = reply
+        invalid = [
+            {"messages": [{"role": "user", "content": 42}]},
+            {"messages": [{"role": "assistant", "content": []}]},
+            {"messages": [{"role": "assistant", "content": [{"type": "text", "text": False}]}]},
+            {"messages": [{"role": "assistant", "content": [call("read", [], "bad-input")]}]},
+            {"messages": [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "is_error": "false"}]}]},
+            {"messages": [{"role": "user", "content": [{"type": "text", "text": "first"},
+                          {"type": "tool_result", "tool_use_id": "x", "content": "late"}]}]},
+            {"messages": [{"role": "assistant", "content": [call("read", {"path": "x"}, "pending")]}]},
+            {"messages": [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "orphan", "content": "ok"}]}]},
+            {"messages": [{"role": "assistant", "content": [call("read", {"path": "x"}, "expected")]},
+                          {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "wrong", "content": "ok"}]}]},
+            {"messages": [], "todo": 42},
+            {"messages": [], "todo": "x" * 4097},
+        ]
+        commands = ["original goal", "/save original"]
+        for index, snapshot in enumerate(invalid):
+            (sessions / f"bad{index}.json").write_text(json.dumps(snapshot))
+            commands.extend([f"/resume bad{index}", f"/save after{index}"])
+        result = self.run_agent(stdin="\n".join(commands + ["/q", ""]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("InvalidSession"), len(invalid))
+        original = json.loads((sessions / "original.json").read_text())
+        for index in range(len(invalid)):
+            self.assertEqual(json.loads((sessions / f"after{index}.json").read_text()), original)
+        self.assertEqual(len(self.requests), 2)
+
     def test_unsafe_endpoints_are_rejected_before_network_or_persistence(self):
         unsafe = f"http://localhost:{self.server.server_port}/v1/messages"
         self.env["API_URL"] = unsafe

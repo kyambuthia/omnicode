@@ -400,25 +400,35 @@ pub const Agent = struct {
     pub fn loadSession(self: *Agent, name: []const u8) !void {
         if (!tools.validName(name)) return error.InvalidSessionName;
         const a = self.context.a;
-        const path = try std.fmt.allocPrint(a, ".omnicode/sessions/{s}.json", .{name});
-        const text = try self.context.dir.readFileAlloc(self.context.io, path, a, .limited(max_bytes));
-        var root = try j.parse(a, text);
-        try self.scrubConversation(a, &root);
-        const msgs = try j.get(root, "messages");
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const sa = scratch.allocator();
+        const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
+        const text = try self.context.dir.readFileAlloc(self.context.io, path, sa, .limited(max_bytes));
+        var root = try j.parse(sa, text);
+        try self.scrubConversation(sa, &root);
+        const msgs = j.get(root, "messages") catch return error.InvalidSession;
         if (msgs != .array or msgs.array.items.len > max_messages) return error.InvalidSession;
+        const saved_todo = j.optional(root, "todo", "") catch return error.InvalidSession;
+        if (saved_todo.len > @sizeOf(@FieldType(tools.Todo, "text"))) return error.InvalidSession;
+        for (msgs.array.items) |item| try validateStoredMessage(sa, item);
+        try validateStoredToolPairs(msgs.array.items);
+        if ((try j.encode(sa, root)).len > max_bytes) return error.HistoryLimit;
         var next: std.ArrayList(Message) = .empty;
+        errdefer next.deinit(a);
         for (msgs.array.items) |item| {
-            const role = try j.str(item, "role");
-            if (!std.mem.eql(u8, role, "user") and !std.mem.eql(u8, role, "assistant")) return error.InvalidSession;
-            try next.append(a, .{ .role = role, .content = try j.get(item, "content") });
+            try next.append(a, .{
+                .role = try a.dupe(u8, try j.str(item, "role")),
+                .content = try j.parse(a, try j.encode(sa, try j.get(item, "content"))),
+            });
         }
         if (self.context.todo) |t| {
-            const saved_todo = j.optional(root, "todo", "") catch "";
-            const len = @min(saved_todo.len, t.text.len);
-            @memcpy(t.text[0..len], saved_todo[0..len]);
-            t.len = len;
+            @memcpy(t.text[0..saved_todo.len], saved_todo);
+            t.len = saved_todo.len;
         }
+        self.history.deinit(a);
         self.history = next;
+        self.last_input_tokens = 0;
     }
 
     /// Clone history into a fresh allocator.
@@ -736,6 +746,71 @@ fn extractGoal(first: Message) []const u8 {
     return text;
 }
 
+fn validateStoredToolPairs(messages: []const j.Value) !void {
+    for (messages, 0..) |message, index| {
+        const content = try j.get(message, "content");
+        if (content != .array) continue;
+        const assistant = std.mem.eql(u8, try j.str(message, "role"), "assistant");
+        for (content.array.items) |block| {
+            const kind = try j.str(block, "type");
+            if (assistant and std.mem.eql(u8, kind, "tool_use")) {
+                if (index + 1 == messages.len) return error.InvalidSession;
+                const next = messages[index + 1];
+                const results = try j.get(next, "content");
+                if (!std.mem.eql(u8, try j.str(next, "role"), "user") or results != .array) return error.InvalidSession;
+                var matches: usize = 0;
+                for (results.array.items) |result| {
+                    if (std.mem.eql(u8, try j.str(result, "type"), "tool_result") and
+                        std.mem.eql(u8, try j.str(result, "tool_use_id"), try j.str(block, "id"))) matches += 1;
+                }
+                if (matches != 1) return error.InvalidSession;
+            } else if (!assistant and std.mem.eql(u8, kind, "tool_result")) {
+                if (index == 0) return error.InvalidSession;
+                const previous = messages[index - 1];
+                const calls = try j.get(previous, "content");
+                if (!std.mem.eql(u8, try j.str(previous, "role"), "assistant") or calls != .array) return error.InvalidSession;
+                var found = false;
+                for (calls.array.items) |call| {
+                    if (std.mem.eql(u8, try j.str(call, "type"), "tool_use") and
+                        std.mem.eql(u8, try j.str(call, "id"), try j.str(block, "tool_use_id"))) found = true;
+                }
+                if (!found) return error.InvalidSession;
+            }
+        }
+    }
+}
+
+// Session files support the text and client-tool blocks produced by this agent.
+fn validateStoredMessage(a: std.mem.Allocator, item: j.Value) !void {
+    const role = j.str(item, "role") catch return error.InvalidSession;
+    const assistant = std.mem.eql(u8, role, "assistant");
+    if (!assistant and !std.mem.eql(u8, role, "user")) return error.InvalidSession;
+    const content = j.get(item, "content") catch return error.InvalidSession;
+    if (content == .string) return;
+    if (content != .array or content.array.items.len == 0 or content.array.items.len > 64) return error.InvalidSession;
+    if (assistant) {
+        const response = try j.parse(a, try j.encode(a, .{ .content = content, .stop_reason = if (hasToolUse(content)) "tool_use" else "end_turn" }));
+        _ = validate(response) catch return error.InvalidSession;
+        return;
+    }
+    var saw_text = false;
+    for (content.array.items) |block| {
+        const kind = j.str(block, "type") catch return error.InvalidSession;
+        if (std.mem.eql(u8, kind, "text")) {
+            _ = j.str(block, "text") catch return error.InvalidSession;
+            saw_text = true;
+        } else if (std.mem.eql(u8, kind, "tool_result")) {
+            if (saw_text) return error.InvalidSession;
+            const id = j.str(block, "tool_use_id") catch return error.InvalidSession;
+            if (id.len == 0) return error.InvalidSession;
+            if (block.object.get("is_error")) |flag| if (flag != .bool) return error.InvalidSession;
+            if (block.object.get("content")) |result| {
+                if (result != .string) return error.InvalidSession;
+            }
+        } else return error.InvalidSession;
+    }
+}
+
 fn validate(response: j.Value) !j.Value {
     const stop = try j.str(response, "stop_reason");
     if (!std.mem.eql(u8, stop, "end_turn") and !std.mem.eql(u8, stop, "tool_use")) return error.IncompleteResponse;
@@ -806,7 +881,9 @@ test "compaction preserves original goal, tool pairs, and retains completed work
     try std.testing.expectError(error.InvalidSessionName, agent.saveSession("../bad"));
     agent.history.clearRetainingCapacity();
     todo.len = 0;
+    agent.last_input_tokens = 999999;
     try agent.loadSession("checkpoint");
+    try std.testing.expectEqual(0, agent.last_input_tokens);
     try std.testing.expectEqual(1, agent.history.items.len);
     try std.testing.expectEqualStrings("1. [x] persisted\n", todo.slice());
     const pass_report = try synthesizeReview(a, "No bugs.\nVERDICT: PASS", "Clean.\nVERDICT: PASS");
