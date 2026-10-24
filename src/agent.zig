@@ -3,6 +3,7 @@ const j = @import("json.zig");
 const tools = @import("tools.zig");
 const Route = @import("router.zig").Route;
 const Io = std.Io;
+const Usage = @import("usage.zig").Usage;
 const Ui = @import("ui.zig").Ui;
 const max_bytes = 2 * 1024 * 1024;
 const Message = struct { role: []const u8, content: j.Value };
@@ -36,6 +37,10 @@ pub const Agent = struct {
         const out = ui.out;
         const turn_start = Io.Clock.awake.now(self.context.io);
         var tool_count: usize = 0;
+        var usage: Usage = .{};
+        defer if (usage.requests > 0) {
+            ui.usageSummary(usage, "Turn") catch {};
+        };
         try ui.route(@tagName(route.provider), route.model);
         try self.history.append(a, .{ .role = "user", .content = .{ .string = try a.dupe(u8, prompt) } });
         for (0..32) |_| {
@@ -51,6 +56,9 @@ pub const Agent = struct {
             });
             if (body.len > max_bytes) return error.HistoryLimit;
             const response = try ui.work("Thinking...", Agent.request, .{ self, route, body });
+            const delta = Usage.response(response, route);
+            usage.add(delta);
+            if (ui.usage) |total| total.add(delta);
             const content = try validate(response);
             try self.history.append(a, .{ .role = "assistant", .content = content });
             var results: std.ArrayList(j.Value) = .empty;

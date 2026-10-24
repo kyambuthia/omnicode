@@ -1,6 +1,7 @@
 const std = @import("std");
 const j = @import("json.zig");
 const Io = std.Io;
+const Usage = @import("usage.zig").Usage;
 
 /// Last tool result only: replacement bounds memory independently of conversation history.
 pub const Details = struct {
@@ -27,6 +28,7 @@ pub const Ui = struct {
     verbose: bool = false,
     width: usize = 80,
     details: ?*Details = null,
+    usage: ?*Usage = null,
 
     pub fn init(out: *Io.Writer, io: Io, env: *const std.process.Environ.Map) Ui {
         const tty = Io.File.stdout().isTty(io) catch false;
@@ -235,6 +237,19 @@ pub const Ui = struct {
     pub fn elapsed(ui: Ui, start: Io.Timestamp) !void {
         const ms = start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds();
         if (ms < 1000) try ui.out.print("{d}ms", .{ms}) else try ui.out.print("{d}.{d}s", .{ @divTrunc(ms, 1000), @divTrunc(@mod(ms, 1000), 100) });
+    }
+
+    pub fn usageSummary(ui: Ui, usage: Usage, label: []const u8) !void {
+        try ui.style("\x1b[2m");
+        try ui.out.print("  {s} usage · {d} in · {d} out · {d} cache read · {d} cache write", .{ label, usage.input, usage.output, usage.read, usage.write });
+        if (usage.requests > usage.unknown_cost) try ui.out.print(" · ${d:.8} {s}", .{ usage.usd, if (usage.estimated > 0) "estimated" else "reported" });
+        if (usage.unknown_cost > 0 and usage.requests > usage.unknown_cost) try ui.out.writeAll(" subtotal");
+        if (usage.unknown_cost > 0) try ui.out.print(" · cost unavailable for {d} response(s)", .{usage.unknown_cost});
+        if (usage.missing > 0) try ui.out.print(" · token usage unavailable for {d} response(s)", .{usage.missing});
+        try ui.out.print(" · {d} response(s)", .{usage.requests});
+        try ui.style("\x1b[0m");
+        try ui.out.writeByte('\n');
+        try ui.out.flush();
     }
 
     pub fn errorMessage(ui: Ui, err: anyerror) !void {

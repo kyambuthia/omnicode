@@ -10,6 +10,7 @@ const help =
     \\  /model PROVIDER MODEL  Pin a model (clears conversation)
     \\  /skills, /skill NAME   List or load project instructions
     \\  /verbose on|off        Show full output for future tool calls
+    \\  /usage                 Show cumulative usage (survives /c and model changes)
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q or exit             Quit (Ctrl-D also exits)
@@ -35,6 +36,8 @@ fn run(init: std.process.Init) !void {
     var ui = core.Ui.init(out, init.io, init.environ_map);
     var details: core.Details = .{};
     ui.details = &details;
+    var usage: core.Usage = .{};
+    ui.usage = &usage;
     var first: usize = 1;
     if (args.len > first and std.mem.eql(u8, args[first], "--verbose")) {
         ui.verbose = true;
@@ -78,6 +81,10 @@ fn run(init: std.process.Init) !void {
         const line = std.mem.trim(u8, value orelse break, " \t\r");
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "exit")) break;
+        if (std.mem.eql(u8, line, "/usage")) {
+            try ui.usageSummary(usage, "Session");
+            continue;
+        }
         if (std.mem.eql(u8, line, "/details")) {
             try ui.showDetails();
             continue;

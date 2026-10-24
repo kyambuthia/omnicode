@@ -308,6 +308,37 @@ class Integration(unittest.TestCase):
                     self.assertNotIn("\x1b[1;36m", output)
                     self.assertIn("\x1b[2K", output)
 
+    def test_turn_and_session_usage_survive_conversation_reset(self):
+        def reply(_):
+            first = len(self.requests) == 1
+            result = tools(call("bash", {"cmd": "printf ok"})) if first else text()
+            result["usage"] = {"input_tokens": 100 if first else 200,
+                               "output_tokens": 10 if first else 20,
+                               "cost": 0.001 if first else 0.002}
+            return result
+        self.reply = reply
+        result = self.run_agent(stdin="list files\n/usage\n/c\n/usage\n/model openrouter custom\n/usage\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Turn usage · 300 in · 30 out", result.stdout)
+        self.assertEqual(result.stdout.count("Session usage · 300 in · 30 out"), 3)
+        self.assertEqual(result.stdout.count("$0.00300000 reported"), 4)
+        self.assertEqual(len(self.requests), 2)
+
+    def test_usage_estimates_unknown_prices_and_failed_response(self):
+        self.reply = lambda _: dict(text(), usage={"input_tokens": 1000, "output_tokens": 100})
+        self.env["FAST_MODEL"] = "openai/gpt-4.1-mini"
+        result = self.run_agent("hello")
+        self.assertIn("$0.00056000 estimated", result.stdout)
+        self.env["FAST_MODEL"] = "unpriced-custom"
+        result = self.run_agent("hello")
+        self.assertIn("cost unavailable for 1 response", result.stdout)
+        self.assertNotIn("$0.00000000", result.stdout)
+        self.reply = lambda _: {"stop_reason": "max_tokens", "usage": {"input_tokens": 7, "output_tokens": 8, "cost": 0.004}}
+        result = self.run_agent("hello")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Turn usage · 7 in · 8 out", result.stdout)
+        self.assertIn("$0.00400000 reported", result.stdout)
+
     def test_raw_input_paste_cancel_eof_and_terminal_restore(self):
         self.env.update(TERM="xterm-256color")
         self.env.pop("NO_COLOR", None)
