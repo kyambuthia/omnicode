@@ -245,6 +245,7 @@ fn run(init: std.process.Init) !void {
         {
             const prefix_len: usize = if (std.mem.startsWith(u8, line, "/providers")) 10 else 9;
             const rest = if (line.len > prefix_len) std.mem.trim(u8, line[prefix_len..], " \t") else "";
+            try redactRetained(&agent, &composer, &secrets, ui);
             const msg = core.config.executeProviders(a, init.io, .cwd(), init.environ_map, route.provider, rest) catch |err| {
                 try ui.errorMessage(err);
                 continue;
@@ -269,6 +270,7 @@ fn run(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, line, "/setup") or std.mem.startsWith(u8, line, "/setup ")) {
             const rest = if (line.len > 7) std.mem.trim(u8, line[7..], " \t") else "";
+            try redactRetained(&agent, &composer, &secrets, ui);
             const msg = core.config.execute(a, init.io, .cwd(), init.environ_map, rest) catch |err| {
                 try ui.errorMessage(err);
                 continue;
@@ -290,6 +292,7 @@ fn run(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, line, "/secrets") or std.mem.startsWith(u8, line, "/secrets ")) {
             const rest = if (line.len > 9) std.mem.trim(u8, line[9..], " \t") else "";
+            try redactRetained(&agent, &composer, &secrets, ui);
             const msg = secrets.execute(a, init.io, .cwd(), init.environ_map, rest) catch |err| {
                 try ui.errorMessage(err);
                 continue;
@@ -520,4 +523,16 @@ fn run(init: std.process.Init) !void {
         agent.automatic = automatic;
         try out.writeAll("Conversation cleared.\n");
     }
+}
+
+// Run before any command that can replace or remove credentials.
+fn redactRetained(agent: *core.Agent, composer: *core.Input, secrets: *const core.Secrets, ui: core.Ui) !void {
+    try agent.redactHistory();
+    try composer.redactHistory(secrets, agent.env);
+    if (ui.details) |retained| if (retained.present) {
+        const truncated = retained.truncated;
+        const snapshot = try agent.context.a.dupe(u8, retained.bytes[0..retained.len]);
+        try ui.retainDetails(snapshot);
+        retained.truncated = retained.truncated or truncated;
+    };
 }

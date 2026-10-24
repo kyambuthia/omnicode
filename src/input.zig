@@ -24,6 +24,22 @@ pub const Input = struct {
         self.count += 1;
     }
 
+    /// Redact complete entries before applying the fixed history capacity.
+    pub fn redactHistory(self: *Input, secrets: *const @import("secrets.zig").Secrets, env: *const std.process.Environ.Map) !void {
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        for (0..@min(self.count, self.history.len)) |slot| {
+            const clean = try secrets.scrub(scratch.allocator(), self.history[slot][0..self.lengths[slot]], env);
+            if (clean.len > self.history[slot].len) {
+                self.lengths[slot] = 0;
+                continue;
+            }
+            if (clean.ptr != self.history[slot][0..].ptr)
+                @memcpy(self.history[slot][0..clean.len], clean);
+            self.lengths[slot] = clean.len;
+        }
+    }
+
     pub fn getHistory(self: *const Input, index: usize) []const u8 {
         const slot = index % self.history.len;
         return self.history[slot][0..self.lengths[slot]];
@@ -156,4 +172,21 @@ test "input history records unique single-line entries and bounds capacity" {
     try std.testing.expectEqual(2, input.count);
     try std.testing.expectEqualStrings("first", input.getHistory(0));
     try std.testing.expectEqualStrings("second", input.getHistory(1));
+}
+
+test "history redaction survives secret removal and drops oversized replacements" {
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "private-token-value");
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var input: Input = .{};
+    input.record("remember private-token-value");
+    try input.redactHistory(&secrets, &env);
+    try std.testing.expect(secrets.unsetMemory("TOKEN"));
+    try std.testing.expectEqualStrings("remember [REDACTED:TOKEN]", input.getHistory(0));
+    try secrets.setMemory("LONG_SECRET_NAME", "aaaa");
+    const full: [1024]u8 = @splat('a');
+    input.record(&full);
+    try input.redactHistory(&secrets, &env);
+    try std.testing.expectEqualStrings("", input.getHistory(1));
 }

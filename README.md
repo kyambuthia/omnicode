@@ -187,6 +187,11 @@ import files are capped at 256 KiB, enough for all 64 supported secrets at the
 Conversation and system strings are scrubbed again before model requests, and
 session message and todo strings are scrubbed on save and resume. This covers history
 created before a value was registered as a secret, including JSON-escaped values.
+Before `/secrets`, `/setup`, or `/providers` can change credentials, retained
+conversation messages, checklist text, input history, and tool details are redacted
+with the current values. Removing or replacing a credential therefore preserves
+redaction in that retained state. Input entries whose redacted form exceeds the
+history slot capacity are discarded.
 Assistant text and tool previews redact registered values before terminal rendering;
 `/details` retention redacts before truncation. Tool execution keeps the original
 arguments.

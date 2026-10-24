@@ -273,6 +273,30 @@ pub const Agent = struct {
         }
     }
 
+    /// Permanently redact retained messages before credentials can be removed or replaced.
+    pub fn redactHistory(self: *Agent) !void {
+        const a = self.context.a;
+        const todo_text = if (self.context.todo) |t| t.slice() else "";
+        var root = try j.parse(a, try j.encode(a, .{ .messages = self.history.items, .todo = todo_text }));
+        try self.scrubConversation(a, &root);
+        const clean_todo = try j.str(root, "todo");
+        if (self.context.todo) |t| if (clean_todo.len > t.text.len) return error.HistoryLimit;
+        var next: std.ArrayList(Message) = .empty;
+        errdefer next.deinit(a);
+        for (root.object.get("messages").?.array.items) |item| {
+            try next.append(a, .{
+                .role = try j.str(item, "role"),
+                .content = try j.get(item, "content"),
+            });
+        }
+        if (self.context.todo) |t| {
+            @memcpy(t.text[0..clean_todo.len], clean_todo);
+            t.len = clean_todo.len;
+        }
+        self.history.deinit(a);
+        self.history = next;
+    }
+
     pub fn historyBytes(self: *const Agent) usize {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();

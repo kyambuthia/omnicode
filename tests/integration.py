@@ -155,6 +155,62 @@ class Integration(unittest.TestCase):
         for body, _ in self.requests:
             self.assertNotIn(secret, json.dumps(body))
 
+    def test_retired_secret_redacts_checklist_and_retained_details(self):
+        secret = "retired-checklist-private-token"
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(
+                    call("todo", {"items": [{"task": secret, "done": False}]}, "todo-1"),
+                    call("bash", {"cmd": f"printf 'DETAIL_START {secret} DETAIL_END'"}, "bash-1"),
+                )
+            return text("done")
+        self.reply = reply
+        result = self.run_agent(stdin=(
+            f"inspect project\n/secrets set TOKEN {secret}\n"
+            "/secrets unset TOKEN\n/save retained\n/details\n/q\n"
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = json.loads((self.cwd / ".omnicode/sessions/retained.json").read_text())
+        self.assertIn("[REDACTED:TOKEN]", snapshot["todo"])
+        self.assertNotIn(secret, json.dumps(snapshot))
+        retained = result.stdout.rsplit("DETAIL_START ", 1)[-1]
+        self.assertIn("[REDACTED:TOKEN] DETAIL_END", retained)
+        self.assertNotIn(secret, retained)
+
+    def test_rotated_provider_keys_stay_redacted_in_history(self):
+        secret = "fake-anthropic"
+        self.reply = lambda _: text("remember " + secret)
+        for command in ("/setup anthropic replacement-provider-key", "/providers anthropic another-provider-key"):
+            with self.subTest(command=command):
+                self.requests.clear()
+                result = self.run_agent(stdin=(
+                    f"remember {secret}\n{command}\n/save rotated\ncontinue\n/q\n"
+                ))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                snapshot = (self.cwd / ".omnicode/sessions/rotated.json").read_text()
+                self.assertNotIn(secret, snapshot)
+                self.assertIn("[REDACTED:ANTHROPIC_API_KEY]", snapshot)
+                self.assertEqual(len(self.requests), 2)
+                self.assertNotIn(secret, json.dumps(self.requests[-1][0]))
+
+    def test_retired_secrets_stay_redacted_in_history(self):
+        secret = "retired-token-private-value"
+        self.reply = lambda _: text("remember " + secret)
+        for command in ("/secrets unset TOKEN", "/secrets set TOKEN replacement-private-token"):
+            with self.subTest(command=command):
+                self.requests.clear()
+                result = self.run_agent(stdin=(
+                    f"remember {secret}\n/secrets set TOKEN {secret}\n"
+                    f"{command}\n/save retired\ncontinue\n/q\n"
+                ))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                snapshot = json.loads((self.cwd / ".omnicode/sessions/retired.json").read_text())
+                self.assertNotIn(secret, json.dumps(snapshot))
+                self.assertIn("[REDACTED:TOKEN]", json.dumps(snapshot))
+                self.assertEqual(len(self.requests), 2)
+                self.assertNotIn(secret, json.dumps(self.requests[-1][0]))
+                self.assertIn("[REDACTED:TOKEN]", json.dumps(self.requests[-1][0]))
+
     def test_new_secrets_scrub_existing_history_and_saved_sessions(self):
         secret = 'private"token\\value'
         sessions = self.cwd / ".omnicode/sessions"
