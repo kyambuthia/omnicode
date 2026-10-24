@@ -86,3 +86,27 @@ test "catalog chooses live prices and rejects paid, malformed, and incapable fre
     try std.testing.expect((try catalog.select(base, null, false)).price.?.free);
     try std.testing.expectError(error.InvalidCatalog, Catalog.parse(try j.parse(a, "{\"data\":{}}")));
 }
+
+test "cost mode bounds the ranked pool while free mode searches the whole catalog" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = std.process.Environ.Map.init(a);
+    var base = try Route.init(&env, "openrouter", null);
+    var models: std.ArrayList(j.Value) = .empty;
+    for (0..33) |i| {
+        const rate: f64 = if (i == 32) 0 else if (i == 16) 0.0000001 else 0.000001;
+        try models.append(a, try j.parse(a, try j.encode(a, .{
+            .id = try std.fmt.allocPrint(a, "model/{d}", .{i}),
+            .pricing = .{ .prompt = rate, .completion = rate },
+            .context_length = 65536,
+            .supported_parameters = &.{"tools"},
+            .architecture = .{ .output_modalities = &.{"text"} },
+        })));
+    }
+    const catalog: Catalog = .{ .models = models.items };
+    try std.testing.expectEqualStrings("model/0", (try catalog.select(base, null, true)).model);
+    try std.testing.expectEqualStrings("model/16", (try catalog.select(base, null, false)).model);
+    base.mode = .free;
+    try std.testing.expectEqualStrings("model/32", (try catalog.select(base, null, false)).model);
+}

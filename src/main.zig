@@ -43,6 +43,7 @@ fn run(init: std.process.Init) !void {
     var first: usize = 1;
     var mode: @FieldType(core.Route, "mode") = .cost_max;
     var policy_set = false;
+    var prompt_only = false;
     while (first < args.len) : (first += 1) {
         const arg = args[first];
         if (std.mem.eql(u8, arg, "--verbose")) {
@@ -53,18 +54,19 @@ fn run(init: std.process.Init) !void {
             mode = selected;
             policy_set = true;
         } else if (std.mem.eql(u8, arg, "--")) {
+            prompt_only = true;
             first += 1;
             break;
         } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--skills")) {
             return error.UnknownOption;
         } else break;
     }
-    if (args.len > first and (std.mem.eql(u8, args[first], "--help") or std.mem.eql(u8, args[first], "-h"))) {
+    if (!prompt_only and args.len > first and (std.mem.eql(u8, args[first], "--help") or std.mem.eql(u8, args[first], "-h"))) {
         try out.writeAll(help);
         return out.flush();
     }
     const context: core.Context = .{ .a = a, .io = init.io };
-    if (args.len == first + 1 and std.mem.eql(u8, args[first], "--skills")) {
+    if (!prompt_only and args.len == first + 1 and std.mem.eql(u8, args[first], "--skills")) {
         const skills = try context.skills();
         try ui.skills(skills);
         return out.flush();

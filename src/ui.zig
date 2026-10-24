@@ -258,6 +258,11 @@ pub const Ui = struct {
         try ui.style("\x1b[0m");
         const hint = switch (err) {
             error.MissingApiKey => "Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY for your selected provider.",
+            error.NoFreeModels => "No eligible free tool models in the current catalog; no paid request was sent.",
+            error.PaidModelInFreeMode => "Configured model is not verified free. Clear MODEL/FAST_MODEL or choose a free model.",
+            error.ModelUnavailable => "No eligible model in the live catalog. Check model overrides and MODELS_URL.",
+            error.InvalidCatalog => "Invalid model catalog; inference was blocked.",
+            error.FreeRequiresOpenRouter => "--free requires OpenRouter.",
             error.Timeout => "The operation timed out. Check connectivity or narrow the task.",
             error.HistoryLimit, error.TurnLimit => "Conversation limit reached. Start a smaller task.",
             error.IncompleteResponse => "Model response was incomplete; no tools in that response were run.",

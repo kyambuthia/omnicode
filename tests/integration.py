@@ -170,6 +170,25 @@ class Integration(unittest.TestCase):
         self.assertEqual(len(self.catalog_requests), 1)
         self.assertIn("--free", result.stdout)
 
+    def test_free_mode_survives_repl_model_switches(self):
+        self.env.pop("MODEL")
+        self.env.pop("FAST_MODEL")
+        self.catalog = {"data": [model("available/tool:free", "0", "0")]}
+        result = self.run_agent("--free", stdin="/model anthropic claude-haiku-4-5\nhello\n/model auto\nhello\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("provider switch rejected", result.stdout)
+        self.assertEqual(len(self.requests), 2)
+        self.assertTrue(all(body["provider"]["max_price"]["prompt"] == 0 for body, _ in self.requests))
+
+    def test_policy_flags_preserve_offline_commands_and_literal_prompt(self):
+        self.catalog_status = 503
+        for flags in (("--free", "--help"), ("--cost-max", "--skills")):
+            self.assertEqual(self.run_agent(*flags).returncode, 0)
+        self.assertEqual(self.catalog_requests, [])
+        result = self.run_agent("--", "--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[0][0]["messages"][0]["content"], "--help")
+
     def test_free_mode_fails_closed_for_paid_overrides_and_catalog_errors(self):
         for mode in ("paid override", "no free models", "catalog unavailable", "invalid catalog"):
             with self.subTest(mode=mode):
