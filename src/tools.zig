@@ -20,7 +20,8 @@ pub const edit_schema =
     \\{"name":"glob","description":"Find files using ripgrep glob rules; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
     \\{"name":"grep","description":"Search regex with ripgrep; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
     \\{"name":"bash","description":"Run shell command; 30s deadline, 64 KiB per output stream","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
-    \\{"name":"skill","description":"Load instructions for an advertised skill by name","input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}
+    \\{"name":"skill","description":"Load instructions for an advertised skill by name","input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
+    \\{"name":"todo","description":"Read or replace the session checklist that survives context compaction","input_schema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"task":{"type":"string"},"done":{"type":"boolean"}},"required":["task","done"]}}}}}
     \\]
 ;
 
@@ -33,9 +34,35 @@ pub const schema =
     \\{"name":"grep","description":"Search regex with ripgrep; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
     \\{"name":"bash","description":"Run shell command; 30s deadline, 64 KiB per output stream","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
     \\{"name":"skill","description":"Load instructions for an advertised skill by name","input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
+    \\{"name":"todo","description":"Read or replace the session checklist that survives context compaction","input_schema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"task":{"type":"string"},"done":{"type":"boolean"}},"required":["task","done"]}}}}},
     \\{"name":"task","description":"Delegate a self-contained investigation or sub-task to a subagent; returns only a final report","input_schema":{"type":"object","properties":{"prompt":{"type":"string"},"mode":{"type":"string","enum":["explore","edit"]},"tier":{"type":"string","enum":["fast","strong"]}},"required":["prompt"]}}
     \\]
 ;
+
+pub const Todo = struct {
+    text: [4096]u8 = undefined,
+    len: usize = 0,
+
+    pub fn slice(self: *const Todo) []const u8 {
+        return self.text[0..self.len];
+    }
+
+    pub fn update(self: *Todo, args: j.Value) ![]const u8 {
+        if (args != .object) return error.ExpectedObject;
+        const list = args.object.get("items") orelse return if (self.len == 0) "(empty todo list)" else self.slice();
+        if (list != .array or list.array.items.len > 64) return error.InvalidTodoList;
+        var w = Io.Writer.fixed(&self.text);
+        for (list.array.items, 0..) |item, idx| {
+            const task = try j.str(item, "task");
+            if (task.len == 0 or std.mem.indexOfScalar(u8, task, '\n') != null) return error.InvalidTodoItem;
+            const done_val = try j.get(item, "done");
+            if (done_val != .bool) return error.ExpectedBoolean;
+            w.print("{d}. [{s}] {s}\n", .{ idx + 1, if (done_val.bool) "x" else " ", task }) catch return error.StreamTooLong;
+        }
+        self.len = w.end;
+        return if (self.len == 0) "(empty todo list)" else self.slice();
+    }
+};
 
 pub const Context = struct {
     a: j.Allocator,
@@ -43,14 +70,19 @@ pub const Context = struct {
     dir: Io.Dir,
     skills_path: []const u8 = ".omnicode/skills",
     read_only: bool = false,
+    todo: ?*Todo = null,
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
         return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024));
     }
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
-        if (c.read_only and (std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "bash")))
+        if (c.read_only and (std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "todo")))
             return error.ReadOnlySubagent;
+        if (std.mem.eql(u8, name, "todo")) {
+            const t = c.todo orelse return "(todo unavailable)";
+            return c.a.dupe(u8, try t.update(args));
+        }
         if (std.mem.eql(u8, name, "skill")) return c.loadSkill(try j.str(args, "name"));
         if (std.mem.eql(u8, name, "write")) {
             const content = try j.str(args, "content");
@@ -170,6 +202,12 @@ test "file tools modify real files and reject ambiguous or invalid edits" {
     try std.testing.expectError(error.ReadOnlySubagent, ro.run("write", try j.parse(c.a, "{\"path\":\"b\",\"content\":\"x\"}")));
     try std.testing.expectError(error.ReadOnlySubagent, ro.run("edit", edit));
     try std.testing.expectError(error.ReadOnlySubagent, ro.run("bash", try j.parse(c.a, "{\"cmd\":\"true\"}")));
+    var todo: Todo = .{};
+    var with_todo = c;
+    with_todo.todo = &todo;
+    try std.testing.expectEqualStrings("(empty todo list)", try with_todo.run("todo", try j.parse(c.a, "{}")));
+    const list = try with_todo.run("todo", try j.parse(c.a, "{\"items\":[{\"task\":\"step one\",\"done\":true},{\"task\":\"step two\",\"done\":false}]}"));
+    try std.testing.expectEqualStrings("1. [x] step one\n2. [ ] step two\n", list);
     _ = try ro.run("read", try j.parse(c.a, "{\"path\":\"a\"}"));
     try std.testing.expectError(error.EmptyMatch, c.run("edit", try j.parse(c.a, "{\"path\":\"a\",\"old\":\"\",\"new\":\"x\"}")));
     try std.testing.expectError(error.ExpectedNaturalNumber, c.run("read", try j.parse(c.a, "{\"path\":\"a\",\"offset\":-1}")));

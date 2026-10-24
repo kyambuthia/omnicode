@@ -4,6 +4,7 @@ pub const Details = @import("ui.zig").Details;
 pub const Ui = @import("ui.zig").Ui;
 pub const Agent = @import("agent.zig").Agent;
 pub const Context = @import("tools.zig").Context;
+pub const Todo = @import("tools.zig").Todo;
 pub const Status = @import("status.zig").Status;
 pub const Clock = @import("status.zig").Clock;
 pub const shortenHome = @import("status.zig").shortenHome;

@@ -16,6 +16,7 @@ const help =
     \\  /usage                 Show cumulative usage (survives /c and model changes)
     \\  /context               Show conversation message and byte budget
     \\  /compact [focus]       Summarize older context on the fast model
+    \\  /todo                  Show current session checklist
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q or exit             Quit (Ctrl-D also exits)
@@ -79,7 +80,8 @@ fn run(init: std.process.Init) !void {
     var automatic = true;
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
-    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd() }, init.environ_map, route);
+    var todo: core.Todo = .{};
+    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo }, init.environ_map, route);
     if (args.len > first) {
         agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
             try ui.errorMessage(err);
@@ -152,6 +154,10 @@ fn run(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, line, "/details")) {
             try ui.showDetails();
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/todo")) {
+            try ui.preview(if (todo.len == 0) "(empty todo list)" else todo.slice(), "");
             continue;
         }
         if (std.mem.eql(u8, line, "/skills")) {
@@ -251,8 +257,9 @@ fn run(init: std.process.Init) !void {
             if (agent.history.items.len != 0 and agent.history.items.len <= core.Agent.max_messages) continue;
         }
         _ = arena.reset(.free_all);
+        todo.len = 0;
         route.mode = mode;
-        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd() }, init.environ_map, route);
+        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo }, init.environ_map, route);
         agent.automatic = automatic;
         try out.writeAll("Conversation cleared.\n");
     }

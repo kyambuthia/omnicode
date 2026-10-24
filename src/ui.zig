@@ -232,7 +232,11 @@ pub const Ui = struct {
         try ui.safe(name, 24);
         try ui.style("\x1b[0m");
         try ui.out.writeAll("  ");
-        try ui.safe(j.str(args, key) catch "(invalid arguments)", ui.width -| (16 + ui.indent.len));
+        if (std.mem.eql(u8, name, "todo")) {
+            try ui.out.writeAll("checklist");
+        } else {
+            try ui.safe(j.str(args, key) catch "(invalid arguments)", ui.width -| (16 + ui.indent.len));
+        }
         if (std.mem.eql(u8, key, "pat")) {
             try ui.out.writeAll(" in ");
             try ui.safe(j.optional(args, "path", ".") catch "?", 40);

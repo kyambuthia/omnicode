@@ -212,7 +212,8 @@ pub const Agent = struct {
         }
         if (summary.items.len == 0) return error.InvalidResponse;
         const goal = extractGoal(self.history.items[0]);
-        const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\n{s}\n</summary>", .{ goal, summary.items });
+        const todo_block = if (self.context.todo) |t| if (t.len > 0) try std.fmt.allocPrint(sa, "\n\n<todo>\n{s}</todo>", .{t.slice()}) else "" else "";
+        const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\n{s}\n</summary>{s}", .{ goal, summary.items, todo_block });
         var next: std.ArrayList(Message) = .empty;
         try next.append(a, .{ .role = "user", .content = .{ .string = head } });
         for (self.history.items[split..]) |m| try next.append(a, m);
@@ -249,7 +250,8 @@ pub const Agent = struct {
         }
         if (completed == 0) return false;
         const summary = try notes.toOwnedSlice();
-        const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\nCompleted before failure:\n{s}</summary>", .{ goal, summary });
+        const todo_block = if (self.context.todo) |t| if (t.len > 0) try std.fmt.allocPrint(a, "\n\n<todo>\n{s}</todo>", .{t.slice()}) else "" else "";
+        const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\nCompleted before failure:\n{s}</summary>{s}", .{ goal, summary, todo_block });
         var next: std.ArrayList(Message) = .empty;
         try next.append(a, .{ .role = "user", .content = .{ .string = head } });
         self.history = next;

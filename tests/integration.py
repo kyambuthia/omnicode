@@ -262,7 +262,7 @@ class Integration(unittest.TestCase):
         self.assertIn("check: Check the project", first["system"])
         self.assertNotIn("Run checks carefully", first["system"])
         self.assertEqual({t["name"] for t in first["tools"]},
-                         {"read", "write", "edit", "glob", "grep", "bash", "skill", "task"})
+                         {"read", "write", "edit", "glob", "grep", "bash", "skill", "todo", "task"})
         self.assertEqual(first["model"], second["model"])
         messages = second["messages"]
         self.assertEqual([m["role"] for m in messages], ["user", "assistant", "user"])
@@ -408,13 +408,16 @@ class Integration(unittest.TestCase):
         def reply(body):
             if "tools" not in body:
                 return text("summary: inspected project and ran checks")
-            if len(self.requests) in (1, 3):
+            if len(self.requests) == 1:
+                return tools(call("todo", {"items": [{"task": "verify checks", "done": False}]}))
+            if len(self.requests) in (2, 4):
                 return tools(call("bash", {"cmd": "printf step"}))
             return text("step complete")
         self.reply = reply
-        result = self.run_agent(stdin="first step\nsecond step\n/context\n/compact focus on checks\n/context\nthird step\n/usage\n/q\n")
+        result = self.run_agent(stdin="first step\nsecond step\n/todo\n/context\n/compact focus on checks\n/context\nthird step\n/usage\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Context · 8/128 messages", result.stdout)
+        self.assertIn("1. [ ] verify checks", result.stdout)
+        self.assertIn("Context · 10/128 messages", result.stdout)
         self.assertIn("Context compacted.", result.stdout)
         self.assertIn("Context · 1/128 messages", result.stdout)
         self.assertIn("1 compaction(s)", result.stdout)
@@ -424,6 +427,7 @@ class Integration(unittest.TestCase):
         final_msgs = self.requests[-1][0]["messages"]
         self.assertIn("first step", final_msgs[0]["content"])
         self.assertIn("<summary>\nsummary: inspected project and ran checks\n</summary>", final_msgs[0]["content"])
+        self.assertIn("<todo>\n1. [ ] verify checks\n</todo>", final_msgs[0]["content"])
 
     def test_redirects_are_not_followed(self):
         # A redirect must not replay a request carrying credentials.
