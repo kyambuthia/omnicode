@@ -73,4 +73,9 @@ and routing policy before introducing new layers.
 Acceptance found a Zig 0.17.0 HTTP client discrepancy: `privileged_headers` are
 stored but not emitted by `Request.sendHead`. Authentication uses `extra_headers`
 with redirects disabled; integration tests verify both providers' actual headers.
-No live paid model call was used for verification.
+Automated verification uses fake keys and a loopback server. Live OpenRouter
+checks also passed with the default Haiku and Sonnet routes: reading a fixture,
+loading a skill, editing the fixture, and executing its verification command.
+Live testing exposed an extra numbered line after a trailing newline; the read
+tool now preserves actual blank lines without inventing an EOF line, with
+regression coverage for empty files and trailing newlines.

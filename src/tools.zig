@@ -41,6 +41,7 @@ pub const Context = struct {
             var lines = std.mem.splitScalar(u8, text, '\n');
             var n: usize = 0;
             while (lines.next()) |line| : (n += 1) {
+                if (line.len == 0 and lines.peek() == null) break;
                 if (n < offset) continue;
                 if (n - offset >= count or out.writer.end + line.len + 32 > limit) {
                     try out.writer.writeAll("[truncated; use offset]\n");
@@ -142,6 +143,10 @@ test "file tools modify real files and reject ambiguous or invalid edits" {
     try std.testing.expectError(error.EmptyMatch, c.run("edit", try j.parse(c.a, "{\"path\":\"a\",\"old\":\"\",\"new\":\"x\"}")));
     try std.testing.expectError(error.ExpectedNaturalNumber, c.run("read", try j.parse(c.a, "{\"path\":\"a\",\"offset\":-1}")));
     try std.testing.expectError(error.FileNotFound, c.run("read", try j.parse(c.a, "{\"path\":\"missing\"}")));
+    inline for (.{ .{ "", "" }, .{ "one\n", "1| one\n" }, .{ "\n", "1| \n" }, .{ "one\n\n", "1| one\n2| \n" } }) |example| {
+        try c.dir.writeFile(c.io, .{ .sub_path = "a", .data = example[0] });
+        try std.testing.expectEqualStrings(example[1], try c.run("read", try j.parse(c.a, "{\"path\":\"a\"}")));
+    }
 }
 
 test "skills advertise metadata, load body, and reject traversal" {
