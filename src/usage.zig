@@ -36,25 +36,26 @@ pub const Usage = struct {
                 return usage;
             }
         }
-        // USD per million tokens, checked 2026-10-24; estimates are not invoices.
-        const rates: ?[4]f64 = if (std.mem.eql(u8, route.model, "openai/gpt-4.1-nano"))
-            .{ 0.1, 0.4, 0.025, 0 }
-        else if (std.mem.eql(u8, route.model, "openai/gpt-4.1-mini"))
-            .{ 0.4, 1.6, 0.1, 0 }
-        else if (std.mem.eql(u8, route.model, "claude-haiku-4-5") or std.mem.eql(u8, route.model, "anthropic/claude-haiku-4.5"))
-            .{ 1, 5, 0.1, 1.25 }
-        else
-            null;
-        // Non-Anthropic cache accounting varies by upstream; require reported cost.
-        const translated_cache = route.provider == .openrouter and std.mem.startsWith(u8, route.model, "openai/") and (usage.read > 0 or usage.write > 0);
-        if (rates != null and usage.missing == 0 and !translated_cache) {
-            const r = rates.?;
+        const price = route.price orelse {
+            usage.unknown_cost = 1;
+            return usage;
+        };
+        // Cache counter conventions vary on translated non-Anthropic responses.
+        const translated_cache = !std.mem.startsWith(u8, route.model, "anthropic/") and route.provider == .openrouter and (usage.read > 0 or usage.write > 0);
+        if (!price.variable and usage.missing == 0 and !translated_cache) {
             const cache = j.get(v, "cache_creation") catch .null;
             const hour = @min(usage.write, natural(cache, "ephemeral_1h_input_tokens") orelse 0);
-            usage.usd = (float(usage.input) * r[0] + float(usage.output) * r[1] + float(usage.read) * r[2] +
-                float(usage.write - hour) * r[3] + float(hour) * r[0] * 2) / 1_000_000;
-            usage.estimated = 1;
-        } else usage.unknown_cost = 1;
+            const read_cost = charge(usage.read, price.read);
+            const write_cost = charge(usage.write - hour, price.write);
+            const hour_cost = charge(hour, price.hour);
+            if (read_cost != null and write_cost != null and hour_cost != null) {
+                usage.usd = float(usage.input) * price.input + float(usage.output) * price.output +
+                    read_cost.? + write_cost.? + hour_cost.? + price.request;
+                usage.estimated = 1;
+                return usage;
+            }
+        }
+        usage.unknown_cost = 1;
         return usage;
     }
 
@@ -69,6 +70,9 @@ fn natural(v: j.Value, key: []const u8) ?u64 {
     const n = j.get(v, key) catch return null;
     return if (n == .integer and n.integer >= 0) @intCast(n.integer) else null;
 }
+fn charge(tokens: u64, price: ?f64) ?f64 {
+    return if (tokens == 0) 0 else float(tokens) * (price orelse return null);
+}
 fn float(n: u64) f64 {
     return @floatFromInt(n);
 }
@@ -78,7 +82,8 @@ test "usage distinguishes reported, estimated, missing and unknown pricing" {
     defer arena.deinit();
     const a = arena.allocator();
     var env = std.process.Environ.Map.init(a);
-    const route = try Route.init(&env, "openrouter", "openai/gpt-4.1-mini");
+    var route = try Route.init(&env, "openrouter", "catalog/model");
+    route.price = .{ .input = 0.0000004, .output = 0.0000016 };
     const estimate = Usage.response(try j.parse(a, "{\"usage\":{\"input_tokens\":1000,\"output_tokens\":100}}"), route);
     try std.testing.expectApproxEqAbs(@as(f64, 0.00056), estimate.usd, 0.00000001);
     try std.testing.expectEqual(1, estimate.estimated);
@@ -91,6 +96,7 @@ test "usage distinguishes reported, estimated, missing and unknown pricing" {
     try std.testing.expectEqual(1, Usage.response(try j.parse(a, "{}"), route).missing);
     var custom = route;
     custom.model = "custom";
+    custom.price = null;
     try std.testing.expectEqual(1, Usage.response(try j.parse(a, "{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}"), custom).unknown_cost);
     try std.testing.expectEqual(0, Usage.response(try j.parse(a, "{\"usage\":{\"cost\":0}}"), custom).unknown_cost);
 }
@@ -100,7 +106,8 @@ test "cache estimates price Anthropic TTLs and avoid guessing translated cache b
     defer arena.deinit();
     const a = arena.allocator();
     var env = std.process.Environ.Map.init(a);
-    const route = try Route.init(&env, "anthropic", null);
+    var route = try Route.init(&env, "anthropic", null);
+    route.price = .{ .input = 0.000001, .output = 0.000005, .read = 0.0000001, .write = 0.00000125, .hour = 0.000002 };
     const value = try j.parse(a, "{\"usage\":{\"input_tokens\":1000,\"output_tokens\":100,\"cache_read_input_tokens\":200,\"cache_creation_input_tokens\":100,\"cache_creation\":{\"ephemeral_1h_input_tokens\":40}}}");
     const usage = Usage.response(value, route);
     try std.testing.expectApproxEqAbs(@as(f64, 0.001675), usage.usd, 0.00000001);

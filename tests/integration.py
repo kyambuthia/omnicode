@@ -404,6 +404,7 @@ class Integration(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
 
     def test_usage_estimates_unknown_prices_and_failed_response(self):
+        self.env["PROVIDER"] = "openrouter"
         self.reply = lambda _: dict(text(), usage={"input_tokens": 1000, "output_tokens": 100})
         self.env["FAST_MODEL"] = "openai/gpt-4.1-mini"
         result = self.run_agent("hello")

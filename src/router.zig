@@ -15,7 +15,7 @@ pub const Route = struct {
             if (complex(task)) self.model else if (self.provider == .anthropic)
                 "claude-haiku-4-5"
             else
-                "openai/gpt-4.1-nano";
+                "auto";
         return route;
     }
 
@@ -25,7 +25,7 @@ pub const Route = struct {
         const p = std.meta.stringToEnum(@FieldType(Route, "provider"), name) orelse return error.UnknownProvider;
         const key = env.get(if (p == .anthropic) "ANTHROPIC_API_KEY" else "OPENROUTER_API_KEY") orelse "";
         const selected = model orelse env.get("MODEL") orelse
-            if (p == .anthropic) "claude-haiku-4-5" else "openai/gpt-4.1-mini";
+            if (p == .anthropic) "claude-haiku-4-5" else "auto";
         if (selected.len == 0) return error.EmptyModel;
         return .{
             .provider = p,
@@ -85,8 +85,8 @@ test "defaults keep both task tiers economical without overriding configured mod
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
     const route = try Route.init(&env, "openrouter", null);
-    try std.testing.expectEqualStrings("openai/gpt-4.1-mini", route.forTask(&env, "fix code").model);
-    try std.testing.expectEqualStrings("openai/gpt-4.1-nano", route.forTask(&env, "list files").model);
+    try std.testing.expectEqualStrings("auto", route.forTask(&env, "fix code").model);
+    try std.testing.expectEqualStrings("auto", route.forTask(&env, "list files").model);
     const direct = try Route.init(&env, "anthropic", null);
     try std.testing.expectEqualStrings("claude-haiku-4-5", direct.forTask(&env, "fix code").model);
 }
