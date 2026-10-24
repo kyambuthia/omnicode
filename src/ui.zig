@@ -143,9 +143,25 @@ pub const Ui = struct {
         try ui.out.writeAll("\n● Assistant\n");
         try ui.style("\x1b[0m");
         var lines = std.mem.splitScalar(u8, text, '\n');
+        var fence: usize = 0;
         while (lines.next()) |line| {
             try ui.out.writeAll("  ");
-            try ui.safe(line, std.math.maxInt(usize));
+            var body = line;
+            var ticks: usize = 0;
+            while (ticks < line.len and line[ticks] == '`') : (ticks += 1) {}
+            if (ticks >= 3 and (fence == 0 or (ticks >= fence and std.mem.trim(u8, line[ticks..], " \t").len == 0))) {
+                fence = if (fence == 0) ticks else 0;
+                try ui.style("\x1b[2m");
+            } else if (fence == 0) {
+                var hashes: usize = 0;
+                while (hashes < line.len and line[hashes] == '#') : (hashes += 1) {}
+                if (hashes > 0 and hashes <= 6 and hashes < line.len and line[hashes] == ' ') {
+                    try ui.style("\x1b[1m");
+                    if (ui.color) body = line[hashes + 1 ..];
+                }
+            }
+            try ui.safe(body, std.math.maxInt(usize));
+            try ui.style("\x1b[0m");
             try ui.out.writeByte('\n');
         }
     }
@@ -262,4 +278,19 @@ test "details bound memory, truncate UTF-8 safely, and evict the previous result
     details.save("replacement");
     try std.testing.expectEqualStrings("replacement", details.bytes[0..details.len]);
     try std.testing.expect(!details.truncated);
+}
+
+test "Markdown headings respect fences and plain output preserves the source" {
+    var buffer: [4096]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    var ui: Ui = .{ .out = &writer, .io = std.testing.io, .color = true };
+    const source = "# Title\n```zig\n# literal\n```\n## Next";
+    try ui.message(source);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "\x1b[1mTitle") != null);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "  # literal") != null);
+    writer.end = 0;
+    ui.color = false;
+    try ui.message(source);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "  # Title\n") != null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, writer.buffered(), 27) == null);
 }
