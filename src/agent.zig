@@ -688,6 +688,8 @@ fn formatToolError(a: std.mem.Allocator, err: anyerror) ![]const u8 {
         error.AmbiguousMatch => " (old text matches multiple locations; include more surrounding context lines in old or set all=true)",
         error.StreamTooLong => " (output exceeded size limit; narrow path/glob pattern or filter command output with head/tail/grep)",
         error.Timeout => " (operation exceeded its deadline; narrow scope or use a faster non-interactive command)",
+        error.InvalidPath => " (file paths cannot contain NUL bytes; supply the exact path without embedded NUL)",
+        error.InvalidCommandArgument => " (command arguments cannot contain NUL bytes; remove embedded NUL before retrying)",
         error.InvalidTimeout => " (timeout_ms must be an integer from 1 to 300000; default is 30000)",
         error.FileNotFound => " (path not found; use glob to locate existing files)",
         else => "",

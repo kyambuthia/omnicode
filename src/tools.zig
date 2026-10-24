@@ -64,6 +64,7 @@ pub const Context = struct {
     env: ?*const std.process.Environ.Map = null,
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
+        try validatePath(path);
         return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024));
     }
 
@@ -90,7 +91,9 @@ pub const Context = struct {
         if (std.mem.eql(u8, name, "write")) {
             const content = try j.str(args, "content");
             if (content.len > 1024 * 1024) return error.StreamTooLong;
-            try c.dir.writeFile(c.io, .{ .sub_path = try j.str(args, "path"), .data = content });
+            const path = try j.str(args, "path");
+            try validatePath(path);
+            try c.dir.writeFile(c.io, .{ .sub_path = path, .data = content });
             return "ok";
         }
         if (std.mem.eql(u8, name, "read")) {
@@ -167,6 +170,9 @@ pub const Context = struct {
     }
 
     pub fn command(c: Context, argv: []const []const u8, search: bool, milliseconds: i64) ![]const u8 {
+        for (argv) |arg| {
+            if (std.mem.indexOfScalar(u8, arg, 0) != null) return error.InvalidCommandArgument;
+        }
         const result = try @import("deadline.zig").run(c.io, std.process.run, .{ c.a, c.io, std.process.RunOptions{
             .argv = argv,
             .cwd = .{ .dir = c.dir },
@@ -300,6 +306,10 @@ pub fn capCommandOutput(a: j.Allocator, full: []const u8) ![]const u8 {
     var tail_start = full.len - (limit - head - marker.len);
     while (tail_start < full.len and !std.unicode.utf8ValidateSlice(full[tail_start..])) tail_start += 1;
     return std.fmt.allocPrint(a, "{s}{s}{s}", .{ full[0..head], marker, full[tail_start..] });
+}
+
+fn validatePath(path: []const u8) !void {
+    if (std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPath;
 }
 
 pub fn validName(name: []const u8) bool {
@@ -485,4 +495,30 @@ test "unique edits reject overlapping matches without modifying files" {
     try std.testing.expectEqualStrings("xa", try c.readFile("file"));
     _ = try c.run("edit", try j.parse(c.a, "{\"path\":\"file\",\"old\":\"xa\",\"new\":\"unique\"}"));
     try std.testing.expectEqualStrings("unique", try c.readFile("file"));
+}
+
+test "NUL in tool paths and command arguments is rejected before side effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "file", .data = "original" });
+    for ([_][]const u8{ "read", "write", "edit" }) |tool| {
+        const args = try j.parse(c.a, try j.encode(c.a, .{ .path = "file\x00suffix", .content = "overwrite", .old = "original", .new = "changed" }));
+        try std.testing.expectError(error.InvalidPath, c.run(tool, args));
+        try std.testing.expectEqualStrings("original", try c.readFile("file"));
+    }
+    const bash = try j.parse(c.a, try j.encode(c.a, .{ .cmd = "touch marker\x00; false" }));
+    try std.testing.expectError(error.InvalidCommandArgument, c.run("bash", bash));
+    try std.testing.expectError(error.FileNotFound, c.readFile("marker"));
+    for ([_][]const u8{ "glob", "grep" }) |tool| {
+        const pattern = try j.parse(c.a, try j.encode(c.a, .{ .pat = "pattern\x00suffix" }));
+        try std.testing.expectError(error.InvalidCommandArgument, c.run(tool, pattern));
+        const path = try j.parse(c.a, try j.encode(c.a, .{ .pat = "pattern", .path = "file\x00suffix" }));
+        try std.testing.expectError(error.InvalidCommandArgument, c.run(tool, path));
+    }
+    // File contents are length-delimited and may legitimately contain NUL.
+    _ = try c.run("write", try j.parse(c.a, try j.encode(c.a, .{ .path = "binary", .content = "a\x00b" })));
+    try std.testing.expectEqualStrings("a\x00b", try c.readFile("binary"));
 }

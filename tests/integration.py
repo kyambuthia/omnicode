@@ -883,6 +883,32 @@ class Integration(unittest.TestCase):
         self.assertIn("    4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
+    def test_nul_tool_arguments_fail_without_side_effects_and_recover(self):
+        (self.cwd / "file").write_text("original")
+        def reply(_):
+            if len(self.requests) == 1:
+                return tools(
+                    call("write", {"path": "file\x00suffix", "content": "overwrite"}, "write"),
+                    call("edit", {"path": "file\x00suffix", "old": "original", "new": "changed"}, "edit"),
+                    call("read", {"path": "file\x00suffix"}, "read"),
+                    call("bash", {"cmd": "touch forbidden\x00; false"}, "bash"),
+                    call("glob", {"pat": "*\x00suffix"}, "glob"),
+                    call("grep", {"pat": "original", "path": "file\x00suffix"}, "grep"),
+                )
+            errors = self.requests[-1][0]["messages"][-1]["content"]
+            self.assertEqual(len(errors), 6)
+            for block in errors:
+                self.assertTrue(block["is_error"])
+                self.assertIn("NUL", block["content"])
+            return text("recovered after invalid arguments")
+        self.reply = reply
+        result = self.run_agent("inspect malformed arguments")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.cwd / "file").read_text(), "original")
+        self.assertFalse((self.cwd / "forbidden").exists())
+        self.assertIn("recovered after invalid arguments", result.stdout)
+        self.assertEqual(len(self.requests), 2)
+
     def test_overlapping_edit_is_rejected_until_all_is_requested(self):
         (self.cwd / "overlap.txt").write_text("aaa")
         def reply(_):
