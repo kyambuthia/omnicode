@@ -23,3 +23,5 @@ jobs:
         run: zig build --summary all
       - name: Run integration tests
         run: python3 tests/integration.py -v
+      - name: Run offline installer tests
+        run: python3 tests/installer.py -v
