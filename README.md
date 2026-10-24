@@ -45,11 +45,16 @@ beyond those keywords; override the model for ambiguous work.
 | Variable | Meaning / default |
 |---|---|
 | `PROVIDER` | `anthropic` or `openrouter`; otherwise OpenRouter when its key is set, Anthropic otherwise |
-| `MODEL` | Strong model: `claude-sonnet-4-5` or `anthropic/claude-sonnet-4.5` |
-| `FAST_MODEL` | Fast model: `claude-haiku-4-5` or `anthropic/claude-haiku-4.5` |
+| `MODEL` | Strong model: `claude-haiku-4-5` or `openai/gpt-4.1-mini` |
+| `FAST_MODEL` | Fast model: `claude-haiku-4-5` or `openai/gpt-4.1-nano` |
 | `ANTHROPIC_API_KEY` | Key for direct Anthropic requests |
 | `OPENROUTER_API_KEY` | Key for OpenRouter requests |
 | `API_URL` | Optional **complete Messages endpoint URL**, primarily for local testing |
+
+Defaults favor economical tool-capable models. OpenRouter lookup/development
+routes use GPT-4.1 Nano/Mini; direct Anthropic uses Haiku 4.5 for both tiers.
+`MODEL`, `FAST_MODEL`, and `/model PROVIDER MODEL` retain explicit control.
+The default OpenRouter pair passed live read/edit/command round trips.
 
 Model IDs must match the selected provider and support tools. An explicit
 provider takes precedence over key-based selection. There is no silent provider

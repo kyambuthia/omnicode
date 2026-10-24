@@ -92,7 +92,7 @@ fn run(init: std.process.Init) !void {
             continue;
         }
         if (std.mem.eql(u8, line, "/model")) {
-            try ui.note(if (automatic) "Automatic routing: fast for lookups, strong for development." else "Pinned model (automatic routing disabled).");
+            try ui.note(if (automatic) "Automatic routing: economical fast models for lookups, coding models for development." else "Pinned model (automatic routing disabled).");
             try ui.route(@tagName(route.provider), route.model);
             if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
             continue;

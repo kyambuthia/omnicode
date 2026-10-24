@@ -13,7 +13,7 @@ pub const Route = struct {
             if (complex(task)) self.model else if (self.provider == .anthropic)
                 "claude-haiku-4-5"
             else
-                "anthropic/claude-haiku-4.5";
+                "openai/gpt-4.1-nano";
         return route;
     }
 
@@ -23,7 +23,7 @@ pub const Route = struct {
         const p = std.meta.stringToEnum(@FieldType(Route, "provider"), name) orelse return error.UnknownProvider;
         const key = env.get(if (p == .anthropic) "ANTHROPIC_API_KEY" else "OPENROUTER_API_KEY") orelse "";
         const selected = model orelse env.get("MODEL") orelse
-            if (p == .anthropic) "claude-sonnet-4-5" else "anthropic/claude-sonnet-4.5";
+            if (p == .anthropic) "claude-haiku-4-5" else "openai/gpt-4.1-mini";
         if (selected.len == 0) return error.EmptyModel;
         return .{
             .provider = p,
@@ -77,4 +77,14 @@ test "route selection, explicit overrides, and invalid config" {
     try std.testing.expectEqualStrings("override", (try Route.init(&env, "openrouter", "override")).model);
     try std.testing.expectError(error.UnknownProvider, Route.init(&env, "typo", null));
     try std.testing.expectError(error.EmptyModel, Route.init(&env, null, ""));
+}
+
+test "defaults keep both task tiers economical without overriding configured models" {
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const route = try Route.init(&env, "openrouter", null);
+    try std.testing.expectEqualStrings("openai/gpt-4.1-mini", route.forTask(&env, "fix code").model);
+    try std.testing.expectEqualStrings("openai/gpt-4.1-nano", route.forTask(&env, "list files").model);
+    const direct = try Route.init(&env, "anthropic", null);
+    try std.testing.expectEqualStrings("claude-haiku-4-5", direct.forTask(&env, "fix code").model);
 }
