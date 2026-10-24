@@ -37,6 +37,57 @@ def model(id, prompt="0.000001", completion="0.000002", **pricing):
 
 
 class Integration(unittest.TestCase):
+    def test_terminal_redacts_provider_text_and_tool_previews(self):
+        secret = "vault-secret-demo-998"
+        (self.cwd / "edit-me").write_text(secret)
+        def reply(_):
+            if len(self.requests) == 1:
+                return {"stop_reason": "max_tokens", "content": [
+                    {"type": "text", "text": "partial " + secret}]}
+            if len(self.requests) == 2:
+                return tools(
+                    call("bash", {"cmd": f"printf %s '{secret}' > marker"}, "literal"),
+                    call("edit", {"path": "edit-me", "old": secret, "new": "updated " + secret}, "edit"),
+                )
+            return text("final " + secret + " fake-anthropic")
+        self.reply = reply
+        result = self.run_agent(stdin=f"/secrets set TOKEN {secret}\ncheck it\n/details\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("[REDACTED:TOKEN]", result.stdout)
+        self.assertIn("[REDACTED:ANTHROPIC_API_KEY]", result.stdout)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assertNotIn("fake-anthropic", result.stdout + result.stderr)
+        self.assertEqual((self.cwd / "marker").read_text(), secret)
+        self.assertEqual((self.cwd / "edit-me").read_text(), "updated " + secret)
+        for body, _ in self.requests:
+            self.assertNotIn(secret, json.dumps(body))
+
+    def test_new_secrets_scrub_existing_history_and_saved_sessions(self):
+        secret = 'private"token\\value'
+        sessions = self.cwd / ".omnicode/sessions"
+        sessions.mkdir(parents=True)
+        legacy = {"messages": [{"role": "user", "content": "old " + secret},
+                               {"role": "assistant", "content": [
+                                   {"type": "text", "text": "nested " + secret}]}],
+                  "todo": "check " + secret}
+        (sessions / "legacy.json").write_text(json.dumps(legacy))
+        self.reply = lambda _: text("remember " + secret)
+        result = self.run_agent(stdin=(
+            f"remember {secret}\n"
+            f"/secrets set TOKEN {secret}\n"
+            "/save before\n/resume legacy\n/save after\ncontinue\n/exit\n"
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("before", "after"):
+            snapshot = json.loads((sessions / f"{name}.json").read_text())
+            self.assertNotIn(json.dumps(secret)[1:-1], json.dumps(snapshot))
+            self.assertIn("[REDACTED:TOKEN]", json.dumps(snapshot))
+        self.assertEqual(len(self.requests), 2)
+        outbound = self.requests[-1][0]
+        self.assertIn("[REDACTED:TOKEN]", json.dumps(outbound))
+        self.assertNotIn(json.dumps(secret)[1:-1], json.dumps(outbound))
+        self.assertEqual(json.loads((sessions / "legacy.json").read_text()), legacy)
+
     def test_startup_storage_errors_block_requests_but_allow_help(self):
         vault = self.cwd / "startup-vault.env"
         self.env["OMNICODE_SECRETS"] = str(vault)

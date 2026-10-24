@@ -55,6 +55,7 @@ fn run(init: std.process.Init) !void {
     var output = std.Io.File.Writer.init(.stdout(), init.io, &output_buffer);
     const out = &output.interface;
     var ui = core.Ui.init(out, init.io, init.environ_map);
+    ui.secrets = &secrets;
     var details: core.Details = .{};
     ui.details = &details;
     var usage: core.Usage = .{};
@@ -320,7 +321,7 @@ fn run(init: std.process.Init) !void {
                 try ui.errorMessage(err);
                 continue;
             };
-            if (ui.details) |d| d.save(report);
+            try ui.retainDetails(report);
             var full = ui;
             full.verbose = true;
             try full.preview(report, "");

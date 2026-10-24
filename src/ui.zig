@@ -32,6 +32,8 @@ pub const Ui = struct {
     details: ?*Details = null,
     usage: ?*Usage = null,
     status: ?*status_line.Status = null,
+    secrets: ?*const @import("secrets.zig").Secrets = null,
+    env: ?*const std.process.Environ.Map = null,
 
     pub fn init(out: *Io.Writer, io: Io, env: *const std.process.Environ.Map) Ui {
         const tty = Io.File.stdout().isTty(io) catch false;
@@ -39,6 +41,7 @@ pub const Ui = struct {
         return .{
             .out = out,
             .io = io,
+            .env = env,
             .interactive = tty and !dumb and env.get("NO_COLOR") == null,
             .color = tty and !dumb and env.get("NO_COLOR") == null,
             .width = if (tty) status_line.terminalWidth(env) else std.math.clamp(std.fmt.parseInt(usize, env.get("COLUMNS") orelse "80", 10) catch 80, 40, 160),
@@ -51,7 +54,10 @@ pub const Ui = struct {
 
     // Never let model/file/command text emit terminal controls; truncate on UTF-8 boundaries.
     fn safe(ui: Ui, value: []const u8, max: usize) !void {
-        const view = std.unicode.Utf8View.init(value) catch {
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), value, ui.env) else value;
+        const view = std.unicode.Utf8View.init(text) catch {
             try ui.out.writeAll("[non-UTF-8 text]");
             return;
         };
@@ -274,7 +280,7 @@ pub const Ui = struct {
     }
 
     pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp) !void {
-        if (ui.details) |details| details.save(result);
+        try ui.retainDetails(result);
         try ui.out.writeAll(ui.indent);
         try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
         try ui.out.print("  {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
@@ -291,6 +297,15 @@ pub const Ui = struct {
             try ui.out.print("{s}    {d} bytes written\n", .{ ui.indent, (try j.str(args, "content")).len });
         } else try ui.preview(result, "");
         try ui.out.flush();
+    }
+
+    pub fn retainDetails(ui: Ui, text: []const u8) !void {
+        const details = ui.details orelse return;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const safe_text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), text, ui.env) else text;
+        // Redact before bounding the retained prefix, which could cut a secret in half.
+        details.save(safe_text);
     }
 
     pub fn showDetails(ui: Ui) !void {
@@ -390,4 +405,22 @@ test "Markdown headings respect fences and plain output preserves the source" {
     try ui.message(source);
     try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "  # Title\n") != null);
     try std.testing.expect(std.mem.indexOfScalar(u8, writer.buffered(), 27) == null);
+}
+
+test "details redact secrets before truncating retained output" {
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "private-token-998");
+    var details: Details = .{};
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    var ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details, .secrets = &secrets };
+    var text: [65550]u8 = @splat('x');
+    const prefix = 65530;
+    @memcpy(text[prefix..][0.."private-token-998".len], "private-token-998");
+    try ui.retainDetails(&text);
+    try std.testing.expect(details.truncated);
+    try std.testing.expect(std.mem.indexOf(u8, details.bytes[0..details.len], "privat") == null);
+    try ui.message("private-token-998");
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "private-token-998") == null);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "[REDACTED:TOKEN]") != null);
 }

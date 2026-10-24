@@ -173,6 +173,13 @@ are allowed. Vault loads and imports apply only after the whole file parses;
 comments, blank lines, `export` entries, and empty-value skips are supported.
 `--help` and `--version` remain available even when persisted files need repair.
 
+Conversation and system strings are scrubbed again before model requests, and
+session message and todo strings are scrubbed on save and resume. This covers history
+created before a value was registered as a secret, including JSON-escaped values.
+Assistant text and tool previews redact registered values before terminal rendering;
+`/details` retention redacts before truncation. Tool execution keeps the original
+arguments.
+
 ## Terminal interface
 
 The terminal keeps a scrollable transcript, with model responses separated from

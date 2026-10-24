@@ -227,6 +227,7 @@ pub const Agent = struct {
             .system = self.system,
             .messages = messages,
         }));
+        try self.scrubConversation(a, &payload);
         if (with_tools) {
             var tools_copy = try j.parse(a, try j.encode(a, self.schemas));
             if (tools_copy == .array and tools_copy.array.items.len > 0) {
@@ -244,6 +245,31 @@ pub const Agent = struct {
         else
             "{\"sort\":\"price\"}"));
         return j.encode(a, payload);
+    }
+
+    // Preserve protocol roles, block types, IDs, signatures, and tool names.
+    fn scrubConversation(self: *const Agent, a: std.mem.Allocator, root: *j.Value) !void {
+        const secrets = self.context.secrets orelse return;
+        if (root.* != .object) return;
+        for ([_][]const u8{ "system", "todo" }) |key| {
+            if (root.object.getPtr(key)) |value| try secrets.scrubJson(a, value, self.env);
+        }
+        const messages = root.object.getPtr("messages") orelse return;
+        if (messages.* != .array) return;
+        for (messages.array.items) |*message| {
+            if (message.* != .object) continue;
+            const content = message.object.getPtr("content") orelse continue;
+            if (content.* == .string) {
+                try secrets.scrubJson(a, content, self.env);
+            } else if (content.* == .array) {
+                for (content.array.items) |*block| {
+                    if (block.* != .object) continue;
+                    for ([_][]const u8{ "text", "input", "content" }) |key| {
+                        if (block.object.getPtr(key)) |value| try secrets.scrubJson(a, value, self.env);
+                    }
+                }
+            }
+        }
     }
 
     pub fn historyBytes(self: *const Agent) usize {
@@ -363,7 +389,9 @@ pub const Agent = struct {
         try self.context.dir.createDirPath(self.context.io, ".omnicode/sessions");
         const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
         const todo_text = if (self.context.todo) |t| t.slice() else "";
-        const data = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
+        var snapshot = try j.parse(sa, try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text }));
+        try self.scrubConversation(sa, &snapshot);
+        const data = try j.encode(sa, snapshot);
         if (data.len > max_bytes) return error.HistoryLimit;
         try @import("storage.zig").writePrivate(self.context.io, self.context.dir, path, data);
     }
@@ -374,7 +402,8 @@ pub const Agent = struct {
         const a = self.context.a;
         const path = try std.fmt.allocPrint(a, ".omnicode/sessions/{s}.json", .{name});
         const text = try self.context.dir.readFileAlloc(self.context.io, path, a, .limited(max_bytes));
-        const root = try j.parse(a, text);
+        var root = try j.parse(a, text);
+        try self.scrubConversation(a, &root);
         const msgs = try j.get(root, "messages");
         if (msgs != .array or msgs.array.items.len > max_messages) return error.InvalidSession;
         var next: std.ArrayList(Message) = .empty;
@@ -805,4 +834,26 @@ test "max_tokens recovery strips truncated tools and resetArena never leaks" {
     try std.testing.expectEqualStrings("part 1", try j.str(partial.array.items[0], "text"));
     const hint = try formatToolError(a, error.MatchNotFound);
     try std.testing.expect(std.mem.indexOf(u8, hint, "use read") != null);
+}
+
+test "egress redaction preserves conversation protocol fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = std.process.Environ.Map.init(a);
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("ROLE", "user");
+    try secrets.setMemory("TYPE", "text");
+    const route = try Route.init(&env, "anthropic", "claude-haiku-4-5");
+    var agent = try Agent.init(.{ .a = a, .io = std.testing.io, .dir = .cwd(), .secrets = &secrets }, &env, route);
+    try agent.history.append(a, .{ .role = "user", .content = .{ .string = "user text" } });
+    try agent.history.append(a, .{ .role = "assistant", .content = try j.parse(a, "[{\"type\":\"text\",\"text\":\"user text\"}]") });
+    const payload = try j.parse(a, try agent.encodePayload(a, route, agent.history.items, false));
+    const messages = (try j.get(payload, "messages")).array.items;
+    try std.testing.expectEqualStrings("user", try j.str(messages[0], "role"));
+    try std.testing.expectEqualStrings("[REDACTED:ROLE] [REDACTED:TYPE]", try j.str(messages[0], "content"));
+    const block = (try j.get(messages[1], "content")).array.items[0];
+    try std.testing.expectEqualStrings("text", try j.str(block, "type"));
+    try std.testing.expectEqualStrings("[REDACTED:ROLE] [REDACTED:TYPE]", try j.str(block, "text"));
+    try std.testing.expectEqualStrings("user text", agent.history.items[0].content.string);
 }
