@@ -3,6 +3,7 @@ const j = @import("json.zig");
 const tools = @import("tools.zig");
 const Route = @import("router.zig").Route;
 const Io = std.Io;
+const Ui = @import("ui.zig").Ui;
 const max_bytes = 2 * 1024 * 1024;
 const Message = struct { role: []const u8, content: j.Value };
 
@@ -28,12 +29,14 @@ pub const Agent = struct {
         };
     }
 
-    pub fn respond(self: *Agent, prompt: []const u8, out: *Io.Writer) !void {
+    pub fn respond(self: *Agent, prompt: []const u8, ui: Ui) !void {
         const a = self.context.a;
         const route = if (self.automatic) self.route.forTask(self.env, prompt) else self.route;
         if (route.model.len == 0) return error.EmptyModel;
-        try out.print("[{s} / {s}]\n", .{ @tagName(route.provider), route.model });
-        try out.flush();
+        const out = ui.out;
+        const turn_start = Io.Clock.awake.now(self.context.io);
+        var tool_count: usize = 0;
+        try ui.route(@tagName(route.provider), route.model);
         try self.history.append(a, .{ .role = "user", .content = .{ .string = try a.dupe(u8, prompt) } });
         for (0..32) |_| {
             if (self.history.items.len > 128) return error.HistoryLimit;
@@ -47,23 +50,25 @@ pub const Agent = struct {
                 .tools = self.schemas,
             });
             if (body.len > max_bytes) return error.HistoryLimit;
-            const response = try self.request(route, body);
+            const response = try ui.work("Thinking...", Agent.request, .{ self, route, body });
             const content = try validate(response);
             try self.history.append(a, .{ .role = "assistant", .content = content });
             var results: std.ArrayList(j.Value) = .empty;
             for (content.array.items) |block| {
                 const kind = try j.str(block, "type");
                 if (std.mem.eql(u8, kind, "text")) {
-                    try out.print("{s}\n", .{try j.str(block, "text")});
+                    try ui.message(try j.str(block, "text"));
                 } else if (std.mem.eql(u8, kind, "tool_use")) {
                     const name = try j.str(block, "name");
-                    try out.print("  > {s}\n", .{name});
-                    try out.flush();
-                    const result = self.context.run(name, try j.get(block, "input")) catch |err|
+                    const input = try j.get(block, "input");
+                    try ui.toolStart(name, input);
+                    const start = Io.Clock.awake.now(self.context.io);
+                    tool_count += 1;
+                    const result = ui.work("Running tool...", tools.Context.run, .{ self.context, name, input }) catch |err|
                         try std.fmt.allocPrint(a, "error: {s}", .{@errorName(err)});
                     // Invalid UTF-8 (e.g. binary output) must not corrupt JSON requests.
                     const text = if (std.unicode.utf8ValidateSlice(result)) result else "error: NonUtf8Output";
-                    try out.print("  {s}\n", .{text[0..@min(text.len, 240)]});
+                    try ui.toolEnd(name, input, text, std.mem.startsWith(u8, text, "error:"), start);
                     try results.append(a, try j.parse(a, try j.encode(a, .{
                         .type = "tool_result",
                         .tool_use_id = try j.str(block, "id"),
@@ -73,7 +78,10 @@ pub const Agent = struct {
                 }
             }
             try out.flush();
-            if (results.items.len == 0) return;
+            if (results.items.len == 0) {
+                try out.print("\n  Completed · {d}ms · {d} tool calls\n\n", .{ turn_start.durationTo(Io.Clock.awake.now(self.context.io)).toMilliseconds(), tool_count });
+                return out.flush();
+            }
             try self.history.append(a, .{ .role = "user", .content = .{ .array = results.toManaged(a) } });
         }
         return error.TurnLimit;

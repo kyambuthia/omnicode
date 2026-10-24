@@ -2,6 +2,8 @@
 """Exercise the built binary with a local Messages server; no real keys or API calls."""
 import json
 import os
+import pty
+import time
 from pathlib import Path
 import subprocess
 import tempfile
@@ -203,6 +205,95 @@ class Integration(unittest.TestCase):
         outcome = self.requests[-1][0]["messages"][-1]["content"][0]
         self.assertTrue(outcome["is_error"])
         self.assertIn("NonUtf8Output", outcome["content"])
+
+    def test_tool_transcript_previews_and_verbose_mode(self):
+        def reply(body):
+            if isinstance(body["messages"][-1]["content"], str):
+                return tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\n7\\nlast\\n'"}))
+            return text("finished")
+        self.reply = reply
+        compact = self.run_agent("list files")
+        self.assertEqual(compact.returncode, 0, compact.stderr)
+        self.assertIn("• bash  printf", compact.stdout)
+        self.assertIn("✓ Done", compact.stdout)
+        self.assertIn("3 lines hidden", compact.stdout)
+        self.assertIn("last", compact.stdout)
+        self.assertIn("1 tool calls", compact.stdout)
+        self.assertNotIn("\x1b", compact.stdout)
+        verbose = self.run_agent("--verbose", "list files")
+        self.assertEqual(verbose.returncode, 0, verbose.stderr)
+        self.assertNotIn("lines hidden", verbose.stdout)
+        self.assertIn("    5\n", verbose.stdout)
+        repl = self.run_agent(stdin="/help\n/model\n/verbose on\nlist files\n/verbose off\n/q\n")
+        self.assertEqual(repl.returncode, 0, repl.stderr)
+        self.assertIn("Full tool output enabled", repl.stdout)
+        self.assertNotIn("lines hidden", repl.stdout)
+        self.assertIn("fast-test-model", repl.stdout)
+
+    def test_edit_preview_and_visible_failure(self):
+        (self.cwd / "a.txt").write_text("before")
+        self.reply = lambda _: tools(call("edit", {"path": "a.txt", "old": "before", "new": "after"}, "edit"),
+                                    call("read", {"path": "missing"}, "read")) if len(self.requests) == 1 else text()
+        result = self.run_agent("fix file")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("• edit  a.txt", result.stdout)
+        self.assertIn("    - before", result.stdout)
+        self.assertIn("    + after", result.stdout)
+        self.assertIn("✗ Failed", result.stdout)
+        self.assertEqual((self.cwd / "a.txt").read_text(), "after")
+
+    def test_model_and_tool_controls_are_neutralized(self):
+        self.reply = lambda _: tools(call("bash", {"cmd": "printf '\\033[2Junsafe'"})) if len(self.requests) == 1 else text("hello\x1b[31m world\rhidden")
+        result = self.run_agent("list files")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("\x1b", result.stdout)
+        self.assertNotIn("\r", result.stdout)
+        self.assertIn("unsafe", result.stdout)
+        # Display sanitization must not change the data returned to the model.
+        self.assertIn("\x1b[2Junsafe", self.requests[-1][0]["messages"][-1]["content"][0]["content"])
+
+    def test_terminal_style_and_no_color(self):
+        def reply(_):
+            time.sleep(0.25)
+            return text("terminal response")
+        self.reply = reply
+        for no_color in (False, True):
+            with self.subTest(no_color=no_color):
+                self.env.update(TERM="xterm-256color", COLUMNS="48")
+                if no_color: self.env["NO_COLOR"] = "1"
+                else: self.env.pop("NO_COLOR", None)
+                master, slave = pty.openpty()
+                try:
+                    proc = subprocess.Popen([str(BINARY)], stdin=subprocess.PIPE, stdout=slave, stderr=slave,
+                                            cwd=self.cwd, env=self.env)
+                    os.close(slave)
+                    slave = None
+                    try:
+                        proc.communicate(b"list files\n/q\n", timeout=15)
+                    finally:
+                        if proc.poll() is None:
+                            proc.kill()
+                            proc.wait()
+                    chunks = []
+                    while True:
+                        try:
+                            chunk = os.read(master, 4096)
+                        except OSError:
+                            break
+                        if not chunk: break
+                        chunks.append(chunk)
+                    output = b"".join(chunks).decode()
+                finally:
+                    os.close(master)
+                    if slave is not None: os.close(slave)
+                self.assertEqual(proc.returncode, 0, output)
+                self.assertIn("terminal response", output)
+                self.assertIn("Thinking...", output)
+                self.assertNotIn("\x1b[?1049h", output)
+                if no_color: self.assertNotIn("\x1b", output)
+                else:
+                    self.assertIn("\x1b[1;36m", output)
+                    self.assertIn("\x1b[2K", output)
 
     def test_offline_commands_and_missing_key(self):
         self.skill()
