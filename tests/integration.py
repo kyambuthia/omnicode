@@ -230,6 +230,15 @@ class Integration(unittest.TestCase):
         self.assertNotIn("lines hidden", repl.stdout)
         self.assertIn("fast-test-model", repl.stdout)
 
+    def test_retained_details_replace_and_sanitize(self):
+        self.reply = lambda _: tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\nlast\\033[2J'"})) if len(self.requests) == 1 else text()
+        result = self.run_agent(stdin="/details\nlist files\n/details\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("No retained tool output", result.stdout)
+        self.assertIn("Last tool result", result.stdout)
+        self.assertIn("    4\n", result.stdout)
+        self.assertNotIn("\x1b", result.stdout)
+
     def test_edit_preview_and_visible_failure(self):
         (self.cwd / "a.txt").write_text("before")
         self.reply = lambda _: tools(call("edit", {"path": "a.txt", "old": "before", "new": "after"}, "edit"),

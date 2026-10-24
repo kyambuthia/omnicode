@@ -2,6 +2,22 @@ const std = @import("std");
 const j = @import("json.zig");
 const Io = std.Io;
 
+/// Last tool result only: replacement bounds memory independently of conversation history.
+pub const Details = struct {
+    bytes: [64 * 1024]u8 = undefined,
+    len: usize = 0,
+    present: bool = false,
+    truncated: bool = false,
+
+    fn save(self: *Details, text: []const u8) void {
+        self.len = @min(text.len, self.bytes.len);
+        while (self.len > 0 and !std.unicode.utf8ValidateSlice(text[0..self.len])) self.len -= 1;
+        @memcpy(self.bytes[0..self.len], text[0..self.len]);
+        self.present = true;
+        self.truncated = self.len < text.len;
+    }
+};
+
 /// An append-only transcript: keep native terminal scrolling and copy/paste.
 pub const Ui = struct {
     out: *Io.Writer,
@@ -10,6 +26,7 @@ pub const Ui = struct {
     interactive: bool = false,
     verbose: bool = false,
     width: usize = 80,
+    details: ?*Details = null,
 
     pub fn init(out: *Io.Writer, io: Io, env: *const std.process.Environ.Map) Ui {
         const tty = Io.File.stdout().isTty(io) catch false;
@@ -144,7 +161,7 @@ pub const Ui = struct {
         var n: usize = 0;
         while (lines.next()) |line| : (n += 1) {
             if (!ui.verbose and count > 5 and n >= 3 and n < count - 2) {
-                if (n == 3) try ui.out.print("    ... {d} lines hidden (/verbose on)\n", .{count - 5});
+                if (n == 3) try ui.out.print("    ... {d} lines hidden (/details or /verbose on)\n", .{count - 5});
                 continue;
             }
             try ui.out.writeAll("    ");
@@ -171,6 +188,7 @@ pub const Ui = struct {
     }
 
     pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp) !void {
+        if (ui.details) |details| details.save(result);
         try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
         try ui.out.print("  {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
         try ui.elapsed(start);
@@ -186,6 +204,16 @@ pub const Ui = struct {
             try ui.out.print("    {d} bytes written\n", .{(try j.str(args, "content")).len});
         } else try ui.preview(result, "");
         try ui.out.flush();
+    }
+
+    pub fn showDetails(ui: Ui) !void {
+        const details = ui.details orelse return ui.note("No retained tool output.");
+        if (!details.present) return ui.note("No retained tool output.");
+        try ui.note("Last tool result (replaced by the next tool call):");
+        var full = ui;
+        full.verbose = true;
+        try full.preview(details.bytes[0..details.len], "");
+        if (details.truncated) try ui.note("Result exceeds 64 KiB; retained prefix only.");
     }
 
     pub fn elapsed(ui: Ui, start: Io.Timestamp) !void {
@@ -221,4 +249,17 @@ test "previews keep head and tail, preserve UTF-8, and neutralize terminal escap
     try std.testing.expect(std.mem.indexOfScalar(u8, text, 27) == null);
     try std.testing.expect(std.unicode.utf8ValidateSlice(text));
     try std.testing.expect(std.mem.endsWith(u8, text, "é..."));
+}
+
+test "details bound memory, truncate UTF-8 safely, and evict the previous result" {
+    var details: Details = .{};
+    var text: [64 * 1024 + 3]u8 = undefined;
+    @memset(&text, 'x');
+    @memcpy(text[65535..65538], "雪");
+    details.save(&text);
+    try std.testing.expectEqual(65535, details.len);
+    try std.testing.expect(details.truncated);
+    details.save("replacement");
+    try std.testing.expectEqualStrings("replacement", details.bytes[0..details.len]);
+    try std.testing.expect(!details.truncated);
 }
