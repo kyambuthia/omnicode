@@ -8,10 +8,11 @@ pub const Input = struct {
     history: [32][1024]u8 = undefined,
     lengths: [32]usize = @splat(0),
     count: usize = 0,
+    empty_interrupt: bool = false,
 
     pub fn record(self: *Input, entry: []const u8) void {
         if (entry.len == 0 or std.mem.indexOfScalar(u8, entry, '\n') != null) return;
-        if (std.mem.startsWith(u8, entry, "/secrets") or std.mem.startsWith(u8, entry, "/setup")) return;
+        if (std.mem.startsWith(u8, entry, "/secrets") or std.mem.startsWith(u8, entry, "/setup") or std.mem.startsWith(u8, entry, "/provider")) return;
         if (self.count > 0) {
             const prev = (self.count - 1) % self.history.len;
             if (std.mem.eql(u8, self.history[prev][0..self.lengths[prev]], entry)) return;
@@ -65,9 +66,21 @@ pub const Input = struct {
             if (count == 0) return null;
             const c = byte[0];
             if (!paste and c == 3) {
-                try ui.out.writeAll("^C\n");
+                if (n == 0 and self.empty_interrupt) {
+                    self.empty_interrupt = false;
+                    try ui.out.writeAll("^C\n");
+                    return null;
+                }
+                if (n == 0) {
+                    self.empty_interrupt = true;
+                    try ui.out.writeAll("^C (press Ctrl-C again, Ctrl-D, or /exit to quit)\n");
+                } else {
+                    self.empty_interrupt = false;
+                    try ui.out.writeAll("^C\n");
+                }
                 return error.InputCancelled;
             }
+            self.empty_interrupt = false;
             if (pending != 0 or c == 27) {
                 if (pending < sequence.len) {
                     sequence[pending] = c;

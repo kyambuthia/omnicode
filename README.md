@@ -36,12 +36,12 @@ export OPENROUTER_API_KEY='your-key'
 ./zig-out/bin/omnicode
 ```
 
-Use `zig build run -- 'your task'` during development. `--help`, `--version`, `--skills`, `--init`, `--setup`, and `--secrets`
+Use `zig build run -- 'your task'` during development. `--help`, `--version`, `--skills`, `--init`, `--providers`, `--setup`, and `--secrets`
 work without a key or network connection. Do not put API keys in tracked files.
 
 ```text
 omnicode [--free|--cost-max] [--verbose] [--] [prompt ...]
-omnicode --skills | --init [force] | --setup [...] | --secrets [...] | --version | --help
+omnicode --skills | --init [force] | --providers [...] | --setup [...] | --secrets [...] | --version | --help
 ```
 
 | Option | Effect |
@@ -50,6 +50,7 @@ omnicode --skills | --init [force] | --setup [...] | --secrets [...] | --version
 | `--free` | Only zero-price OpenRouter tool models; forces OpenRouter and rejects paid overrides |
 | `--verbose` | Full tool output instead of compact previews |
 | `--init [force]` | Bootstrap `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md` for the current repository |
+| `--providers [...]` | List, switch, or configure LLM providers, API keys, and custom `API_URL` endpoints |
 | `--setup [...]` | View or configure provider API keys and settings in `~/.config/omnicode/config.env` (`0o600`) |
 | `--secrets [...]` | Manage zero-leak secrets (passwords, logins, tokens) in `~/.config/omnicode/secrets.env` (`0o600`) |
 | `--` | Treat every following argument literally as prompt text (e.g. `-- --help me`) |
@@ -117,6 +118,11 @@ REPL commands:
 
 | Command | Effect |
 |---|---|
+| `/providers` or `/providers list` | Show numbered list of all supported providers, active status (`*`), API key status, default models, and endpoints |
+| `/providers <N\|provider>` | Switch active provider by number or name (preserves conversation) |
+| `/providers <provider> <key>` | Save API key for `<provider>` (`0o600`) and activate it immediately |
+| `/providers url <url\|default>` | Set or reset custom `API_URL` endpoint |
+| `/providers unset <provider>` | Remove saved API key for `<provider>` |
 | `/setup` | Show configured provider API keys (masked), active settings, and config file path |
 | `/setup <provider> <key>` | Save an API key for `abliteration`, `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq` (`0o600`) and activate it |
 | `/setup set <KEY> <VALUE>` | Persist a setting (`PROVIDER`, `MODEL`, `FAST_MODEL`, `VOICE_MODEL`, etc.) and apply it immediately |

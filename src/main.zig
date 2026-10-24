@@ -5,12 +5,14 @@ const help =
     \\omnicode --version         Print version (v0.2.0).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
+    \\omnicode --providers [...] View, switch, or configure LLM providers and API keys.
     \\omnicode --setup [...]     View or configure provider API keys and settings.
     \\omnicode --secrets [...]   Manage zero-leak secrets (passwords, tokens, logins).
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
+    \\  /providers [...]       List, switch, or configure providers & API keys (/providers <N|name> [key])
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
     \\  /secrets [...]         Manage zero-leak secrets (injected in bash, scrubbed from chat)
     \\  /voice [sec|file]      Record or transcribe audio via cheap OpenRouter voice models
@@ -77,7 +79,7 @@ fn run(init: std.process.Init) !void {
             prompt_only = true;
             first += 1;
             break;
-        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--version") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init") and !std.mem.eql(u8, arg, "--setup") and !std.mem.eql(u8, arg, "--secrets")) {
+        } else if (std.mem.startsWith(u8, arg, "--") and !std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "--version") and !std.mem.eql(u8, arg, "--skills") and !std.mem.eql(u8, arg, "--init") and !std.mem.eql(u8, arg, "--providers") and !std.mem.eql(u8, arg, "--setup") and !std.mem.eql(u8, arg, "--secrets")) {
             return error.UnknownOption;
         } else break;
     }
@@ -100,6 +102,14 @@ fn run(init: std.process.Init) !void {
         if (args.len > first + 1 and !force) return error.UnknownOption;
         const msg = try context.initProject(force);
         try ui.note(msg);
+        return out.flush();
+    }
+    if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--providers")) {
+        const rest = try std.mem.join(a, " ", args[first + 1 ..]);
+        const msg = try core.config.executeProviders(a, init.io, .cwd(), init.environ_map, null, rest);
+        var full = ui;
+        full.verbose = true;
+        try full.preview(msg, "");
         return out.flush();
     }
     if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--setup")) {
@@ -191,13 +201,7 @@ fn run(init: std.process.Init) !void {
                 try ui.errorMessage(err);
                 continue;
             };
-            var fresh = std.heap.ArenaAllocator.init(init.gpa);
-            agent.reallocate(fresh.allocator()) catch {
-                fresh.deinit();
-                continue;
-            };
-            arena.deinit();
-            arena = fresh;
+            agent.resetArena(&arena) catch {};
             continue;
         }
         if (std.mem.eql(u8, line, "/details")) {
@@ -221,23 +225,45 @@ fn run(init: std.process.Init) !void {
         if (std.mem.eql(u8, line, "/resume") or std.mem.startsWith(u8, line, "/resume ")) {
             const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
             const name = if (raw.len > 0) raw else "latest";
-            var fresh = std.heap.ArenaAllocator.init(init.gpa);
-            var candidate = try core.Agent.init(.{ .a = fresh.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets }, init.environ_map, route);
-            candidate.automatic = automatic;
-            candidate.loadSession(name) catch |err| {
-                fresh.deinit();
+            agent.loadSession(name) catch |err| {
                 try out.print("error: {s}\n", .{@errorName(err)});
                 continue;
             };
-            arena.deinit();
-            arena = fresh;
-            agent = candidate;
+            agent.resetArena(&arena) catch {};
+            try agent.refreshSystem();
             try ui.note("Session resumed.");
             continue;
         }
         if (std.mem.eql(u8, line, "/skills")) {
             const skills = try agent.context.skills();
             try ui.skills(skills);
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/providers") or std.mem.startsWith(u8, line, "/providers ") or
+            std.mem.eql(u8, line, "/provider") or std.mem.startsWith(u8, line, "/provider "))
+        {
+            const prefix_len: usize = if (std.mem.startsWith(u8, line, "/providers")) 10 else 9;
+            const rest = if (line.len > prefix_len) std.mem.trim(u8, line[prefix_len..], " \t") else "";
+            const msg = core.config.executeProviders(a, init.io, .cwd(), init.environ_map, route.provider, rest) catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            if (rest.len > 0 and !std.mem.eql(u8, rest, "list")) {
+                if (mode == .free and !std.mem.eql(u8, init.environ_map.get("PROVIDER") orelse "openrouter", "openrouter")) {
+                    try core.config.set(a, init.io, .cwd(), init.environ_map, "PROVIDER", "openrouter");
+                    try ui.note("--free requires OpenRouter; provider switch rejected.");
+                } else if (core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null)) |updated| {
+                    route = updated;
+                    route.mode = mode;
+                    automatic = true;
+                    agent.route = route;
+                    agent.automatic = true;
+                    status.setModel(route.model);
+                } else |_| {}
+            }
+            var full = ui;
+            full.verbose = true;
+            try full.preview(msg, "");
             continue;
         }
         if (std.mem.eql(u8, line, "/setup") or std.mem.startsWith(u8, line, "/setup ")) {
@@ -473,16 +499,12 @@ fn run(init: std.process.Init) !void {
             }
             agent.respond(active_prompt, ui) catch |err| {
                 try ui.errorMessage(err);
-                var fresh = std.heap.ArenaAllocator.init(init.gpa);
-                if (agent.retainCompletedWork(fresh.allocator()) catch false) {
-                    if (agent.reallocate(fresh.allocator())) |_| {
-                        arena.deinit();
-                        arena = fresh;
+                if (agent.retainCompletedWork(arena.allocator()) catch false) {
+                    if (agent.resetArena(&arena)) |_| {
                         try out.writeAll("  completed work retained in summary. Inspect tool effects before retrying.\n");
                         continue;
                     } else |_| {}
                 }
-                fresh.deinit();
                 try out.writeAll("  conversation cleared. Inspect completed tool effects before retrying.\n");
                 agent.history.clearRetainingCapacity();
                 // Reinitialize below so failed tool turns cannot poison later messages.

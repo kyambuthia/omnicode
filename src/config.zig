@@ -29,6 +29,28 @@ pub fn isAllowedKey(key: []const u8) bool {
     return false;
 }
 
+pub const all_providers = [_]router.Provider{
+    .abliteration,
+    .openrouter,
+    .anthropic,
+    .deepseek,
+    .xai,
+    .openai,
+    .gemini,
+    .groq,
+};
+
+pub fn resolveProvider(token: []const u8) ?router.Provider {
+    if (std.meta.stringToEnum(router.Provider, token)) |p| return p;
+    if (std.fmt.parseInt(usize, token, 10) catch null) |idx| {
+        if (idx >= 1 and idx <= all_providers.len) return all_providers[idx - 1];
+    }
+    for (all_providers) |p| {
+        if (std.ascii.eqlIgnoreCase(@tagName(p), token) or std.ascii.eqlIgnoreCase(p.envKey(), token)) return p;
+    }
+    return null;
+}
+
 /// Resolve a provider name (e.g. "openrouter", "openai") or an explicit allowed env key name.
 pub fn resolveKeyName(token: []const u8) ?[]const u8 {
     if (std.meta.stringToEnum(router.Provider, token)) |p| return p.envKey();
@@ -217,6 +239,89 @@ pub fn execute(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Envi
     return std.fmt.allocPrint(a, "Saved {s} ({s}).", .{ key, shown });
 }
 
+pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map, active_override: ?router.Provider) ![]const u8 {
+    const raw_path = try configPath(a, env);
+    const path = try status.shortenHome(a, raw_path, env.get("HOME") orelse "");
+    const detected = router.Route.init(env, null, null) catch null;
+    const active: ?router.Provider = active_override orelse if (detected) |r| r.provider else null;
+    const custom_url = env.get("API_URL") orelse "";
+    var out: Io.Writer.Allocating = .init(a);
+    try out.writer.print("Config file: {s}\nProviders (* = active):\n", .{path});
+    for (all_providers, 1..) |p, idx| {
+        var mask_buf: [32]u8 = undefined;
+        const val = env.get(p.envKey()) orelse "";
+        const mark: u8 = if (active != null and active.? == p) '*' else ' ';
+        const strong = p.defaultModel(true);
+        const fast = p.defaultModel(false);
+        const models_buf = if (std.mem.eql(u8, strong, fast))
+            try std.fmt.allocPrint(a, "{s}", .{strong})
+        else
+            try std.fmt.allocPrint(a, "{s} / {s}", .{ strong, fast });
+        const url = if (custom_url.len > 0 and active != null and active.? == p) custom_url else p.defaultUrl();
+        try out.writer.print("  {c} {d:>2}. {s:<12} key: {s:<14} [{s}]  models: {s}  url: {s}\n", .{
+            mark, idx, @tagName(p), maskSecret(val, &mask_buf), p.envKey(), models_buf, url,
+        });
+    }
+    if (custom_url.len > 0) {
+        try out.writer.print("Custom API_URL override: {s}\n", .{custom_url});
+    }
+    try out.writer.writeAll(
+        \\Usage:
+        \\  /providers                       List providers, key status, default models, and endpoints
+        \\  /providers <N|provider>          Switch active provider (e.g. /providers 2 or /providers openrouter)
+        \\  /providers <provider> <api_key>  Save API key and activate provider (e.g. /providers deepseek sk-...)
+        \\  /providers url <url|default>     Set or reset custom API_URL endpoint
+        \\  /providers unset <provider>      Remove saved API key for a provider
+        \\
+    );
+    return out.toOwnedSlice();
+}
+
+/// Process a `/providers ...` or `--providers ...` command and return a user-facing summary message.
+pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, active_override: ?router.Provider, rest: []const u8) ![]const u8 {
+    const trimmed = std.mem.trim(u8, rest, " \t\r\n");
+    if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "list")) return providersReport(a, env, active_override);
+    var parts = std.mem.tokenizeAny(u8, trimmed, " \t");
+    const first = parts.next() orelse return providersReport(a, env, active_override);
+    if (std.mem.eql(u8, first, "unset") or std.mem.eql(u8, first, "clear") or std.mem.eql(u8, first, "remove")) {
+        const target = parts.next() orelse return error.InvalidProvidersCommand;
+        if (parts.next() != null) return error.InvalidProvidersCommand;
+        const p = resolveProvider(target) orelse return error.UnknownProvider;
+        try unset(a, io, dir, env, p.envKey());
+        if (std.mem.eql(u8, env.get("PROVIDER") orelse "", @tagName(p))) {
+            try unset(a, io, dir, env, "PROVIDER");
+        }
+        return std.fmt.allocPrint(a, "Cleared API key for {s} ({s}).", .{ @tagName(p), p.envKey() });
+    }
+    if (std.mem.eql(u8, first, "url")) {
+        const url = std.mem.trim(u8, parts.rest(), " \t");
+        if (url.len == 0) return error.InvalidProvidersCommand;
+        if (std.mem.eql(u8, url, "default") or std.mem.eql(u8, url, "reset") or std.mem.eql(u8, url, "clear")) {
+            try unset(a, io, dir, env, "API_URL");
+            return a.dupe(u8, "Reset API_URL to provider default.");
+        }
+        try set(a, io, dir, env, "API_URL", url);
+        return std.fmt.allocPrint(a, "Saved API_URL = {s}", .{url});
+    }
+    const is_explicit_verb = std.mem.eql(u8, first, "use") or std.mem.eql(u8, first, "select") or std.mem.eql(u8, first, "set");
+    const target_tok = if (is_explicit_verb) (parts.next() orelse return error.InvalidProvidersCommand) else first;
+    const p = resolveProvider(target_tok) orelse return error.UnknownProvider;
+    const remainder = std.mem.trim(u8, parts.rest(), " \t");
+    if (remainder.len == 0) {
+        if (std.mem.eql(u8, first, "set")) return error.InvalidProvidersCommand;
+        try set(a, io, dir, env, "PROVIDER", @tagName(p));
+        const key_val: []const u8 = env.get(p.envKey()) orelse "";
+        if (key_val.len > 0) {
+            return std.fmt.allocPrint(a, "Active provider set to {s} (default model: {s}).", .{ @tagName(p), p.defaultModel(true) });
+        }
+        return std.fmt.allocPrint(a, "Active provider set to {s} (note: {s} is not set; run /providers {s} <api_key>).", .{ @tagName(p), p.envKey(), @tagName(p) });
+    }
+    try set(a, io, dir, env, p.envKey(), remainder);
+    try set(a, io, dir, env, "PROVIDER", @tagName(p));
+    var mask_buf: [32]u8 = undefined;
+    return std.fmt.allocPrint(a, "Configured {s} ({s} = {s}) and set as active provider.", .{ @tagName(p), p.envKey(), maskSecret(remainder, &mask_buf) });
+}
+
 test "config persists keys, respects environment precedence, and masks secrets" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -243,4 +348,12 @@ test "config persists keys, respects environment precedence, and masks secrets" 
     _ = try execute(a, std.testing.io, tmp.dir, &fresh_env, "unset openrouter");
     try std.testing.expect(fresh_env.get("OPENROUTER_API_KEY") == null);
     try std.testing.expectError(error.InvalidConfigKey, execute(a, std.testing.io, tmp.dir, &fresh_env, "set BOGUS_KEY 1"));
+    const prov_msg = try executeProviders(a, std.testing.io, tmp.dir, &fresh_env, null, "deepseek sk-ds-1234567890abcdef");
+    try std.testing.expect(std.mem.indexOf(u8, prov_msg, "Configured deepseek") != null);
+    try std.testing.expectEqualStrings("deepseek", fresh_env.get("PROVIDER").?);
+    try std.testing.expectEqualStrings("sk-ds-1234567890abcdef", fresh_env.get("DEEPSEEK_API_KEY").?);
+    _ = try executeProviders(a, std.testing.io, tmp.dir, &fresh_env, .deepseek, "2");
+    try std.testing.expectEqualStrings("openrouter", fresh_env.get("PROVIDER").?);
+    const list_out = try executeProviders(a, std.testing.io, tmp.dir, &fresh_env, .openrouter, "");
+    try std.testing.expect(std.mem.indexOf(u8, list_out, "*  2. openrouter") != null);
 }

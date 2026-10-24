@@ -122,22 +122,29 @@ pub const Context = struct {
         if (std.mem.eql(u8, name, "bash")) return c.command(&.{ "sh", "-c", try j.str(args, "cmd") }, false, 30_000);
         const path = try j.optional(args, "path", ".");
         if (std.mem.eql(u8, name, "glob")) return c.command(&.{
-            "rg",           "--no-config",          "--files",
-            "--glob",       "!.git",                "--glob",
-            "!.venv",       "--glob",               "!venv",
-            "--glob",       "!node_modules",        "--glob",
-            "!__pycache__", "--glob",               "!.zig-cache",
-            "--glob",       try j.str(args, "pat"), "--",
-            path,
+            "rg",             "--no-config",   "--files",
+            "--glob",         "!.git",         "--glob",
+            "!.venv",         "--glob",        "!venv",
+            "--glob",         "!node_modules", "--glob",
+            "!__pycache__",   "--glob",        "!.zig-cache",
+            "--glob",         "!zig-out",      "--glob",
+            "!target",        "--glob",        "!dist",
+            "--glob",         "!.cache",       "--glob",
+            "!.pytest_cache", "--glob",        try j.str(args, "pat"),
+            "--",             path,
         }, true, 30_000);
         if (std.mem.eql(u8, name, "grep")) return c.command(&.{
-            "rg",           "--no-config",          "--color=never",
-            "-n",           "-m",                   "50",
-            "--glob",       "!.git",                "--glob",
-            "!.venv",       "--glob",               "!venv",
-            "--glob",       "!node_modules",        "--glob",
-            "!__pycache__", "--glob",               "!.zig-cache",
-            "--",           try j.str(args, "pat"), path,
+            "rg",             "--no-config",   "--color=never",
+            "-n",             "-m",            "50",
+            "--glob",         "!.git",         "--glob",
+            "!.venv",         "--glob",        "!venv",
+            "--glob",         "!node_modules", "--glob",
+            "!__pycache__",   "--glob",        "!.zig-cache",
+            "--glob",         "!zig-out",      "--glob",
+            "!target",        "--glob",        "!dist",
+            "--glob",         "!.cache",       "--glob",
+            "!.pytest_cache", "--",            try j.str(args, "pat"),
+            path,
         }, true, 30_000);
         return error.UnknownTool;
     }
@@ -147,12 +154,15 @@ pub const Context = struct {
             .argv = argv,
             .cwd = .{ .dir = c.dir },
             .environ_map = c.env,
-            .stdout_limit = .limited(limit),
-            .stderr_limit = .limited(limit),
+            .stdout_limit = .limited(4 * limit),
+            .stderr_limit = .limited(4 * limit),
         } }, milliseconds);
         if (search and result.term == .exited and result.term.exited == 1) return "none";
-        if (!result.term.success()) return std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, result.stdout, result.stderr });
-        return std.fmt.allocPrint(c.a, "{s}{s}", .{ result.stdout, result.stderr });
+        const full = if (!result.term.success())
+            try std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, result.stdout, result.stderr })
+        else
+            try std.fmt.allocPrint(c.a, "{s}{s}", .{ result.stdout, result.stderr });
+        return capCommandOutput(c.a, full);
     }
 
     pub fn loadSkill(c: Context, name: []const u8) ![]const u8 {
@@ -261,6 +271,17 @@ pub const Context = struct {
     }
 };
 
+pub fn capCommandOutput(a: j.Allocator, full: []const u8) ![]const u8 {
+    if (full.len <= limit) return full;
+    if (!std.unicode.utf8ValidateSlice(full)) return full;
+    const marker = "\n...[truncated middle; narrow command or filter output]...\n";
+    var head: usize = (limit * 2) / 3;
+    while (head > 0 and !std.unicode.utf8ValidateSlice(full[0..head])) head -= 1;
+    var tail_start = full.len - (limit - head - marker.len);
+    while (tail_start < full.len and !std.unicode.utf8ValidateSlice(full[tail_start..])) tail_start += 1;
+    return std.fmt.allocPrint(a, "{s}{s}{s}", .{ full[0..head], marker, full[tail_start..] });
+}
+
 pub fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > 64) return false;
     for (name) |ch| if (!std.ascii.isAlphanumeric(ch) and ch != '-' and ch != '_') return false;
@@ -338,4 +359,13 @@ test "commands bound runtime/output and report search misses" {
     try std.testing.expect(std.mem.startsWith(u8, failure, "error:"));
     try std.testing.expect(std.mem.indexOf(u8, failure, "diagnostic") != null);
     try std.testing.expectError(error.StreamTooLong, c.command(&.{ "sh", "-c", "yes output" }, false, 1000));
+    var big = try arena.allocator().alloc(u8, limit + 4096);
+    @memset(big, 'a');
+    @memcpy(big[0..5], "HEAD:");
+    @memcpy(big[big.len - 5 ..], ":TAIL");
+    const capped = try capCommandOutput(arena.allocator(), big);
+    try std.testing.expect(capped.len <= limit);
+    try std.testing.expect(std.mem.startsWith(u8, capped, "HEAD:"));
+    try std.testing.expect(std.mem.endsWith(u8, capped, ":TAIL"));
+    try std.testing.expect(std.mem.indexOf(u8, capped, "[truncated middle") != null);
 }

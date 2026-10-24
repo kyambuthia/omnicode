@@ -761,8 +761,10 @@ class Integration(unittest.TestCase):
             return text("voice command executed")
         self.reply = voice_and_turn_reply
         repl = self.run_agent(stdin=(
+            "/providers xai xai-key-9999\n"
+            "/providers\n"
             "/setup openrouter sk-or-voice-key-1234\n"
-            "/setup set PROVIDER openrouter\n"
+            "/providers 2\n"
             "/setup\n"
             "/voice sample.wav\n"
             "/voice model custom/voice-model\n"
@@ -770,6 +772,9 @@ class Integration(unittest.TestCase):
             "/exit\n"
         ))
         self.assertEqual(repl.returncode, 0, repl.stderr)
+        self.assertIn("Configured xai", repl.stdout)
+        self.assertIn("Providers (* = active):", repl.stdout)
+        self.assertIn("Active provider set to openrouter", repl.stdout)
         self.assertIn("sk-o...1234", repl.stdout)
         self.assertEqual(repl.stdout.count("Voice: list project files"), 2)
         self.assertEqual(repl.stdout.count("voice command executed"), 2)
@@ -866,6 +871,45 @@ class Integration(unittest.TestCase):
             "fast-test-model", "fast-test-model", "fast-test-model", "deepseek-reasoner"
         ])
         self.assertGreaterEqual(len(self.requests[-1][0]["messages"]), 5)
+
+    def test_agentic_workflow_max_tokens_recovery_and_error_guidance(self):
+        (self.cwd / "box.py").write_text("width = 10\n")
+        def reply(body):
+            n = len(self.requests)
+            if n == 1:
+                # Response 1 hits max_tokens mid-generation with thinking + partial text + truncated write tool_use.
+                return {
+                    "stop_reason": "max_tokens",
+                    "content": [
+                        {"type": "thinking", "thinking": "long design calculation"},
+                        {"type": "text", "text": "Designing parametric food carton..."},
+                        call("write", {"path": "truncated.py", "content": "should_not_run"}, "bad_w"),
+                    ],
+                }
+            if n == 2:
+                # After automatic continuation prompt, model calls edit twice with a missing string to trigger guidance + repeat guard.
+                return tools(
+                    call("edit", {"path": "box.py", "old": "nonexistent", "new": "20"}, "e1"),
+                    call("edit", {"path": "box.py", "old": "nonexistent", "new": "20"}, "e2"),
+                )
+            if n == 3:
+                # Model now writes/edits cleanly.
+                return tools(call("edit", {"path": "box.py", "old": "width = 10", "new": "width = 20"}, "e3"))
+            return text("Food box design complete.")
+        self.reply = reply
+        result = self.run_agent("design a to-go carton foodbox")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Truncated tool call from max_tokens response must never execute.
+        self.assertFalse((self.cwd / "truncated.py").exists())
+        # Partial text from the truncated response was shown, followed by automatic recovery.
+        self.assertIn("Designing parametric food carton...", result.stdout)
+        self.assertIn("Response hit output token limit; continuing automatically in smaller steps...", result.stdout)
+        self.assertIn("Food box design complete.", result.stdout)
+        self.assertEqual((self.cwd / "box.py").read_text(), "width = 20\n")
+        # Request 3 received actionable MatchNotFound hint and repeated-failure loop-breaker note.
+        err_results = {r["tool_use_id"]: r["content"] for r in self.requests[2][0]["messages"][-1]["content"]}
+        self.assertIn("use read", err_results["e1"])
+        self.assertIn("Identical tool call failed again", err_results["e2"])
 
 
 if __name__ == "__main__":

@@ -338,6 +338,7 @@ pub const Ui = struct {
             error.IncompleteResponse => "Model response was incomplete; no tools in that response were run.",
             error.AlreadyInitialized => "OMNICODE.md already exists. Use /init force to overwrite.",
             error.InvalidConfigKey, error.InvalidSetupCommand => "Usage: /setup <provider> <key> | /setup set <KEY> <VALUE> | /setup unset <KEY>",
+            error.InvalidProvidersCommand => "Usage: /providers [list] | /providers <N|provider> [api_key] | /providers url <url|default> | /providers unset <provider>",
             error.VoiceRecordFailed => "Audio recording failed. Install arecord/sox/ffmpeg, set OMNICODE_VOICE_CMD, or pass /voice <file.wav>.",
             error.EmptyAudio, error.EmptyTranscript => "Voice input produced no transcription.",
             error.InvalidSecretName, error.InvalidSecretValue, error.InvalidSecretsCommand => "Usage: /secrets set <NAME> <VALUE> | /secrets unset <NAME> | /secrets load <file.env>",
