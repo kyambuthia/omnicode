@@ -12,7 +12,7 @@ const explore_tools =
 
 const edit_tools = explore_tools ++ ",\n" ++
     \\{"name":"write","description":"Create or overwrite a file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
-    \\{"name":"edit","description":"Replace exact nonempty text; must be unique unless all=true","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
+    \\{"name":"edit","description":"Replace exact nonempty text; must be unique including overlaps unless all=true (replaces non-overlapping matches)","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
     \\{"name":"bash","description":"Run shell command; default 30s deadline, timeout_ms may request 1-300000ms, bounded output","input_schema":{"type":"object","properties":{"cmd":{"type":"string"},"timeout_ms":{"type":"integer","minimum":1,"maximum":300000}},"required":["cmd"]}},
     \\{"name":"todo","description":"Read or replace the session checklist that survives context compaction","input_schema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"task":{"type":"string"},"done":{"type":"boolean"}},"required":["task","done"]}}}}}
 ;
@@ -120,7 +120,12 @@ pub const Context = struct {
             const count = std.mem.count(u8, text, old);
             if (count == 0) return error.MatchNotFound;
             const all = if (args.object.get("all")) |v| if (v == .bool) v.bool else return error.ExpectedBoolean else false;
-            if (count > 1 and !all) return error.AmbiguousMatch;
+            if (!all) {
+                const first = std.mem.indexOf(u8, text, old).?;
+                // count/replaceOwned count non-overlapping matches. Uniqueness
+                // must also reject alternatives that start inside the first match.
+                if (std.mem.indexOf(u8, text[first + 1 ..], old) != null) return error.AmbiguousMatch;
+            }
             const size = std.math.add(usize, text.len - count * old.len, try std.math.mul(usize, count, new.len)) catch return error.StreamTooLong;
             if (size > 1024 * 1024) return error.StreamTooLong;
             const replacement = try std.mem.replaceOwned(u8, c.a, text, old, new);
@@ -461,4 +466,23 @@ test "skill descriptions redact before truncation and preserve UTF-8" {
     const unicode_body = try std.fmt.allocPrint(c.a, "description: {s}1234567é\n", .{&padding});
     try tmp.dir.writeFile(c.io, .{ .sub_path = ".omnicode/skills/check/SKILL.md", .data = unicode_body });
     try std.testing.expect(std.unicode.utf8ValidateSlice(try c.skills()));
+}
+
+test "unique edits reject overlapping matches without modifying files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
+    for ([_][]const u8{ "aaa", "ababa", "雪雪雪" }, [_][]const u8{ "aa", "aba", "雪雪" }) |original, old| {
+        try tmp.dir.writeFile(c.io, .{ .sub_path = "file", .data = original });
+        const args = try j.parse(c.a, try j.encode(c.a, .{ .path = "file", .old = old, .new = "x" }));
+        try std.testing.expectError(error.AmbiguousMatch, c.run("edit", args));
+        try std.testing.expectEqualStrings(original, try c.readFile("file"));
+    }
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "file", .data = "aaa" });
+    _ = try c.run("edit", try j.parse(c.a, "{\"path\":\"file\",\"old\":\"aa\",\"new\":\"x\",\"all\":true}"));
+    try std.testing.expectEqualStrings("xa", try c.readFile("file"));
+    _ = try c.run("edit", try j.parse(c.a, "{\"path\":\"file\",\"old\":\"xa\",\"new\":\"unique\"}"));
+    try std.testing.expectEqualStrings("unique", try c.readFile("file"));
 }

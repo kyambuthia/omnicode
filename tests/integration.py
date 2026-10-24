@@ -883,6 +883,24 @@ class Integration(unittest.TestCase):
         self.assertIn("    4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
+    def test_overlapping_edit_is_rejected_until_all_is_requested(self):
+        (self.cwd / "overlap.txt").write_text("aaa")
+        def reply(_):
+            if len(self.requests) == 1:
+                return tools(call("edit", {"path": "overlap.txt", "old": "aa", "new": "x"}, "ambiguous"))
+            if len(self.requests) == 2:
+                self.assertEqual((self.cwd / "overlap.txt").read_text(), "aaa")
+                error = self.requests[-1][0]["messages"][-1]["content"][0]
+                self.assertTrue(error["is_error"])
+                self.assertIn("AmbiguousMatch", error["content"])
+                return tools(call("edit", {"path": "overlap.txt", "old": "aa", "new": "x", "all": True}, "all"))
+            return text("done")
+        self.reply = reply
+        result = self.run_agent("fix overlapping text")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.cwd / "overlap.txt").read_text(), "xa")
+        self.assertEqual(len(self.requests), 3)
+
     def test_edit_preview_and_visible_failure(self):
         (self.cwd / "a.txt").write_text("before")
         self.reply = lambda _: tools(call("edit", {"path": "a.txt", "old": "before", "new": "after"}, "edit"),

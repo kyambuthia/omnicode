@@ -211,6 +211,11 @@ tail. Review output retains the overall verdict within its 64 KiB limit. A criti
 passes only with an exact final `VERDICT: PASS` line; turn-limit reports and
 reports containing `VERDICT: FAIL` are treated as failures.
 
+File edits require a unique exact match, including overlapping occurrences. For
+example, `aa` in `aaa` is ambiguous and leaves the file unchanged. With `all=true`,
+edits replace non-overlapping matches from left to right (`aaa` becomes `xa` when
+replacing `aa` with `x`).
+
 Checklist replacements apply only after all items validate and fit the 4 KiB
 limit. A rejected replacement preserves the previous checklist.
 
