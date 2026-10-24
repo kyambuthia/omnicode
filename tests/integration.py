@@ -37,6 +37,34 @@ def model(id, prompt="0.000001", completion="0.000002", **pricing):
 
 
 class Integration(unittest.TestCase):
+    def test_startup_storage_errors_block_requests_but_allow_help(self):
+        vault = self.cwd / "startup-vault.env"
+        self.env["OMNICODE_SECRETS"] = str(vault)
+        vault.write_text("FIRST=private-first-value\nLONG=" + "x" * 513 + "\n")
+        for content, expected in ((vault.read_text(), "InvalidSecretValue"),
+                                  ("FIRST=private-first-value\nmalformed\n", "InvalidSecretFile")):
+            vault.write_text(content)
+            result = self.run_agent("list files")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(expected, result.stderr)
+            self.assertNotIn("private-first-value", result.stdout + result.stderr)
+            self.assertEqual(self.requests, [])
+            for flag in ("--help", "--version"):
+                result = self.run_agent(flag)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        vault.unlink()
+        # Directories cannot be read as config files; startup must report the failure.
+        self.env["OMNICODE_CONFIG"] = str(self.cwd)
+        result = self.run_agent("list files")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.run_agent("--help").returncode, 0)
+        # Absent persisted files are supported, with ordinary environment configuration.
+        self.env["OMNICODE_CONFIG"] = str(self.cwd / "absent-config.env")
+        result = self.run_agent("list files")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 1)
+
     def test_private_state_replaces_permissive_files_and_links(self):
         for kind, relative, args, stdin in (
             ("config", ".config/omnicode/config.env", ("--setup", "openai", "fixture-key-private"), None),

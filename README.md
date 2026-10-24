@@ -164,6 +164,15 @@ replacement. Saving repairs loose permissions on an existing destination and
 replaces a destination symlink rather than modifying its target. Parent directory
 symlinks are still resolved normally; use a trusted configuration directory.
 
+Secret commands stage changes before saving: a failed save or invalid import
+leaves the live vault and subprocess environment unchanged.
+
+Startup stops on unreadable configuration/vault files or invalid vault entries,
+so requests cannot proceed with a partially loaded secret scrubber. Missing files
+are allowed. Vault loads and imports apply only after the whole file parses;
+comments, blank lines, `export` entries, and empty-value skips are supported.
+`--help` and `--version` remain available even when persisted files need repair.
+
 ## Terminal interface
 
 The terminal keeps a scrollable transcript, with model responses separated from

@@ -49,10 +49,7 @@ pub fn main(init: std.process.Init) void {
 
 fn run(init: std.process.Init) !void {
     const a = init.arena.allocator();
-    core.config.loadIntoEnv(a, init.io, .cwd(), init.environ_map) catch {};
     var secrets: core.Secrets = .{};
-    secrets.load(a, init.io, .cwd(), init.environ_map) catch {};
-    secrets.injectEnv(init.environ_map) catch {};
     const args = try init.minimal.args.toSlice(a);
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.Writer.init(.stdout(), init.io, &output_buffer);
@@ -91,6 +88,9 @@ fn run(init: std.process.Init) !void {
         try out.writeAll(help);
         return out.flush();
     }
+    try core.config.loadIntoEnv(a, init.io, .cwd(), init.environ_map);
+    try secrets.load(a, init.io, .cwd(), init.environ_map);
+    try secrets.injectEnv(init.environ_map);
     const context: core.Context = .{ .a = a, .io = init.io, .dir = .cwd(), .secrets = &secrets, .env = init.environ_map };
     if (!prompt_only and args.len == first + 1 and std.mem.eql(u8, args[first], "--skills")) {
         const skills = try context.skills();

@@ -40,7 +40,7 @@ pub const Secrets = struct {
 
     pub fn setMemory(self: *Secrets, name: []const u8, value: []const u8) !void {
         if (!validSecretName(name)) return error.InvalidSecretName;
-        if (value.len == 0 or value.len > max_val_len or std.mem.indexOfAny(u8, value, "\r\n") != null)
+        if (value.len == 0 or value.len > max_val_len or std.mem.indexOfAny(u8, value, "\x00\r\n") != null)
             return error.InvalidSecretValue;
         for (0..self.count) |i| {
             if (std.mem.eql(u8, self.nameAt(i), name)) {
@@ -99,19 +99,27 @@ pub const Secrets = struct {
     }
 
     pub fn parseLines(self: *Secrets, text: []const u8) !usize {
+        var next = self.*;
+        const added = try next.parseLinesInto(text);
+        self.* = next;
+        return added;
+    }
+
+    fn parseLinesInto(self: *Secrets, text: []const u8) !usize {
         var added: usize = 0;
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |raw| {
             var line = std.mem.trim(u8, raw, " \t\r");
             if (line.len == 0 or line[0] == '#') continue;
             if (std.mem.startsWith(u8, line, "export ")) line = std.mem.trim(u8, line[7..], " \t");
-            const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+            const eq = std.mem.indexOfScalar(u8, line, '=') orelse return error.InvalidSecretFile;
             const name = std.mem.trim(u8, line[0..eq], " \t");
             var val = std.mem.trim(u8, line[eq + 1 ..], " \t");
             if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
                 val = val[1 .. val.len - 1];
             }
-            if (!validSecretName(name) or val.len == 0) continue;
+            if (!validSecretName(name)) return error.InvalidSecretName;
+            if (val.len == 0) continue;
             try self.setMemory(name, val);
             added += 1;
         }
@@ -138,36 +146,67 @@ pub const Secrets = struct {
 
     /// Scrub any occurrence of stored secrets or configured provider API keys from `text`.
     pub fn scrub(self: *const Secrets, a: std.mem.Allocator, text: []const u8, env: ?*const std.process.Environ.Map) ![]const u8 {
-        var current = text;
+        const Candidate = struct { name: []const u8, value: []const u8 };
+        var candidates: [max_secrets + 8]Candidate = undefined;
+        var count: usize = 0;
         for (0..self.count) |i| {
-            const val = self.valAt(i);
-            if (val.len < 4) continue;
-            if (std.mem.indexOf(u8, current, val) != null) {
-                const tag = try std.fmt.allocPrint(a, "[REDACTED:{s}]", .{self.nameAt(i)});
-                current = try std.mem.replaceOwned(u8, a, current, val, tag);
-            }
+            if (self.valAt(i).len < 4 or std.mem.indexOf(u8, text, self.valAt(i)) == null) continue;
+            candidates[count] = .{ .name = self.nameAt(i), .value = self.valAt(i) };
+            count += 1;
         }
         if (env) |m| {
-            inline for (.{
-                router.Provider.abliteration,
-                router.Provider.openrouter,
-                router.Provider.anthropic,
-                router.Provider.deepseek,
-                router.Provider.xai,
-                router.Provider.openai,
-                router.Provider.gemini,
-                router.Provider.groq,
-            }) |p| {
-                const key_name = p.envKey();
-                if (m.get(key_name)) |val| {
-                    if (val.len >= 6 and std.mem.indexOf(u8, current, val) != null) {
-                        const tag = try std.fmt.allocPrint(a, "[REDACTED:{s}]", .{key_name});
-                        current = try std.mem.replaceOwned(u8, a, current, val, tag);
+            inline for (.{ router.Provider.abliteration, router.Provider.openrouter, router.Provider.anthropic, router.Provider.deepseek, router.Provider.xai, router.Provider.openai, router.Provider.gemini, router.Provider.groq }) |p| {
+                if (m.get(p.envKey())) |value| {
+                    if (value.len >= 6 and std.mem.indexOf(u8, text, value) != null) {
+                        candidates[count] = .{ .name = p.envKey(), .value = value };
+                        count += 1;
                     }
                 }
             }
         }
-        return current;
+        if (count == 0) return text;
+        var out: Io.Writer.Allocating = .init(a);
+        defer out.deinit();
+        var pos: usize = 0;
+        while (pos < text.len) {
+            var match_len: usize = 0;
+            var match_name: []const u8 = "";
+            for (candidates[0..count]) |candidate| {
+                const val = candidate.value;
+                if (val.len > match_len and val[0] == text[pos] and std.mem.startsWith(u8, text[pos..], val)) {
+                    match_len = val.len;
+                    match_name = candidate.name;
+                }
+            }
+            if (match_len > 0) {
+                try out.writer.print("[REDACTED:{s}]", .{match_name});
+                pos += match_len;
+            } else {
+                try out.writer.writeByte(text[pos]);
+                pos += 1;
+            }
+        }
+        return out.toOwnedSlice();
+    }
+
+    /// Scrub an owned JSON tree without touching structural keys or serialized escapes.
+    /// Iterative traversal keeps deeply nested tool arguments off the call stack.
+    pub fn scrubJson(self: *const Secrets, a: std.mem.Allocator, root: *@import("json.zig").Value, env: ?*const std.process.Environ.Map) !void {
+        var pending: std.ArrayList(*@import("json.zig").Value) = .empty;
+        defer pending.deinit(a);
+        try pending.append(a, root);
+        while (pending.pop()) |value| {
+            switch (value.*) {
+                .string => |text| value.* = .{ .string = try self.scrub(a, text, env) },
+                .array => |*array| for (array.items) |*item| {
+                    try pending.append(a, item);
+                },
+                .object => |*object| for (object.values()) |*item| {
+                    try pending.append(a, item);
+                },
+                else => {},
+            }
+        }
     }
 
     pub fn statusReport(self: *const Secrets, a: std.mem.Allocator, env: *const std.process.Environ.Map) ![]const u8 {
@@ -192,6 +231,29 @@ pub const Secrets = struct {
         return out.toOwnedSlice();
     }
 
+    /// Prepare all environment allocations before saving, then commit without failure.
+    fn commit(self: *Secrets, next: *const Secrets, a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, removed: ?[]const u8) !void {
+        var pending = std.process.Environ.Map.init(env.allocator);
+        defer pending.deinit();
+        for (0..next.count) |i| {
+            const name = next.nameAt(i);
+            const value = next.valAt(i);
+            if (env.get(name)) |old| {
+                if (std.mem.eql(u8, old, value)) continue;
+            }
+            try pending.put(name, value);
+        }
+        try env.array_hash_map.ensureUnusedCapacity(env.allocator, pending.count());
+        try next.save(a, io, dir, env);
+        for (pending.keys(), pending.values()) |key, value| {
+            // Capacity and owned strings were prepared before the filesystem commit.
+            env.putMove(@constCast(key), @constCast(value)) catch unreachable;
+        }
+        pending.array_hash_map.clearRetainingCapacity();
+        if (removed) |name| _ = env.swapRemove(name);
+        self.* = next.*;
+    }
+
     pub fn execute(self: *Secrets, a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, rest: []const u8) ![]const u8 {
         const trimmed = std.mem.trim(u8, rest, " \t\r\n");
         if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "list")) return self.statusReport(a, env);
@@ -200,19 +262,21 @@ pub const Secrets = struct {
         if (std.mem.eql(u8, sub, "unset") or std.mem.eql(u8, sub, "rm") or std.mem.eql(u8, sub, "delete")) {
             const name = parts.next() orelse return error.InvalidSecretsCommand;
             if (parts.next() != null) return error.InvalidSecretsCommand;
-            if (!self.unsetMemory(name)) return error.SecretNotFound;
-            _ = env.swapRemove(name);
-            try self.save(a, io, dir, env);
-            return std.fmt.allocPrint(a, "Removed secret {s}.", .{name});
+            var next = self.*;
+            if (!next.unsetMemory(name)) return error.SecretNotFound;
+            const message = try std.fmt.allocPrint(a, "Removed secret {s}.", .{name});
+            try self.commit(&next, a, io, dir, env, name);
+            return message;
         }
         if (std.mem.eql(u8, sub, "load")) {
             const file_path = std.mem.trim(u8, parts.rest(), " \t");
             if (file_path.len == 0) return error.InvalidSecretsCommand;
             const text = try dir.readFileAlloc(io, file_path, a, .limited(64 * 1024));
-            const count = try self.parseLines(text);
-            try self.injectEnv(@constCast(env));
-            try self.save(a, io, dir, env);
-            return std.fmt.allocPrint(a, "Loaded {d} secret(s) from {s} (values hidden).", .{ count, file_path });
+            var next = self.*;
+            const count = try next.parseLines(text);
+            const message = try std.fmt.allocPrint(a, "Loaded {d} secret(s) from {s} (values hidden).", .{ count, file_path });
+            try self.commit(&next, a, io, dir, env, null);
+            return message;
         }
         const name = if (std.mem.eql(u8, sub, "set") or std.mem.eql(u8, sub, "add"))
             parts.next() orelse return error.InvalidSecretsCommand
@@ -220,16 +284,11 @@ pub const Secrets = struct {
             sub;
         const val = std.mem.trim(u8, parts.rest(), " \t");
         if (val.len == 0) return error.InvalidSecretsCommand;
-        try self.setMemory(name, val);
-        try @constCast(env).put(name, self.valAt(self.count - 1));
-        for (0..self.count) |i| {
-            if (std.mem.eql(u8, self.nameAt(i), name)) {
-                try @constCast(env).put(self.nameAt(i), self.valAt(i));
-                break;
-            }
-        }
-        try self.save(a, io, dir, env);
-        return std.fmt.allocPrint(a, "Stored secret {s} ([REDACTED · {d} chars]).", .{ name, val.len });
+        var next = self.*;
+        try next.setMemory(name, val);
+        const message = try std.fmt.allocPrint(a, "Stored secret {s} ([REDACTED · {d} chars]).", .{ name, val.len });
+        try self.commit(&next, a, io, dir, env, null);
+        return message;
     }
 };
 
@@ -264,4 +323,99 @@ test "secrets vault stores 0600 file, imports .env, and scrubs values and API ke
     try std.testing.expectEqual(2, reloaded.count);
     _ = try reloaded.execute(a, std.testing.io, tmp.dir, &env, "unset DB_PASSWORD");
     try std.testing.expectEqual(1, reloaded.count);
+}
+
+test "redaction prefers longest original value and never rewrites generated tags" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var secrets: Secrets = .{};
+    try secrets.setMemory("SHORT", "prefix");
+    try secrets.setMemory("LONG", "prefix-private-suffix");
+    try secrets.setMemory("TAG", "REDACTED");
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OPENAI_API_KEY", "prefix-provider-key");
+    try std.testing.expectEqualStrings(
+        "[REDACTED:LONG] [REDACTED:OPENAI_API_KEY] [REDACTED:SHORT] [REDACTED:TAG]",
+        try secrets.scrub(a, "prefix-private-suffix prefix-provider-key prefix REDACTED", &env),
+    );
+    try std.testing.expectEqualStrings("[REDACTED:LONG][REDACTED:LONG]", try secrets.scrub(a, "prefix-private-suffixprefix-private-suffix", null));
+    try std.testing.expectEqualStrings("ordinary text", try secrets.scrub(a, "ordinary text", null));
+    try std.testing.expectEqualStrings("", try secrets.scrub(a, "", null));
+}
+
+test "failed vault commands preserve live secrets and environment" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_SECRETS", "blocked");
+    try env.put("TOKEN", "old-token");
+    try tmp.dir.createDir(io, "blocked", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "import.env", .data = "NEW_TOKEN=new-value\n" });
+    var secrets: Secrets = .{};
+    try secrets.setMemory("TOKEN", "old-token");
+    for ([_][]const u8{ "set TOKEN new-token", "set NEW_TOKEN new-value", "unset TOKEN", "load import.env" }) |command| {
+        if (secrets.execute(a, io, tmp.dir, &env, command)) |_| {
+            return error.TestUnexpectedResult;
+        } else |_| {}
+        try std.testing.expectEqual(1, secrets.count);
+        try std.testing.expectEqualStrings("old-token", secrets.valAt(0));
+        try std.testing.expectEqualStrings("old-token", env.get("TOKEN").?);
+        try std.testing.expect(env.get("NEW_TOKEN") == null);
+    }
+    // Parsing must not partially apply an import when a later value is invalid.
+    try env.put("OMNICODE_SECRETS", "working.env");
+    const oversized: [max_val_len + 1]u8 = @splat('x');
+    const invalid = try std.fmt.allocPrint(a, "NEW_TOKEN=new-value\nTOO_LONG={s}\n", .{&oversized});
+    try tmp.dir.writeFile(io, .{ .sub_path = "import.env", .data = invalid });
+    try std.testing.expectError(error.InvalidSecretValue, secrets.execute(a, io, tmp.dir, &env, "load import.env"));
+    try std.testing.expectEqual(1, secrets.count);
+    try std.testing.expect(env.get("NEW_TOKEN") == null);
+    _ = try secrets.execute(a, io, tmp.dir, &env, "set TOKEN new-token");
+    try std.testing.expectEqualStrings("new-token", env.get("TOKEN").?);
+    _ = try secrets.execute(a, io, tmp.dir, &env, "unset TOKEN");
+    try std.testing.expectEqual(0, secrets.count);
+    try std.testing.expect(env.get("TOKEN") == null);
+}
+
+test "JSON redaction handles escaped values and preserves structure" {
+    const j = @import("json.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var secrets: Secrets = .{};
+    try secrets.setMemory("TOKEN", "quote\"slash\\tail");
+    var value = try j.parse(a, try j.encode(a, .{
+        .nested = .{ "quote\"slash\\tail", .{ .value = "before quote\"slash\\tail after", .number = 42, .flag = true } },
+        .TOKEN = "unchanged",
+    }));
+    try secrets.scrubJson(a, &value, null);
+    const nested = try j.get(value, "nested");
+    try std.testing.expectEqualStrings("[REDACTED:TOKEN]", nested.array.items[0].string);
+    try std.testing.expectEqualStrings("before [REDACTED:TOKEN] after", try j.str(nested.array.items[1], "value"));
+    try std.testing.expectEqual(42, try j.number(nested.array.items[1], "number", 0));
+    try std.testing.expect((try j.get(nested.array.items[1], "flag")).bool);
+    try std.testing.expectEqualStrings("unchanged", try j.str(value, "TOKEN"));
+}
+
+test "vault parsing applies a complete file or leaves memory unchanged" {
+    var secrets: Secrets = .{};
+    try secrets.setMemory("EXISTING", "old-value");
+    const oversized: [max_val_len + 1]u8 = @splat('x');
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const invalid = try std.fmt.allocPrint(arena.allocator(), "EXISTING=new-value\nNEW_TOKEN=value\nLONG={s}\n", .{&oversized});
+    try std.testing.expectError(error.InvalidSecretValue, secrets.parseLines(invalid));
+    try std.testing.expectEqual(1, secrets.count);
+    try std.testing.expectEqualStrings("old-value", secrets.valAt(0));
+    try std.testing.expectError(error.InvalidSecretValue, secrets.parseLines("NEW_TOKEN=value\nBINARY=prefix\x00suffix\n"));
+    try std.testing.expectError(error.InvalidSecretFile, secrets.parseLines("NEW_TOKEN=value\nmalformed\n"));
+    try std.testing.expectError(error.InvalidSecretName, secrets.parseLines("NEW_TOKEN=value\nINVALID-NAME=value\n"));
+    try std.testing.expectEqual(1, secrets.count);
+    try std.testing.expectEqual(1, try secrets.parseLines("# comment\n\nEMPTY=\nexport NEW_TOKEN='new-value'\n"));
+    try std.testing.expectEqual(2, secrets.count);
 }
