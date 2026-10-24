@@ -345,6 +345,7 @@ pub const Ui = struct {
             error.InvalidSession => "Saved session is malformed or unsupported; the current conversation and checklist were kept.",
             error.InsecureEndpoint => "Use HTTPS, or HTTP with a literal loopback address (127.0.0.1 or [::1]) for local testing.",
             error.InvalidEndpoint => "Use a complete HTTP(S) endpoint URL without embedded credentials, fragments, or whitespace.",
+            error.InvalidHttpHeader => "An API credential or request header contains invalid characters. Check the selected provider key and environment variables.",
             error.ApiAuthenticationFailed => "API authentication failed (HTTP 401). Check the selected provider key with /providers or /setup.",
             error.ApiAccessDenied => "API access denied (HTTP 403). Check provider permissions and model access.",
             error.ApiRateLimited => "API rate limit reached (HTTP 429). Wait before retrying and check provider limits.",

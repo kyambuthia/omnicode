@@ -381,6 +381,11 @@ may outlive it. HTTP requests have a 120-second deadline and a 2 MiB response
 limit. Redirects are disabled. Requests are limited to 2 MiB serialized history,
 128 messages, 64 content blocks per response, and 32 model calls per user turn.
 
+Outgoing headers are validated before connecting. Invalid field names and unsafe
+control bytes in values (including credentials supplied through the environment)
+return `InvalidHttpHeader` without printing the value. This prevents header
+injection and avoids runtime assertions in the HTTP client.
+
 HTTP failures distinguish authentication (401), access denial (403), rate limits
 (429), and server errors (5xx), with recovery hints in the REPL. Diagnostics show
 the status code without printing response bodies. Invalid JSON responses return

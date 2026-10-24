@@ -28,6 +28,7 @@ pub fn validateEndpoint(url: []const u8) !void {
 /// Bounded JSON transport; callers choose deadlines and credentials. Never follow redirects.
 pub fn fetch(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const std.http.Header, limit: usize, timeout: i64) !j.Value {
     try validateEndpoint(url);
+    try validateHeaders(headers);
     const buffer = try std.heap.page_allocator.alloc(u8, limit);
     defer std.heap.page_allocator.free(buffer);
     var writer = std.Io.Writer.fixed(buffer);
@@ -50,6 +51,21 @@ pub fn fetch(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]cons
         return err;
     };
     return parseResponse(a, writer.buffered());
+}
+
+// RFC 9110 sections 5.1, 5.5, and 5.6.2. Validate before the
+// standard client's assertions and before allocating or connecting.
+fn validateHeaders(headers: []const std.http.Header) !void {
+    for (headers) |header| {
+        if (header.name.len == 0) return error.InvalidHttpHeader;
+        for (header.name) |ch| {
+            if (!std.ascii.isAlphanumeric(ch) and std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", ch) == null)
+                return error.InvalidHttpHeader;
+        }
+        for (header.value) |ch| {
+            if ((ch < 32 and ch != '\t') or ch == 127) return error.InvalidHttpHeader;
+        }
+    }
 }
 
 fn checkStatus(status: std.http.Status) !void {
@@ -106,4 +122,18 @@ test "malformed JSON responses produce a stable diagnostic without body text" {
         try std.testing.expectError(error.InvalidJsonResponse, parseResponse(a, body));
     const valid = try parseResponse(a, "{\"content\":[]}");
     try std.testing.expect(valid == .object);
+}
+
+test "request headers reject injection and unsafe controls before transport" {
+    try validateHeaders(&.{.{ .name = "X-Valid_123!#$%&'*+-.^_`|~", .value = "visible text\twith tab\x80\xff" }});
+    try validateHeaders(&.{.{ .name = "X-Empty", .value = "" }});
+    for ([_][]const u8{ "", "Bad:Name", "Bad Name", "Bad\tName", "Bad\r\nName", "Bad\x00Name", "Bad\xffName", "Bad(Name)" }) |name|
+        try std.testing.expectError(error.InvalidHttpHeader, validateHeaders(&.{.{ .name = name, .value = "valid" }}));
+    for (0..32) |n| {
+        if (n == '\t') continue;
+        const value = [_]u8{ 'k', @intCast(n), 'y' };
+        try std.testing.expectError(error.InvalidHttpHeader, validateHeaders(&.{.{ .name = "Authorization", .value = &value }}));
+    }
+    try std.testing.expectError(error.InvalidHttpHeader, validateHeaders(&.{.{ .name = "Authorization", .value = "key\x7f" }}));
+    try std.testing.expectError(error.InvalidHttpHeader, fetch(std.testing.allocator, std.testing.io, "http://127.0.0.1:1/", null, &.{.{ .name = "Authorization", .value = "key\r\nInjected: yes" }}, 1024, 1000));
 }

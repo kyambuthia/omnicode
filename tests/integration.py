@@ -883,6 +883,21 @@ class Integration(unittest.TestCase):
         self.assertIn("    4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
+    def test_invalid_environment_credentials_are_rejected_before_http(self):
+        for provider, key_name in (("anthropic", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY")):
+            for control in ("\r\nX-Injected: yes", "\r", "\n", "\x01", "\x7f"):
+                with self.subTest(provider=provider, control=repr(control)):
+                    marker = "private-invalid-credential"
+                    self.env["PROVIDER"] = provider
+                    self.env[key_name] = marker + control
+                    result = self.run_agent(stdin="inspect project\n/q\n")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("InvalidHttpHeader", result.stdout)
+                    self.assertIn("Check the selected provider key", result.stdout)
+                    self.assertNotIn(marker, result.stdout + result.stderr)
+                    self.assertNotIn("X-Injected", result.stdout + result.stderr)
+                    self.assertEqual(self.requests, [])
+
     def test_http_failures_have_safe_actionable_diagnostics(self):
         marker = "provider-error-body-must-stay-private"
         for status, error, hint in (
