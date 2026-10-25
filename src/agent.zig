@@ -747,6 +747,8 @@ fn formatToolError(a: std.mem.Allocator, err: anyerror) ![]const u8 {
         error.InvalidPath => " (file paths cannot contain NUL bytes; supply the exact path without embedded NUL)",
         error.InvalidCommandArgument => " (command arguments cannot contain NUL bytes; remove embedded NUL before retrying)",
         error.InvalidTimeout => " (timeout_ms must be an integer from 1 to 300000; default is 30000)",
+        error.InvalidReadLimit => " (byte_limit must be an integer from 1 to 61440; default is 4096)",
+        error.InvalidReadOffset => " (byte_offset exceeds the redacted UTF-8 view; use the returned byte ranges)",
         error.FileNotFound => " (path not found; use glob to locate existing files)",
         else => "",
     };

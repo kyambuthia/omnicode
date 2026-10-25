@@ -2,10 +2,11 @@ const std = @import("std");
 const j = @import("json.zig");
 const Io = std.Io;
 pub const limit = 64 * 1024;
+const byte_read_limit = 60 * 1024;
 pub const Result = struct { text: []const u8, is_error: bool = false };
 
 const explore_tools =
-    \\{"name":"read","description":"Read numbered lines, zero-based offset; max 1 MiB file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
+    \\{"name":"read","description":"Read numbered lines with zero-based offset, or use byte_offset/byte_limit for long lines. Byte windows use redacted UTF-8 offsets and align to whole characters. Do not mix line and byte options. Max 1 MiB file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"},"byte_offset":{"type":"integer","minimum":0},"byte_limit":{"type":"integer","minimum":1,"maximum":61440}},"required":["path"]}},
     \\{"name":"glob","description":"Find files using ripgrep glob rules; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
     \\{"name":"grep","description":"Search regex with ripgrep; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
     \\{"name":"skill","description":"Load instructions for an advertised skill by name","input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}
@@ -66,7 +67,9 @@ pub const Context = struct {
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
         try @import("storage.zig").validatePath(path);
-        return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024));
+        // Zig 0.17 rejects when the limit is reached; one probe byte makes
+        // the advertised 1 MiB maximum inclusive.
+        return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024 + 1));
     }
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
@@ -75,6 +78,8 @@ pub const Context = struct {
 
     pub fn runResult(c: Context, name: []const u8, args: j.Value) !Result {
         try c.checkToolAllowed(name);
+        // Reads redact the complete file before formatting or slicing.
+        if (std.mem.eql(u8, name, "read")) return .{ .text = try c.readTool(args) };
         // Commands redact before applying their output cap.
         if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep"))
             return c.runCommandTool(name, args);
@@ -109,24 +114,6 @@ pub const Context = struct {
             try c.dir.writeFile(c.io, .{ .sub_path = path, .data = content });
             return "ok";
         }
-        if (std.mem.eql(u8, name, "read")) {
-            const text = try c.readFile(try j.str(args, "path"));
-            const offset = try j.number(args, "offset", 0);
-            const count = try j.number(args, "limit", 200);
-            var out: Io.Writer.Allocating = .init(c.a);
-            var lines = std.mem.splitScalar(u8, text, '\n');
-            var n: usize = 0;
-            while (lines.next()) |line| : (n += 1) {
-                if (line.len == 0 and lines.peek() == null) break;
-                if (n < offset) continue;
-                if (n - offset >= count or out.writer.end + line.len + 32 > limit) {
-                    try out.writer.writeAll("[truncated; use offset]\n");
-                    break;
-                }
-                try out.writer.print("{d}| {s}\n", .{ n + 1, line });
-            }
-            return out.toOwnedSlice();
-        }
         if (std.mem.eql(u8, name, "edit")) {
             const path = try j.str(args, "path");
             const text = try c.readFile(path);
@@ -149,6 +136,43 @@ pub const Context = struct {
             return "ok";
         }
         return error.UnknownTool;
+    }
+
+    fn readTool(c: Context, args: j.Value) ![]const u8 {
+        const path = try j.str(args, "path");
+        const bytes = args.object.contains("byte_offset") or args.object.contains("byte_limit");
+        if (bytes and (args.object.contains("offset") or args.object.contains("limit"))) return error.ConflictingArguments;
+        const offset = try j.number(args, if (bytes) "byte_offset" else "offset", 0);
+        const count = try j.number(args, if (bytes) "byte_limit" else "limit", if (bytes) 4096 else 200);
+        if (bytes and (count == 0 or count > byte_read_limit)) return error.InvalidReadLimit;
+        const text = try c.scrub(try c.readFile(path));
+        if (bytes) {
+            if (!std.unicode.utf8ValidateSlice(text)) return error.NonUtf8Output;
+            if (offset > text.len) return error.InvalidReadOffset;
+            var start = offset;
+            while (start > 0 and start < text.len and text[start] & 0xc0 == 0x80) start -= 1;
+            var end = @min(text.len, start + count);
+            while (end < text.len and text[end] & 0xc0 == 0x80) end += 1;
+            const next = if (end < text.len)
+                try std.fmt.allocPrint(c.a, "[next byte_offset={d}]", .{end})
+            else
+                "[end of file]";
+            return std.fmt.allocPrint(c.a, "[UTF-8 bytes {d}..{d} of {d}; offsets after redaction]\n{s}\n{s}\n", .{ start, end, text.len, text[start..end], next });
+        }
+        const truncated = "[truncated; use offset, or byte_offset/byte_limit for long lines]\n";
+        var out: Io.Writer.Allocating = .init(c.a);
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        var n: usize = 0;
+        while (lines.next()) |line| : (n += 1) {
+            if (line.len == 0 and lines.peek() == null) break;
+            if (n < offset) continue;
+            if (n - offset >= count or out.writer.end + line.len + 32 + truncated.len > limit) {
+                try out.writer.writeAll(truncated);
+                break;
+            }
+            try out.writer.print("{d}| {s}\n", .{ n + 1, line });
+        }
+        return out.toOwnedSlice();
     }
 
     fn runCommandTool(c: Context, name: []const u8, args: j.Value) !Result {
@@ -578,4 +602,77 @@ test "project initialization preserves oversized files and stops before blocked 
     blocked.skills_path = ".omnicode/skills/verify/SKILL.md";
     if (blocked.initProject(false)) |_| return error.TestUnexpectedResult else |_| {}
     try std.testing.expectError(error.FileNotFound, c.readFile("OMNICODE.md"));
+}
+
+test "read byte windows expose long lines and align whole UTF-8 characters" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
+    const text = try c.a.alloc(u8, 72000);
+    @memset(text, 'x');
+    @memcpy(text[70000..][0..12], "TARGET_VALUE");
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "long.json", .data = text });
+    const lines = try c.run("read", try j.parse(c.a, "{\"path\":\"long.json\"}"));
+    try std.testing.expect(std.mem.indexOf(u8, lines, "byte_offset") != null);
+    const window = try c.run("read", try j.parse(c.a, "{\"path\":\"long.json\",\"byte_offset\":70000,\"byte_limit\":12}"));
+    try std.testing.expect(std.mem.indexOf(u8, window, "TARGET_VALUE") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window, "next byte_offset=70012") != null);
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "unicode", .data = "A東🦀Z" });
+    const east = try c.run("read", try j.parse(c.a, "{\"path\":\"unicode\",\"byte_offset\":2,\"byte_limit\":1}"));
+    try std.testing.expect(std.mem.indexOf(u8, east, "bytes 1..4 of 9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, east, "\n東\n") != null);
+    const crab = try c.run("read", try j.parse(c.a, "{\"path\":\"unicode\",\"byte_offset\":4,\"byte_limit\":1}"));
+    try std.testing.expect(std.mem.indexOf(u8, crab, "bytes 4..8 of 9") != null);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(crab));
+    const eof = try c.run("read", try j.parse(c.a, "{\"path\":\"unicode\",\"byte_offset\":9}"));
+    try std.testing.expect(std.mem.indexOf(u8, eof, "bytes 9..9 of 9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, eof, "end of file") != null);
+    const capped = try c.run("read", try j.parse(c.a, "{\"path\":\"long.json\",\"byte_limit\":61440}"));
+    try std.testing.expect(capped.len <= limit);
+}
+
+test "read byte windows redact complete secrets before slicing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("KEY", "secret-left-private");
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir, .secrets = &secrets };
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "input", .data = "aaaasecret-left-privatezzzz" });
+    for ([_][]const u8{ "{\"path\":\"input\",\"byte_offset\":0,\"byte_limit\":9}", "{\"path\":\"input\",\"byte_offset\":6,\"byte_limit\":8}" }) |raw| {
+        const result = try c.run("read", try j.parse(c.a, raw));
+        try std.testing.expect(std.mem.indexOf(u8, result, "secre") == null);
+        try std.testing.expect(std.mem.indexOf(u8, result, "cret") == null);
+        try std.testing.expect(std.mem.indexOf(u8, result, "private") == null);
+    }
+    const full = try c.run("read", try j.parse(c.a, "{\"path\":\"input\",\"byte_limit\":100}"));
+    try std.testing.expect(std.mem.indexOf(u8, full, "[REDACTED:KEY]") != null);
+}
+
+test "read byte windows validate bounds and retain file and output caps" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "input", .data = "value" });
+    for ([_]usize{ 0, 61441 }) |count| {
+        try std.testing.expectError(error.InvalidReadLimit, c.run("read", try j.parse(c.a, try j.encode(c.a, .{ .path = "missing", .byte_limit = count }))));
+    }
+    try std.testing.expectError(error.ConflictingArguments, c.run("read", try j.parse(c.a, "{\"path\":\"input\",\"offset\":0,\"byte_offset\":0}")));
+    try std.testing.expectError(error.InvalidReadOffset, c.run("read", try j.parse(c.a, "{\"path\":\"input\",\"byte_offset\":9223372036854775807}")));
+    try std.testing.expectError(error.ExpectedNaturalNumber, c.run("read", try j.parse(c.a, "{\"path\":\"input\",\"byte_offset\":-1}")));
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "binary", .data = "prefix\xff" });
+    try std.testing.expectError(error.NonUtf8Output, c.run("read", try j.parse(c.a, "{\"path\":\"binary\",\"byte_limit\":1}")));
+    const big = try c.a.alloc(u8, 1024 * 1024 + 1);
+    @memset(big, 'x');
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "too-big", .data = big });
+    try std.testing.expectError(error.StreamTooLong, c.run("read", try j.parse(c.a, "{\"path\":\"too-big\",\"byte_limit\":1}")));
+    for (big, 0..) |*b, index| b.* = if (index % 100 == 0) '\n' else 'x';
+    try tmp.dir.writeFile(c.io, .{ .sub_path = "many-lines", .data = big[0 .. 1024 * 1024] });
+    const lines = try c.run("read", try j.parse(c.a, "{\"path\":\"many-lines\",\"limit\":10000}"));
+    try std.testing.expect(lines.len <= limit);
 }

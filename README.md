@@ -403,7 +403,7 @@ files immediately. Keep skills local and trusted.
 
 | Tool | Behavior |
 |---|---|
-| `read` | Numbered lines; zero-based `offset`, default `limit=200`; marks truncation |
+| `read` | Numbered lines (`offset`, default `limit=200`), or UTF-8 byte windows (`byte_offset`, default `byte_limit=4096`, max 61440); max 1 MiB file |
 | `write` | Create or overwrite a file; create missing parent directories after validating input |
 | `edit` | Exact nonempty string replacement; reject repeated matches unless `all=true` |
 | `glob` | `rg --files --glob`; respects ripgrep glob and ignore rules |
@@ -413,6 +413,13 @@ files immediately. Keep skills local and trusted.
 | `todo` | Read or replace the session checklist (`items: [{task, done}]`); survives compaction and `/save` |
 | `task` | Delegate a sub-task to a depth-1 child agent (`mode: explore\|edit`, `tier: fast\|strong`); returns only its final report |
 | `review` | Run adversarial multi-agent code review (Correctness/Security critic + Anti-Slop/Simplicity critic) on current workspace changes; returns findings and `OVERALL VERDICT: PASS\|FAIL` |
+
+For single-line generated files, use `read` with `byte_offset` and `byte_limit`
+instead of line `offset`/`limit`. Do not mix the two modes. Byte offsets refer to
+the complete redacted UTF-8 view; the tool redacts before slicing, rounds the
+start down and end up to whole characters (up to three extra bytes), and reports
+the actual byte range and the next offset or EOF. Invalid UTF-8 and offsets
+beyond the view are rejected. Byte windows remain below the 64 KiB output cap.
 
 On Linux, SIGINT and SIGTERM cancel active work and clean up its command process
 group before exiting with status 130 or 143. Interactive raw terminal settings

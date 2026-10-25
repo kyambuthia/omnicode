@@ -674,6 +674,26 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
 
+    def test_read_only_byte_windows_inspect_long_single_line_files(self):
+        (self.cwd / "long.json").write_text("x" * 70000 + "TARGET_VALUE" + "x" * 2000)
+        def reply(body):
+            if len(self.requests) == 1:
+                read = next(t for t in body["tools"] if t["name"] == "read")
+                self.assertEqual(read["input_schema"]["properties"]["byte_limit"]["maximum"], 61440)
+                return tools(call("read", {"path": "long.json"}))
+            if len(self.requests) == 2:
+                self.assertIn("byte_offset", body["messages"][-1]["content"][0]["content"])
+                return tools(call("read", {"path": "long.json", "byte_offset": 70000, "byte_limit": 12}))
+            window = body["messages"][-1]["content"][0]
+            self.assertFalse(window["is_error"])
+            self.assertIn("TARGET_VALUE", window["content"])
+            self.assertIn("next byte_offset=70012", window["content"])
+            return text("inspected target")
+        self.reply = reply
+        result = self.run_agent("--read-only", "inspect the long line")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 3)
+
     def test_one_shot_session_checkpoints_completed_rounds_and_resumes(self):
         snapshot = self.cwd / ".omnicode/sessions/build.json"
         def reply(body):
