@@ -217,7 +217,9 @@ passes only with an exact final `VERDICT: PASS` line; turn-limit reports and
 reports containing `VERDICT: FAIL` are treated as failures.
 
 File tools, voice input, secret imports, and private state writes reject NUL bytes
-in paths. Command tools (`bash`, `glob`, `grep`)
+in paths. The tool named `bash` executes commands with POSIX `sh -c`. Invoke `bash -c`
+explicitly when using Bash arrays, `PIPESTATUS`, or other Bash-specific syntax.
+Command tools (`bash`, `glob`, `grep`)
 reject NUL bytes in subprocess arguments before executing. Malformed arguments
 return tool errors instead of truncating a command/path or crashing the session.
 File contents remain length-delimited and may contain NUL bytes.
