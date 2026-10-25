@@ -10,6 +10,7 @@ fixtures or source control. Provider responses did not report dollar costs.
 | Taskledger initial build | 121 | 40 | 17 tests pass; Unicode, monotonic IDs after deletion, malformed-store preservation checked separately |
 | CSV Audit initial build | 32 | 2 | Found a missed malformed-quote case and default discovery running zero tests |
 | CSV Audit follow-up repair | 26 | 2 | 28 tests pass; malformed quotes, BOMs, embedded newlines, duplicates checked separately |
+| Taskledger JSON-list extension | 27 | 2 | 23 tests pass; filtered JSON, Unicode, and missing-store behavior checked separately |
 | Counter repair evaluation 1 | 9 | 0 | Seeded failing tests repaired; independent Unicode/iterator/input-preservation checks pass |
 | Counter repair evaluation 2 | 10 | 1 | Same independent checks pass; one shell syntax failure recovered |
 
@@ -49,8 +50,22 @@ reference checks must also pass.
 
 - Measure the same repair cases across multiple runs before claiming an efficiency gain.
 - Keep independent behavior checks: self-authored tests missed a CSV parsing bug.
-- Make shell capabilities clear: the tool named `bash` executes POSIX `sh -c`;
-  one evaluation attempted Bash-only syntax and recovered after `Bad substitution`.
+- Shell capabilities are now advertised: the tool named `bash` executes POSIX
+  `sh -c`; Bash-specific syntax requires an explicit Bash invocation.
+
+## Recovery and execution follow-up
+
+A paid read-only review flagged output-prefix error classification. Its suggested
+file-read reproducer was invalid because reads add line numbers, but a successful
+`printf 'error: example'` command reproduced the bug. Tool results now carry an
+execution status independently of output text, for both parent and child agents.
+
+Independent failure-summary tests also exposed split UTF-8 and partial secret
+retention at raw byte cutoffs. Complete values are now redacted before shortening
+on UTF-8 boundaries. Finally, a timeout reproduction showed a shell descendant
+writing a file after the reported deadline. Interrupted commands now receive
+process-group cleanup, with regressions for ordinary descendants and leaders
+that ignore SIGTERM. These remain trusted local commands, not a sandbox.
 
 Primary references: [DeepSeek Anthropic API](https://api-docs.deepseek.com/guides/anthropic_api/),
 [Python 3.13 CSV strict parsing](https://docs.python.org/3.13/library/csv.html#csv.Dialect.strict).
