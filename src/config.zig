@@ -98,7 +98,7 @@ const Entry = struct { key: []const u8, val: []const u8 };
 
 fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8) !std.ArrayList(Entry) {
     var list: std.ArrayList(Entry) = .empty;
-    const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes)) catch |err| switch (err) {
+    const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
         error.FileNotFound => return list,
         else => return err,
     };
@@ -523,4 +523,29 @@ test "turn limit settings are bounded and invalid updates preserve live and save
     try fresh.put("OMNICODE_CONFIG", "config.env");
     try loadIntoEnv(a, std.testing.io, tmp.dir, &fresh);
     try std.testing.expectEqualStrings("64", fresh.get("MAX_TURNS").?);
+}
+
+test "config reloads at the exact serialized byte maximum" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_CONFIG", "config.env");
+    const value = try a.alloc(u8, max_file_bytes - header.len - 1 - "MODEL=\"\"\n".len);
+    @memset(value, 'm');
+    try set(a, io, tmp.dir, &env, "MODEL", value);
+    const saved = try tmp.dir.readFileAlloc(io, "config.env", a, .limited(max_file_bytes + 1));
+    try std.testing.expectEqual(max_file_bytes, saved.len);
+    var fresh = std.process.Environ.Map.init(a);
+    try fresh.put("OMNICODE_CONFIG", "config.env");
+    try loadIntoEnv(a, io, tmp.dir, &fresh);
+    try std.testing.expectEqualStrings(value, fresh.get("MODEL").?);
+    try std.testing.expectError(error.InvalidConfigValue, set(a, io, tmp.dir, &env, "MODEL", try std.mem.concat(a, u8, &.{ value, "m" })));
+    try std.testing.expectEqualStrings(saved, try tmp.dir.readFileAlloc(io, "config.env", a, .limited(max_file_bytes + 1)));
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.env", .data = try std.mem.concat(a, u8, &.{ saved, " " }) });
+    try std.testing.expectError(error.StreamTooLong, loadIntoEnv(a, io, tmp.dir, &fresh));
+    try std.testing.expectEqualStrings(value, fresh.get("MODEL").?);
 }

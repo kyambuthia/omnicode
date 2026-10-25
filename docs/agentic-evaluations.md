@@ -177,3 +177,27 @@ calls and zero reported tool errors. Both independent reference stages passed,
 the full earlier history prefix was retained, and the checkpoint remained
 private and complete. Tool-error counts are execution-status observations, not
 a substitute for those independent references.
+
+## Read-only investigation of long lines
+
+A paid read-only task in `catalog-scan` inspected a 77,077-byte single-line JSON
+file using a byte window around offset 69,000. It returned the exact Unicode
+marker and count in 4.7 seconds with four tool calls and no failed tools. The
+final JSON response matched a separate reference, and the tracked project files
+remained unchanged. The named local checkpoint was explicitly requested by the
+CLI caller.
+
+`read` now offers `byte_offset`/`byte_limit` alongside its existing line mode.
+It redacts the complete file before slicing, aligns UTF-8 boundaries, reports
+actual ranges and the next offset, and keeps results below 64 KiB. Unit and
+integration regressions cover long lines, UTF-8 progress, secret fragments at
+window edges, mixed-mode rejection, invalid bounds/encoding, and file/output
+limits. UTF-8 boundaries follow [RFC 3629](https://www.rfc-editor.org/rfc/rfc3629).
+
+The boundary tests exposed Zig 0.17's exclusive `readFileAlloc` limit: a file
+whose size equals the supplied limit is rejected. An exact 1 MiB source file
+could be written but not read; an exact 2 MiB session could be saved but not
+loaded. The latter failure was reproduced by a serialized round-trip unit test
+before the loader fix. Readers now reserve one probe byte, making the documented
+limits inclusive. Exact-limit session/config/vault fixtures pass; one byte over
+is still rejected without replacing prior live state or a saved config/vault.

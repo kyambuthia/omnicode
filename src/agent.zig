@@ -457,7 +457,7 @@ pub const Agent = struct {
         defer scratch.deinit();
         const sa = scratch.allocator();
         const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
-        const text = try self.context.dir.readFileAlloc(self.context.io, path, sa, .limited(max_bytes));
+        const text = try self.context.dir.readFileAlloc(self.context.io, path, sa, .limited(max_bytes + 1));
         var root = try j.parse(sa, text);
         try self.scrubConversation(sa, &root);
         const msgs = j.get(root, "messages") catch return error.InvalidSession;
@@ -1129,4 +1129,30 @@ test "failure summaries preserve UTF-8 and redact before shortening" {
     const summary = agent.history.items[0].content.string;
     try std.testing.expect(std.unicode.utf8ValidateSlice(summary));
     try std.testing.expect(std.mem.indexOf(u8, summary, "priva") == null);
+}
+
+test "sessions round trip at the exact serialized byte maximum" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    const route = try Route.init(&env, "anthropic", "claude-haiku-4-5");
+    var agent = try Agent.init(.{ .a = a, .io = std.testing.io, .dir = tmp.dir }, &env, route);
+    const empty = [_]Message{.{ .role = "user", .content = .{ .string = "" } }};
+    const overhead = (try j.encode(a, .{ .messages = empty, .todo = "" })).len;
+    const text = try a.alloc(u8, Agent.max_bytes - overhead);
+    @memset(text, 'x');
+    try agent.history.append(a, .{ .role = "user", .content = .{ .string = text } });
+    try agent.saveSession("maximum");
+    const saved = try tmp.dir.readFileAlloc(std.testing.io, ".omnicode/sessions/maximum.json", a, .limited(Agent.max_bytes + 1));
+    try std.testing.expectEqual(Agent.max_bytes, saved.len);
+    agent.history.clearRetainingCapacity();
+    try agent.loadSession("maximum");
+    try std.testing.expectEqual(1, agent.history.items.len);
+    try std.testing.expectEqualStrings(text, agent.history.items[0].content.string);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = ".omnicode/sessions/maximum.json", .data = try std.mem.concat(a, u8, &.{ saved, " " }) });
+    try std.testing.expectError(error.StreamTooLong, agent.loadSession("maximum"));
+    try std.testing.expectEqualStrings(text, agent.history.items[0].content.string);
 }

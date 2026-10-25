@@ -81,7 +81,7 @@ pub const Secrets = struct {
 
     pub fn load(self: *Secrets, a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *const std.process.Environ.Map) !void {
         const path = try secretsPath(a, env);
-        const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes)) catch |err| switch (err) {
+        const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
         };
@@ -297,7 +297,7 @@ pub const Secrets = struct {
             const file_path = std.mem.trim(u8, parts.rest(), " \t");
             if (file_path.len == 0) return error.InvalidSecretsCommand;
             try @import("storage.zig").validatePath(file_path);
-            const text = try dir.readFileAlloc(io, file_path, a, .limited(max_file_bytes));
+            const text = try dir.readFileAlloc(io, file_path, a, .limited(max_file_bytes + 1));
             var next = self.*;
             const count = try next.parseLines(text);
             const message = try std.fmt.allocPrint(a, "Loaded {d} secret(s) from {s} (values hidden).", .{ count, file_path });
@@ -499,4 +499,35 @@ test "full vault of maximally escaped values can be saved and reloaded" {
     try loaded.load(a, io, tmp.dir, &env);
     try std.testing.expectEqual(max_secrets, loaded.count);
     for (0..max_secrets) |i| try std.testing.expectEqualStrings(&value, loaded.valAt(i));
+}
+
+test "vault loads and imports accept the byte maximum and reject one extra byte" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_SECRETS", "input.env");
+    const data = try a.alloc(u8, max_file_bytes + 1);
+    @memset(data, 'x');
+    const prefix = "IMPORT_TOKEN=fixture-value\n#";
+    @memcpy(data[0..prefix.len], prefix);
+    try tmp.dir.writeFile(io, .{ .sub_path = "input.env", .data = data[0..max_file_bytes] });
+    var loaded: Secrets = .{};
+    try loaded.load(a, io, tmp.dir, &env);
+    try std.testing.expectEqualStrings("fixture-value", loaded.valAt(0));
+    try env.put("OMNICODE_SECRETS", "vault.env");
+    var imported: Secrets = .{};
+    _ = try imported.execute(a, io, tmp.dir, &env, "load input.env");
+    try std.testing.expectEqualStrings("fixture-value", imported.valAt(0));
+    const saved = try tmp.dir.readFileAlloc(io, "vault.env", a, .limited(max_file_bytes));
+    try tmp.dir.writeFile(io, .{ .sub_path = "input.env", .data = data });
+    try std.testing.expectError(error.StreamTooLong, imported.execute(a, io, tmp.dir, &env, "load input.env"));
+    try std.testing.expectEqualStrings("fixture-value", imported.valAt(0));
+    try std.testing.expectEqualStrings(saved, try tmp.dir.readFileAlloc(io, "vault.env", a, .limited(max_file_bytes)));
+    try env.put("OMNICODE_SECRETS", "input.env");
+    try std.testing.expectError(error.StreamTooLong, loaded.load(a, io, tmp.dir, &env));
+    try std.testing.expectEqualStrings("fixture-value", loaded.valAt(0));
 }
