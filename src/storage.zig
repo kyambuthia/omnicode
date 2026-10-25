@@ -5,6 +5,15 @@ pub fn validatePath(path: []const u8) !void {
     if (std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPath;
 }
 
+/// Reject non-regular filesystem entries before a potentially blocking open.
+/// This metadata precheck does not protect against concurrent path replacement.
+pub fn readRegular(io: std.Io, dir: std.Io.Dir, path: []const u8, a: std.mem.Allocator, limit: std.Io.Limit) ![]const u8 {
+    try validatePath(path);
+    const metadata = try dir.statFile(io, path, .{});
+    if (metadata.kind != .file) return error.NotRegularFile;
+    return dir.readFileAlloc(io, path, a, limit);
+}
+
 /// Publish complete contents only if the destination is still absent.
 /// Returns false when any entry (including a dangling symlink) already exists.
 pub fn createNew(io: std.Io, dir: std.Io.Dir, path: []const u8, data: []const u8) !bool {
@@ -75,4 +84,18 @@ test "new files are published completely without replacing existing entries" {
     var iterator = tmp.dir.iterate();
     try std.testing.expectEqualStrings("new", (try iterator.next(io)).?.name);
     try std.testing.expect(try iterator.next(io) == null);
+}
+
+test "regular reads preserve limits and reject directories and NUL paths" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "file", .data = "text" });
+    const text = try readRegular(io, tmp.dir, "file", a, .limited(5));
+    defer a.free(text);
+    try std.testing.expectEqualStrings("text", text);
+    try std.testing.expectError(error.StreamTooLong, readRegular(io, tmp.dir, "file", a, .limited(4)));
+    try std.testing.expectError(error.NotRegularFile, readRegular(io, tmp.dir, ".", a, .limited(16)));
+    try std.testing.expectError(error.InvalidPath, readRegular(io, tmp.dir, "file\x00suffix", a, .limited(16)));
 }

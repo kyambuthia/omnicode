@@ -360,6 +360,7 @@ pub const Ui = struct {
             error.ModelUnavailable => "No eligible model in the live catalog. Check model overrides and MODELS_URL.",
             error.InvalidCatalog => "Invalid model catalog; inference was blocked.",
             error.FreeRequiresOpenRouter => "--free requires OpenRouter.",
+            error.NotRegularFile => "Choose a regular file. Pipes, devices, sockets, and directories cannot be read as project files.",
             error.InvalidPath => "File paths cannot contain NUL bytes. Remove the embedded NUL and retry.",
             error.Timeout => "The operation timed out. Check connectivity or narrow the task.",
             error.HistoryLimit => "Conversation size limit reached. Use /compact or start a smaller task.",

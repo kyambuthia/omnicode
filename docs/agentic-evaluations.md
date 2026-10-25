@@ -310,3 +310,18 @@ manifest larger than 64 KiB was not detected. Detection now uses pinned Zig
 behavior, and propagates cancellation. The focused integration fixture combines
 a FIFO marker, a directory marker, a large package manifest, and then a regular
 file symlink, without making any API request.
+
+The same static FIFO also blocked a pre-fix read-only `read` call. Shared regular
+file prechecks now cover source reads/edits, skill reads, and project-instruction
+loading. They reject pipes/devices/sockets/directories before opening, preserve
+regular-file symlinks, and retain each caller's size limit. Skill discovery also
+propagates cancellation rather than skipping it as an unreadable skill. This is
+a metadata precheck, not protection against concurrent replacement.
+
+A paid read-only probe using the updated debug CLI attempted the FIFO and then
+read the project's README successfully in 4.6 seconds (two tools, one expected
+file-type error). The final report identified the rejected path and the normal
+file contents. The tracked lab project remained clean; its explicitly requested
+named local checkpoint was retained. Offline regressions cover direct and
+symlinked FIFOs, directory rejection, recovery through a regular-file symlink,
+and special project instructions failing before any API request.

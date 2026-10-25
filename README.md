@@ -434,6 +434,11 @@ start down and end up to whole characters (up to three extra bytes), and reports
 the actual byte range and the next offset or EOF. Invalid UTF-8 and offsets
 beyond the view are rejected. Byte windows remain below the 64 KiB output cap.
 
+Reads, edits, skill loading, and project-instruction loading reject non-regular
+entries before opening them, including pipes, devices, sockets, and directories.
+Symlinks to regular files remain supported. This metadata precheck does not
+protect against concurrent path replacement.
+
 On Linux, SIGINT and SIGTERM cancel active work and clean up its command process
 group before exiting with status 130 or 143. Interactive raw terminal settings
 are restored during cancellation.

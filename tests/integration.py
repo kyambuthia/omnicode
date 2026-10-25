@@ -1928,6 +1928,38 @@ class Integration(unittest.TestCase):
                 self.assertEqual(self.requests, [])
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_read_only_tools_reject_special_files_and_continue(self):
+        os.mkfifo(self.cwd / "pipe")
+        (self.cwd / "pipe-link").symlink_to("pipe")
+        (self.cwd / "regular").write_text("inspectable")
+        (self.cwd / "regular-link").symlink_to("regular")
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("read", {"path": "pipe"}, "pipe"),
+                             call("read", {"path": "pipe-link", "byte_limit": 4}, "link"),
+                             call("read", {"path": "."}, "directory"))
+            if len(self.requests) == 2:
+                for result in body["messages"][-1]["content"]:
+                    self.assertTrue(result["is_error"])
+                    self.assertIn("NotRegularFile", result["content"])
+                    self.assertIn("regular file", result["content"])
+                return tools(call("read", {"path": "regular-link"}, "regular"))
+            self.assertIn("inspectable", body["messages"][-1]["content"][0]["content"])
+            return text("continued after special-file errors")
+        self.reply = reply
+        result = self.run_agent("--read-only", "inspect project")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 3)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_special_project_instructions_fail_before_api_requests(self):
+        os.mkfifo(self.cwd / "OMNICODE.md")
+        result = self.run_agent("inspect project")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NotRegularFile", result.stderr)
+        self.assertEqual(self.requests, [])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
     def test_init_detects_large_manifest_without_reading_special_files(self):
         os.mkfifo(self.cwd / "build.zig")
         (self.cwd / "Cargo.toml").mkdir()

@@ -77,10 +77,9 @@ pub const Context = struct {
     env: ?*const std.process.Environ.Map = null,
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
-        try @import("storage.zig").validatePath(path);
         // Zig 0.17 rejects when the limit is reached; one probe byte makes
         // the advertised 1 MiB maximum inclusive.
-        return c.dir.readFileAlloc(c.io, path, c.a, .limited(1024 * 1024 + 1));
+        return @import("storage.zig").readRegular(c.io, c.dir, path, c.a, .limited(1024 * 1024 + 1));
     }
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
@@ -262,7 +261,10 @@ pub const Context = struct {
         var it = dir.iterate();
         while (try it.next(c.io)) |entry| {
             if (entry.kind != .directory or !validName(entry.name)) continue;
-            const text = c.loadSkill(entry.name) catch continue;
+            const text = c.loadSkill(entry.name) catch |err| switch (err) {
+                error.Canceled => return err,
+                else => continue,
+            };
             var description: []const u8 = "Local instructions";
             var lines = std.mem.splitScalar(u8, text, '\n');
             while (lines.next()) |line| {
@@ -281,7 +283,7 @@ pub const Context = struct {
     }
 
     pub fn projectInstructions(c: Context) ![]const u8 {
-        return c.dir.readFileAlloc(c.io, "OMNICODE.md", c.a, .limited(limit)) catch |err| switch (err) {
+        return @import("storage.zig").readRegular(c.io, c.dir, "OMNICODE.md", c.a, .limited(limit)) catch |err| switch (err) {
             error.FileNotFound => "",
             else => return err,
         };
