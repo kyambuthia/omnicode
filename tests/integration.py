@@ -1141,6 +1141,34 @@ class Integration(unittest.TestCase):
         self.assertNotIn("private-provider-body", result.stderr + result.stdout)
         self.assertNotIn("fake-anthropic", result.stderr + result.stdout)
 
+    def test_corrupt_compressed_success_response_is_an_error_without_panic(self):
+        self.response_headers = [("Content-Encoding", "gzip")]
+        self.reply = lambda _: b"corrupt private-response-body fake-anthropic"
+        result = self.run_agent(stdin="inspect\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 1)
+        self.assertIn("InvalidResponseBody", result.stdout)
+        self.assertIn("unreadable response body", result.stdout)
+        self.assertNotIn("panic", result.stderr)
+        self.assertNotIn("private-response-body", result.stdout + result.stderr)
+        self.assertNotIn("fake-anthropic", result.stdout + result.stderr)
+
+    def test_model_server_retry_does_not_require_a_readable_error_body(self):
+        for oversized in (False, True):
+            with self.subTest(oversized=oversized):
+                self.requests.clear()
+                def reply(_):
+                    if len(self.requests) == 1:
+                        self.response_headers = [] if oversized else [("Content-Encoding", "gzip")]
+                        return (503, b"x" * (2 * 1024 * 1024 + 1) if oversized else b"unreadable error")
+                    self.response_headers = []
+                    return text("recovered without error body")
+                self.reply = reply
+                result = self.run_agent("inspect")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(self.requests), 2)
+                self.assertIn("recovered without error body", result.stdout)
+
     def test_model_retries_stop_after_two_attempts_and_preserve_retry_after(self):
         self.reply = lambda _: (500, {})
         result = self.run_agent("inspect")

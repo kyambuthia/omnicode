@@ -92,6 +92,13 @@ fn exchange(io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const 
             seen = true;
         }
     }
+    if (response.head.status != .ok) {
+        // Error bodies are neither parsed nor logged. In particular, an
+        // oversized, corrupt, or stalled body must not hide the status.
+        // Force close so Request.deinit cannot drain a GET error body.
+        req.connection.?.closing = true;
+        return result;
+    }
     const decompress_buffer: []u8 = switch (response.head.content_encoding) {
         .identity => &.{},
         .zstd => try client.allocator.alloc(u8, std.compress.zstd.default_window_len),
@@ -103,7 +110,7 @@ fn exchange(io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const 
     var decompress: std.http.Decompress = undefined;
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
     _ = reader.streamRemaining(writer) catch |err| switch (err) {
-        error.ReadFailed => return response.bodyErr().?,
+        error.ReadFailed => return response.bodyErr() orelse error.InvalidResponseBody,
         else => return err,
     };
     return result;

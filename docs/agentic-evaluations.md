@@ -230,3 +230,26 @@ independent references in 40.09 seconds total (18 tools, one failed tool).
 The checkpoint retained its earlier history prefix and passed completeness and
 private-mode checks. No transient provider failure occurred in that live run;
 retry behavior is supported by the fault-injected offline tests.
+
+A paid read-only review of the retry path identified that error-body reads could
+hide an already-known 503 status. An old-binary comparison reproduced both an
+oversized-body failure and a panic on corrupt gzip data. Non-200 responses now
+return their status and Retry-After decision immediately, closing the connection
+without draining error bodies. For successful responses, a decompression failure
+without a transport-specific error returns `InvalidResponseBody` instead of
+unwrapping null. Regressions cover oversized and corrupt-compressed 503 bodies,
+plus a corrupt-compressed 200 response with a private diagnostic and no retry.
+Malformed response headers can still fail before the status is available.
+
+The review's separate cancellation concern was checked against pinned Zig 0.17:
+`Io.Select.cancelDiscard` explicitly blocks until all owned tasks finish. Its
+429 suggestion was outside this increment's documented 500/503 retry policy.
+Model findings remain hypotheses until checked against code and reproductions.
+
+A further paid named-session extension added `subtract_ranges` to `intervalkit`
+(project commit `30537a2`) in 128.5 seconds, with 28 tools and one compaction.
+The agent's 56 discovered tests passed independently, along with 2,000 seeded
+coverage/input-preservation checks, huge endpoints, and invalid data after
+coverage was already empty. The tracked project remained clean. The persisted
+checklist still showed four unfinished steps despite the completed feature;
+that stale progress state is a concrete follow-up for completion handling.

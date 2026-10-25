@@ -352,6 +352,7 @@ pub const Ui = struct {
             error.ApiRateLimited => "API rate limit reached (HTTP 429). Wait before retrying and check provider limits.",
             error.ApiServerError => "The API returned a server error (HTTP 5xx). Check provider availability before retrying.",
             error.ApiError => "The API rejected the request. Check the HTTP status, endpoint, and model settings.",
+            error.InvalidResponseBody => "The API returned an unreadable response body. Check the endpoint and provider availability.",
             error.InvalidJsonResponse => "The API returned invalid JSON. Check the endpoint and provider availability.",
             error.MissingApiKey => "Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or AN_ABLE_KEY for your selected provider.",
             error.NoFreeModels => "No eligible free tool models in the current catalog; no paid request was sent.",
