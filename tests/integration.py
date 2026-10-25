@@ -1119,6 +1119,61 @@ class Integration(unittest.TestCase):
         self.assertIn("compressed response", result.stdout)
         self.assertEqual(len(self.requests), 1)
 
+    def test_completion_reconciles_pending_checklist_once_and_checkpoints_result(self):
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("todo", {"items": [{"task": "verify result", "done": False}]}))
+            if len(self.requests) == 2:
+                return text("work is complete")
+            if len(self.requests) == 3:
+                reminder = body["messages"][-1]["content"]
+                self.assertIn("reconcile the session checklist", reminder)
+                self.assertIn("Use todo to read the current list", reminder)
+                self.assertIn("Do not claim checks", reminder)
+                return tools(call("todo", {"items": [{"task": "verify result", "done": True}]}))
+            return text("completion reviewed")
+        self.reply = reply
+        result = self.run_agent("--session", "verified", "complete task")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 4)
+        self.assertEqual(result.stdout.count("reviewing completion once"), 1)
+        saved = json.loads((self.cwd / ".omnicode/sessions/verified.json").read_text())
+        self.assertEqual(saved["todo"], "1. [x] verify result\n")
+        self.assertEqual(saved["messages"][-1]["role"], "assistant")
+
+    def test_completion_review_redacts_private_checklist_text(self):
+        secret = "private-checklist-review-token"
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("todo", {"items": [{"task": secret, "done": False}]}))
+            if len(self.requests) == 3:
+                reminder = body["messages"][-1]["content"]
+                self.assertNotIn(secret, reminder)
+                self.assertIn("[REDACTED:TOKEN]", json.dumps(body))
+            return text("blocked")
+        self.reply = reply
+        result = self.run_agent(stdin=f"/secrets set TOKEN {secret}\nattempt task\n/save private\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 3)
+        saved = (self.cwd / ".omnicode/sessions/private.json").read_text()
+        self.assertNotIn(secret, saved)
+        self.assertIn("[REDACTED:TOKEN]", saved)
+
+    def test_completion_review_is_bounded_and_preserves_blocked_steps(self):
+        self.reply = lambda _: tools(call("todo", {"items": [{"task": "blocked work", "done": False}]})) if len(self.requests) == 1 else text("blocked; more input required")
+        result = self.run_agent("--session", "blocked", "attempt task")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 3)
+        self.assertIn("Checklist still has pending steps", result.stdout)
+        saved = json.loads((self.cwd / ".omnicode/sessions/blocked.json").read_text())
+        self.assertEqual(saved["todo"], "1. [ ] blocked work\n")
+        self.requests.clear()
+        self.reply = lambda _: text("current state reported")
+        result = self.run_agent("--read-only", "--session", "blocked", "report current state")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 1)
+        self.assertNotIn("reviewing completion once", result.stdout)
+
     def test_model_server_retries_preserve_requests_and_execute_tools_once(self):
         def reply(body):
             if len(self.requests) <= 2:
@@ -1342,7 +1397,7 @@ class Integration(unittest.TestCase):
         result = self.run_agent(stdin="first step\nsecond step\n/todo\n/context\n/compact focus on checks\n/context\nthird step\n/usage\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1. [ ] verify checks", result.stdout)
-        self.assertIn("Context · 10/128 messages", result.stdout)
+        self.assertIn("Context · 14/128 messages", result.stdout)
         self.assertIn("Context compacted.", result.stdout)
         self.assertIn("Context · 1/128 messages", result.stdout)
         self.assertIn("1 compaction(s)", result.stdout)

@@ -253,3 +253,30 @@ coverage/input-preservation checks, huge endpoints, and invalid data after
 coverage was already empty. The tracked project remained clean. The persisted
 checklist still showed four unfinished steps despite the completed feature;
 that stale progress state is a concrete follow-up for completion handling.
+
+## Checklist completion review
+
+The stale checklist from subtraction motivated a completion check in editable
+parent tasks. When the model tries to finish with pending steps, the agent adds
+one fixed reminder to reconcile observed work using `todo`. It never marks items
+done itself. A later final response with pending steps gets an explicit warning
+and retains them for continuation. The review shares existing request/compaction
+budgets and is not repeated within that user request. Read-only tasks skip it.
+The reminder does not interpolate task text as new user instructions.
+
+Regressions cover updating the checkpoint after reconciliation, bounded review
+with blocked work, read-only resumes, and redaction of private checklist data.
+A unit test distinguishes status markers from similar text inside task names.
+
+A paid intersection extension in `intervalkit` completed in 72.7 seconds with
+32 tool calls and one compaction (project commit `1e52e8e`). The model recovered
+from two malformed checklist calls using the existing schema hint. All 70 tests
+passed independently, as did 2,000 seeded intersection/input-preservation cases,
+huge endpoints, and validation with an empty side. The final `0600` checkpoint
+had every checklist step complete and the tracked project was clean. The model
+updated its checklist before finishing, so this run did not exercise the runtime
+fallback; fault-injected tests cover that path.
+
+Final verification for this increment: all 66 Zig unit tests, all 88 integration
+tests, and all 11 installer tests passed. Native debug and aarch64 Linux builds
+passed, and formatting/whitespace checks were clean.

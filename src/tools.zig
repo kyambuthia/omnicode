@@ -36,6 +36,17 @@ pub const Todo = struct {
         return self.text[0..self.len];
     }
 
+    pub fn pending(self: *const Todo) usize {
+        var count: usize = 0;
+        var lines = std.mem.splitScalar(u8, self.slice(), '\n');
+        while (lines.next()) |line| {
+            var digits: usize = 0;
+            while (digits < line.len and std.ascii.isDigit(line[digits])) : (digits += 1) {}
+            if (digits > 0 and std.mem.startsWith(u8, line[digits..], ". [ ] ")) count += 1;
+        }
+        return count;
+    }
+
     pub fn update(self: *Todo, args: j.Value) ![]const u8 {
         if (args != .object) return error.ExpectedObject;
         const list = args.object.get("items") orelse return if (self.len == 0) "(empty todo list)" else self.slice();
@@ -675,4 +686,13 @@ test "read byte windows validate bounds and retain file and output caps" {
     try tmp.dir.writeFile(c.io, .{ .sub_path = "many-lines", .data = big[0 .. 1024 * 1024] });
     const lines = try c.run("read", try j.parse(c.a, "{\"path\":\"many-lines\",\"limit\":10000}"));
     try std.testing.expect(lines.len <= limit);
+}
+
+test "checklist pending count reads status rather than task text" {
+    var todo: Todo = .{};
+    try std.testing.expectEqual(0, todo.pending());
+    const text = "1. [x] Mention [ ] in completed task\n2. [ ] pending\n12. [ ] also pending\nplain [ ] text\n";
+    @memcpy(todo.text[0..text.len], text);
+    todo.len = text.len;
+    try std.testing.expectEqual(2, todo.pending());
 }

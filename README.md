@@ -421,6 +421,12 @@ files immediately. Keep skills local and trusted.
 | `task` | Delegate a sub-task to a depth-1 child agent (`mode: explore\|edit`, `tier: fast\|strong`); returns only its final report |
 | `review` | Run adversarial multi-agent code review (Correctness/Security critic + Anti-Slop/Simplicity critic) on current workspace changes; returns findings and `OVERALL VERDICT: PASS\|FAIL` |
 
+For editable parent tasks, a final response with pending checklist steps triggers
+one completion review per user request. The model is asked to reconcile only
+observed work, retaining blocked steps. If items remain pending, the CLI reports
+that state and finishes without repeating the review. This uses the normal turn
+and compaction budgets; read-only tasks do not trigger additional review calls.
+
 For single-line generated files, use `read` with `byte_offset` and `byte_limit`
 instead of line `offset`/`limit`. Do not mix the two modes. Byte offsets refer to
 the complete redacted UTF-8 view; the tool redacts before slicing, rounds the
