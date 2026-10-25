@@ -5,6 +5,37 @@ pub const limit = 64 * 1024;
 const byte_read_limit = 60 * 1024;
 pub const Result = struct { text: []const u8, is_error: bool = false };
 
+/// Reject unadvertised fields before a tool can read or mutate project state.
+pub fn validateFields(args: j.Value, allowed: []const []const u8) !void {
+    if (args != .object) return error.ExpectedObject;
+    var fields = args.object.iterator();
+    while (fields.next()) |field| {
+        for (allowed) |key| {
+            if (std.mem.eql(u8, field.key_ptr.*, key)) break;
+        } else return error.UnknownArgument;
+    }
+}
+
+fn validateToolFields(name: []const u8, args: j.Value) !void {
+    const allowed: []const []const u8 = if (std.mem.eql(u8, name, "read"))
+        &.{ "path", "offset", "limit", "byte_offset", "byte_limit" }
+    else if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep"))
+        &.{ "pat", "path" }
+    else if (std.mem.eql(u8, name, "skill"))
+        &.{"name"}
+    else if (std.mem.eql(u8, name, "write"))
+        &.{ "path", "content" }
+    else if (std.mem.eql(u8, name, "edit"))
+        &.{ "path", "old", "new", "all" }
+    else if (std.mem.eql(u8, name, "bash"))
+        &.{ "cmd", "command", "timeout_ms" }
+    else if (std.mem.eql(u8, name, "todo"))
+        &.{"items"}
+    else
+        return error.UnknownTool;
+    try validateFields(args, allowed);
+}
+
 const explore_tools =
     \\{"name":"read","description":"Read numbered lines with zero-based offset, or use byte_offset/byte_limit for long lines. Byte windows use redacted UTF-8 offsets and align to whole characters. Do not mix line and byte options. Max 1 MiB file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"},"byte_offset":{"type":"integer","minimum":0},"byte_limit":{"type":"integer","minimum":1,"maximum":61440}},"required":["path"]}},
     \\{"name":"glob","description":"Find files using ripgrep glob rules; respects ignore files","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
@@ -54,6 +85,7 @@ pub const Todo = struct {
         var next: [4096]u8 = undefined;
         var w = Io.Writer.fixed(&next);
         for (list.array.items, 0..) |item, idx| {
+            try validateFields(item, &.{ "task", "done" });
             const task = try j.str(item, "task");
             if (task.len == 0 or std.mem.indexOfScalar(u8, task, '\n') != null) return error.InvalidTodoItem;
             const done_val = try j.get(item, "done");
@@ -88,6 +120,7 @@ pub const Context = struct {
 
     pub fn runResult(c: Context, name: []const u8, args: j.Value) !Result {
         try c.checkToolAllowed(name);
+        try validateToolFields(name, args);
         // Reads redact the complete file before formatting or slicing.
         if (std.mem.eql(u8, name, "read")) return .{ .text = try c.readTool(args) };
         // Commands redact before applying their output cap.
@@ -395,6 +428,47 @@ pub fn validName(name: []const u8) bool {
     return true;
 }
 
+test "unknown tool fields are rejected before a command runs" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const c: Context = .{ .a = a, .io = std.testing.io, .dir = tmp.dir };
+    const args = try j.parse(a, "{\"cmd\":\"touch marker\",\"unexpected\":true}");
+    try std.testing.expectError(error.UnknownArgument, c.run("bash", args));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(std.testing.io, "marker", .{}));
+    try std.testing.expectError(error.ExpectedObject, c.run("read", .null));
+
+    var todo: Todo = .{};
+    const malformed = try j.parse(a, "{\"items\":[{\"task\":\"valid\",\"done\":true},{\"task\":\"invalid\",\"done\":false,\"unexpected\":1}]}");
+    try std.testing.expectError(error.UnknownArgument, todo.update(malformed));
+    try std.testing.expectEqual(@as(usize, 0), todo.len);
+}
+
+test "fuzz tool input validation and checklist updates" {
+    try std.testing.fuzz({}, fuzzToolInputs, .{ .corpus = &.{
+        "\x0c\x00\x00\x00{\"items\":[]}",
+        "\x0c\x00\x00\x00{\"path\":\"x\"}",
+    } });
+}
+
+fn fuzzToolInputs(_: void, smith: *std.testing.Smith) !void {
+    var bytes: [512]u8 = undefined;
+    const len = smith.slice(&bytes);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const args = j.parse(a, bytes[0..len]) catch return;
+    _ = validateToolFields("read", args) catch {};
+    var todo: Todo = .{};
+    _ = todo.update(args) catch {
+        try std.testing.expectEqual(@as(usize, 0), todo.len);
+        return;
+    };
+    try std.testing.expect(todo.len <= todo.text.len);
+}
+
 test "file tools modify real files and reject ambiguous or invalid edits" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -584,7 +658,13 @@ test "NUL in tool paths and command arguments is rejected before side effects" {
     const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
     try tmp.dir.writeFile(c.io, .{ .sub_path = "file", .data = "original" });
     for ([_][]const u8{ "read", "write", "edit" }) |tool| {
-        const args = try j.parse(c.a, try j.encode(c.a, .{ .path = "file\x00suffix", .content = "overwrite", .old = "original", .new = "changed" }));
+        const raw = if (std.mem.eql(u8, tool, "read"))
+            try j.encode(c.a, .{ .path = "file\x00suffix" })
+        else if (std.mem.eql(u8, tool, "write"))
+            try j.encode(c.a, .{ .path = "file\x00suffix", .content = "overwrite" })
+        else
+            try j.encode(c.a, .{ .path = "file\x00suffix", .old = "original", .new = "changed" });
+        const args = try j.parse(c.a, raw);
         try std.testing.expectError(error.InvalidPath, c.run(tool, args));
         try std.testing.expectEqualStrings("original", try c.readFile("file"));
     }

@@ -8,7 +8,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Breaking changes
 
-None recorded.
+- Tool calls now reject unrecognized input fields instead of silently ignoring
+  them. Invalid calls return the expected tool input schema for recovery.
 
 ### Added
 

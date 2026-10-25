@@ -571,8 +571,14 @@ pub const Agent = struct {
     fn runTool(self: *Agent, name: []const u8, input: j.Value, ui: Ui, usage: *Usage) !tools.Result {
         if (self.tool_budget) |budget| try budget.take();
         try self.context.checkToolAllowed(name);
-        if (std.mem.eql(u8, name, "task")) return .{ .text = try self.runTask(input, ui, usage) };
-        if (std.mem.eql(u8, name, "review")) return .{ .text = try self.runReview(input, ui, usage) };
+        if (std.mem.eql(u8, name, "task")) {
+            try tools.validateFields(input, &.{ "prompt", "mode", "tier" });
+            return .{ .text = try self.runTask(input, ui, usage) };
+        }
+        if (std.mem.eql(u8, name, "review")) {
+            try tools.validateFields(input, &.{"focus"});
+            return .{ .text = try self.runReview(input, ui, usage) };
+        }
         return ui.work("Running tool...", tools.Context.runResult, .{ self.context, name, input });
     }
 
@@ -782,7 +788,8 @@ fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
 
 fn formatToolCallError(a: std.mem.Allocator, err: anyerror, name: []const u8, input: j.Value) ![]const u8 {
     if (err == error.MissingField or err == error.ExpectedString or err == error.ExpectedObject or
-        err == error.ExpectedBoolean or err == error.ExpectedNaturalNumber or err == error.ConflictingArguments)
+        err == error.ExpectedBoolean or err == error.ExpectedNaturalNumber or err == error.ConflictingArguments or
+        err == error.UnknownArgument)
     {
         const definitions = try j.parse(a, tools.schema);
         for (definitions.array.items) |definition| {

@@ -58,3 +58,47 @@ test "string aliases validate both spellings and reject conflicts" {
     }
     try std.testing.expectError(error.ConflictingArguments, aliasedString(try parse(a, "{\"cmd\":\"one\",\"command\":\"two\"}"), "cmd", "command"));
 }
+
+test "generated JSON values retain strings, numbers, and canonical encoding" {
+    for (0..256) |index| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var seed: u64 = @as(u64, index) + 1;
+        var bytes: [48]u8 = undefined;
+        const input = bytes[0 .. index % (bytes.len + 1)];
+        for (input) |*byte| {
+            seed = seed *% 6364136223846793005 +% 1;
+            byte.* = @intCast(seed >> 57);
+        }
+        const signed: i64 = @bitCast(seed);
+        const encoded = try encode(a, .{ .text = input, .number = signed, .enabled = index % 2 == 0 });
+        const parsed = try parse(a, encoded);
+        try std.testing.expectEqualStrings(input, try str(parsed, "text"));
+        const number_value = try get(parsed, "number");
+        try std.testing.expectEqual(signed, number_value.integer);
+        const enabled = try get(parsed, "enabled");
+        try std.testing.expectEqual(index % 2 == 0, enabled.bool);
+        try std.testing.expectEqualStrings(encoded, try encode(a, try parse(a, try encode(a, parsed))));
+    }
+}
+
+test "fuzz JSON parsing and serialization" {
+    try std.testing.fuzz({}, fuzzJson, .{ .corpus = &.{
+        "\x02\x00\x00\x00{}",
+        "\x02\x00\x00\x00[]",
+        "\x04\x00\x00\x00null",
+        "\x07\x00\x00\x00{\"x\":1}",
+    } });
+}
+
+fn fuzzJson(_: void, smith: *std.testing.Smith) !void {
+    var bytes: [512]u8 = undefined;
+    const len = smith.slice(&bytes);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const parsed = parse(a, bytes[0..len]) catch return;
+    const encoded = try encode(a, parsed);
+    try std.testing.expectEqualStrings(encoded, try encode(a, try parse(a, encoded)));
+}

@@ -419,22 +419,11 @@ class Integration(unittest.TestCase):
                     self.assertEqual(target.read_text(), "# original contents\n")
                     self.assertNotEqual(destination.read_text(), "# original contents\n")
 
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.cwd = Path(self.tmp.name)
-        self.requests = []
-        self.catalog_requests = []
-        self.catalog_status = 200
-        self.catalog = {"data": [model("strong-test-model"), model("fast-test-model"), model("pinned-model"),
-                                 model("openai/gpt-4.1-mini", "0.0000004", "0.0000016"),
-                                 model("unpriced-custom", overrides=[{"prompt": "0.1"}])]}
-        self.reply = lambda _: text()
-        self.response_headers = []
-        outer = self
-
+    @classmethod
+    def setUpClass(cls):
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                outer = self.server.active_test
                 outer.catalog_requests.append((self.path, dict(self.headers)))
                 data = json.dumps(outer.catalog).encode()
                 self.send_response(outer.catalog_status)
@@ -446,6 +435,7 @@ class Integration(unittest.TestCase):
                     pass  # The CLI may cancel an in-flight request.
 
             def do_POST(self):
+                outer = self.server.active_test
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 outer.requests.append((body, {k.lower(): v for k, v in self.headers.items()}))
                 result = outer.reply(body)
@@ -465,12 +455,30 @@ class Integration(unittest.TestCase):
             def log_message(self, *_):
                 pass
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(self.server.server_close)
-        self.addCleanup(thread.join)
-        self.addCleanup(self.server.shutdown)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join()
+        cls.server.server_close()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cwd = Path(self.tmp.name)
+        self.requests = []
+        self.catalog_requests = []
+        self.catalog_status = 200
+        self.catalog = {"data": [model("strong-test-model"), model("fast-test-model"), model("pinned-model"),
+                                 model("openai/gpt-4.1-mini", "0.0000004", "0.0000016"),
+                                 model("unpriced-custom", overrides=[{"prompt": "0.1"}])]}
+        self.reply = lambda _: text()
+        self.response_headers = []
+        self.server.active_test = self
+
         self.env = {
             "PATH": os.environ.get("PATH", os.defpath),
             "HOME": self.tmp.name,
@@ -949,7 +957,7 @@ class Integration(unittest.TestCase):
             if len(self.requests) == 2:
                 error = body["messages"][-1]["content"][0]
                 self.assertTrue(error["is_error"])
-                self.assertIn("MissingField", error["content"])
+                self.assertIn("UnknownArgument", error["content"])
                 self.assertIn('"required":["cmd"]', error["content"])
                 self.assertNotIn("touch should-not-run", error["content"])
                 return tools(call("bash", {"cmd": "printf recovered"}, "good"))
