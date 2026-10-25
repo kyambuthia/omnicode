@@ -439,7 +439,10 @@ class Integration(unittest.TestCase):
                 self.send_response(outer.catalog_status)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # The CLI may cancel an in-flight request.
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -451,7 +454,10 @@ class Integration(unittest.TestCase):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # The CLI may cancel an in-flight request.
 
             def log_message(self, *_):
                 pass
@@ -805,14 +811,34 @@ class Integration(unittest.TestCase):
             os.close(master)
             os.close(slave)
 
+    def test_sigint_cancels_inflight_api_without_another_request(self):
+        started, release = threading.Event(), threading.Event()
+        def reply(body):
+            started.set()
+            release.wait(5)
+            return text("late response")
+        self.reply = reply
+        proc = subprocess.Popen([str(BINARY), "wait for response"], cwd=self.cwd, env=self.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(started.wait(3))
+            proc.send_signal(signal.SIGINT)
+            proc.communicate(timeout=3)
+            self.assertEqual(proc.returncode, 130)
+            self.assertEqual(len(self.requests), 1)
+        finally:
+            release.set()
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate(timeout=3)
+
     def test_sigterm_cancels_idle_piped_input_without_api_request(self):
         proc = subprocess.Popen([str(BINARY)], cwd=self.cwd, env=self.env,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             self.assertTrue(select.select([proc.stdout], [], [], 3)[0])
             proc.send_signal(signal.SIGTERM)
-            proc.wait(timeout=3)
-            proc.communicate(timeout=3)
+            proc.communicate(timeout=3)  # Also close stdin: completion must not hide the signal.
             self.assertEqual(proc.returncode, 143)
             self.assertEqual(self.requests, [])
         finally:

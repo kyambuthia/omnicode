@@ -22,6 +22,14 @@ fn wait(io: Io) Io.Cancelable!u8 {
 pub fn run(io: Io, comptime function: anytype, args: anytype) anyerror!@typeInfo(@typeInfo(@TypeOf(function)).@"fn".return_type.?).error_union.payload {
     if (@import("builtin").os.tag != .linux) return @call(.auto, function, args);
     pending.store(0, .monotonic);
+    const result = withHandlers(io, function, args);
+    // Sample after task cleanup and handler restoration, including error paths.
+    const sig = pending.load(.monotonic);
+    if (sig != 0) return if (sig == @backingInt(std.posix.SIG.INT)) error.Interrupted else error.Terminated;
+    return result;
+}
+
+fn withHandlers(io: Io, comptime function: anytype, args: anytype) anyerror!@typeInfo(@typeInfo(@TypeOf(function)).@"fn".return_type.?).error_union.payload {
     const action: std.posix.Sigaction = .{
         .handler = .{ .handler = receive },
         .mask = std.posix.sigemptyset(),

@@ -142,3 +142,30 @@ checkpoint retained the full earlier message prefix, ended with an assistant
 response, and had mode `0600`. The evaluator retains separate agent/reference
 logs for both tasks and reports these outcomes in `result.json`. This is one
 successful run, not a model reliability estimate.
+
+## Linux interruption recovery
+
+An independent SIGINT probe reproduced a command descendant writing after the
+CLI had exited. Timeouts already cancelled command groups, but the OS signal
+bypassed the structured cancellation path. The Linux entry point now records
+SIGINT/SIGTERM with a lock-free atomic, observes it outside the handler, cancels
+active work, and waits for cleanup before returning status 130/143. Parent and
+child tool loops and REPL recovery paths propagate `Canceled` instead of
+converting it into a failed tool followed by another model request.
+
+Offline regressions cover both signals during command execution, an interrupted
+child agent, raw terminal restoration, idle piped input, and an in-flight API
+request with no follow-up request. A pending-signal check also handles work
+finishing before the watcher tick; the input-close race passed 12 repeated
+focused runs. The code compiled for both native Linux and aarch64 Linux.
+
+The handler performs no logging, allocation, or process cleanup. Reference:
+[Linux signal safety](https://man7.org/linux/man-pages/man7/signal-safety.7.html),
+plus the pinned Zig 0.17 `std.posix.sigaction`, `std.atomic.Value`, and
+`std.Io.Select` source contracts.
+
+A paid read-only review then highlighted the remaining handler-lifetime window
+after the first completion check. The final signal check now runs after both
+structured cleanup and restoration of the prior handlers, including ordinary
+error paths. Its proposed timing-only reproduction was not treated as proof: a
+zero exit can also belong to a process that finished before signal delivery.
