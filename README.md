@@ -466,7 +466,21 @@ calls per compaction batch by default, with at most three automatic compactions
 per user request. These budgets stop runaway tool loops. Set `MAX_TURNS` to an
 integer from 1 to 256 to change the batch limit; `/setup set MAX_TURNS 64` persists
 it and applies to the next request. `/setup unset MAX_TURNS` restores the default.
-Child-agent budgets remain separate and unchanged.
+Child model-call and compaction budgets remain separate.
+
+`MAX_TOOL_CALLS` limits attempted model tool calls across an entire user request,
+including failed calls, delegation/review calls, and child-agent tools. The
+default is 256; accepted values are 1–4096. For a small investigation, run
+`MAX_TOOL_CALLS=5 omnicode --read-only 'inspect this change'`, or persist a value
+with `/setup set MAX_TOOL_CALLS 512`. The budget resets for each new user request
+and also applies to `/review`. Completion totals include child tools.
+
+When a batch exceeds the remaining budget, earlier calls in that batch may have
+completed; later calls receive `ToolLimit` results without executing. The agent
+records the complete batch and checkpoints named tasks before stopping, without
+another model request. Inspect the completed effects before continuing. Exact
+budget use can still finish normally; pending checklists do not trigger an
+extra completion review when no tool budget remains.
 
 `TurnLimit` means the model-call budget was exhausted, rather than that the
 conversation is full. In the REPL, completed work is retained in a summary when

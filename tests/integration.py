@@ -1292,6 +1292,121 @@ class Integration(unittest.TestCase):
         self.assertIn("<summary>", self.requests[-1][0]["messages"][0]["content"])
         self.assertIn("- tool write: kept.txt", self.requests[-1][0]["messages"][0]["content"])
 
+    def test_tool_budget_stops_batches_checkpoints_and_resumes(self):
+        self.env["MAX_TOOL_CALLS"] = "2"
+        self.reply = lambda body: tools(*(call("write", {"path": name, "content": name}, name) for name in ("first", "second", "denied")))
+        result = self.run_agent("--session", "limited", "build task")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ToolLimit", result.stdout + result.stderr)
+        self.assertEqual(len(self.requests), 1)
+        self.assertIn("budget remaining at task start: 2", self.requests[0][0]["system"])
+        self.assertTrue((self.cwd / "first").exists())
+        self.assertTrue((self.cwd / "second").exists())
+        self.assertFalse((self.cwd / "denied").exists())
+        path = self.cwd / ".omnicode/sessions/limited.json"
+        saved = json.loads(path.read_text())
+        outcomes = saved["messages"][-1]["content"]
+        self.assertEqual([r["is_error"] for r in outcomes], [False, False, True])
+        self.assertIn("ToolLimit", outcomes[-1]["content"])
+        self.reply = lambda _: text("resumed completed work")
+        result = self.run_agent("--session", "limited", "continue")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][0]["messages"][:len(saved["messages"])], saved["messages"])
+
+    def test_tool_budget_is_shared_with_delegated_work(self):
+        self.env["MAX_TOOL_CALLS"] = "3"
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("task", {"prompt": "write fixtures", "mode": "edit"}, "child"))
+            if len(self.requests) == 2:
+                self.assertIn("budget remaining at task start: 2", body["system"])
+                return tools({"type": "text", "text": "Preparing to create fixtures"},
+                             call("write", {"path": "child-first", "content": "ok"}, "first"),
+                             call("write", {"path": "child-second", "content": "ok"}, "second"))
+            if len(self.requests) == 3:
+                return tools(call("write", {"path": "child-denied", "content": "bad"}, "denied"))
+            self.fail("No API request is allowed after tool-budget exhaustion")
+        self.reply = reply
+        result = self.run_agent("--session", "delegated", "implement task")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ToolLimit", result.stdout + result.stderr)
+        self.assertEqual(len(self.requests), 3)
+        self.assertTrue((self.cwd / "child-first").exists())
+        self.assertTrue((self.cwd / "child-second").exists())
+        self.assertFalse((self.cwd / "child-denied").exists())
+        saved = json.loads((self.cwd / ".omnicode/sessions/delegated.json").read_text())
+        self.assertIn("subagent reached tool budget", saved["messages"][-1]["content"][0]["content"])
+        self.assertTrue(saved["messages"][-1]["content"][0]["is_error"])
+        self.assertIn("child-first", saved["messages"][-1]["content"][0]["content"])
+
+    def test_exact_shared_tool_budget_can_finish_and_reports_child_calls(self):
+        self.env["MAX_TOOL_CALLS"] = "2"
+        (self.cwd / "file").write_text("fixture")
+        def reply(_):
+            if len(self.requests) == 1:
+                return tools(call("task", {"prompt": "inspect file", "mode": "explore"}, "child"))
+            if len(self.requests) == 2:
+                return tools(call("read", {"path": "file"}, "read"))
+            if len(self.requests) == 3:
+                return text("child inspected fixture")
+            return text("inspection complete")
+        self.reply = reply
+        result = self.run_agent("inspect fixture")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 4)
+        self.assertIn("2 tool calls", result.stdout)
+        self.assertNotIn("ToolLimit", result.stdout + result.stderr)
+
+    def test_review_tool_budget_skips_second_critic_after_exhaustion(self):
+        self.env["MAX_TOOL_CALLS"] = "1"
+        (self.cwd / "file").write_text("fixture")
+        self.reply = lambda _: tools(call("read", {"path": "file"}, "first"), call("read", {"path": "file"}, "denied"))
+        result = self.run_agent(stdin="/review inspect fixture\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ToolLimit", result.stdout)
+        self.assertEqual(len(self.requests), 1)
+        self.assertIn("Correctness & Security Critic", self.requests[0][0]["system"])
+        self.assertNotIn("OVERALL VERDICT: PASS", result.stdout)
+
+    def test_exact_tool_budget_resets_each_request_and_skips_futile_checklist_review(self):
+        self.env["MAX_TOOL_CALLS"] = "1"
+        self.reply = lambda body: tools(call("todo", {"items": [{"task": "blocked", "done": False}]})) if len(body["messages"]) in (1, 5) else text("needs more work")
+        result = self.run_agent(stdin="first request\nsecond request\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 4)
+        self.assertNotIn("ToolLimit", result.stdout + result.stderr)
+        self.assertNotIn("reviewing completion once", result.stdout)
+        self.assertEqual(result.stdout.count("Checklist still has pending steps"), 2)
+
+    def test_tool_limit_changes_apply_to_next_repl_request_without_stacking_system_notes(self):
+        def reply(body):
+            count = len(body["messages"])
+            if count == 1:
+                return tools(call("write", {"path": "first", "content": "ok"}, "first"))
+            if count == 5:
+                return tools(call("write", {"path": "second", "content": "ok"}, "second"),
+                             call("write", {"path": "third", "content": "ok"}, "third"))
+            return text("completed")
+        self.reply = reply
+        result = self.run_agent(stdin="/setup set MAX_TOOL_CALLS 1\nfirst request\n/setup set MAX_TOOL_CALLS 2\nsecond request\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 4)
+        for body, _ in self.requests:
+            self.assertEqual(body["system"].count("Shared model-tool budget remaining"), 1)
+        self.assertIn("task start: 1", self.requests[0][0]["system"])
+        self.assertIn("task start: 2", self.requests[2][0]["system"])
+        self.assertNotIn("ToolLimit", result.stdout + result.stderr)
+        self.assertTrue(all((self.cwd / name).exists() for name in ("first", "second", "third")))
+
+    def test_invalid_tool_limits_fail_before_api_requests(self):
+        for value in ("0", "4097", "-1", "invalid"):
+            with self.subTest(value=value):
+                self.env["MAX_TOOL_CALLS"] = value
+                result = self.run_agent("inspect")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("InvalidToolLimit", result.stdout + result.stderr)
+                self.assertEqual(self.requests, [])
+
     def test_turn_limit_can_resume_and_budget_changes_apply_next_request(self):
         calls = 0
         def reply(body):

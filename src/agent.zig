@@ -9,6 +9,21 @@ const Ui = @import("ui.zig").Ui;
 pub const Message = struct { role: []const u8, content: j.Value };
 const ChildReport = struct { text: []const u8, passed: bool };
 
+const ToolBudget = struct {
+    remaining: usize,
+    calls: usize = 0,
+    denied: bool = false,
+
+    fn take(self: *ToolBudget) !void {
+        if (self.remaining == 0) {
+            self.denied = true;
+            return error.ToolLimit;
+        }
+        self.remaining -= 1;
+        self.calls += 1;
+    }
+};
+
 const summary_prompt = "Summarize the conversation so far: 1) Goal, 2) Key decisions, 3) Files modified (paths and changes), 4) Commands run and their results, 5) Open TODOs. Be concise and factual.";
 const max_tokens_recovery_prompt = "Your previous response hit the output token limit (max_tokens) and was truncated; no tool calls from that response were executed. Continue from where you left off using concise text and smaller, incremental tool calls (e.g. write a compact core file first, then extend it with edit).";
 
@@ -26,6 +41,7 @@ pub const Agent = struct {
     automatic: bool = true,
     subagent: bool = false,
     checkpoint_name: ?[]const u8 = null,
+    tool_budget: ?*ToolBudget = null,
     turn_budget: usize = max_turns,
     compaction_budget: usize = max_compactions,
     last_input_tokens: u64 = 0,
@@ -81,7 +97,14 @@ pub const Agent = struct {
 
     pub fn respond(self: *Agent, prompt: []const u8, ui: Ui) !void {
         const turn_budget = if (self.env.get("MAX_TURNS")) |value| try @import("config.zig").parseMaxTurns(value) else self.turn_budget;
+        var budget: ToolBudget = .{ .remaining = if (self.env.get("MAX_TOOL_CALLS")) |value| try @import("config.zig").parseMaxToolCalls(value) else @import("config.zig").default_max_tool_calls };
+        const previous_budget = self.tool_budget;
+        self.tool_budget = &budget;
+        defer self.tool_budget = previous_budget;
         const a = self.context.a;
+        const previous_system = self.system;
+        self.system = try self.systemWithBudget(a, self.system);
+        defer self.system = previous_system;
         var route = if (self.automatic) self.route.forTask(self.env, prompt) else self.route;
         var metadata = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer metadata.deinit();
@@ -98,7 +121,6 @@ pub const Agent = struct {
         if (ui.status) |status| status.setModel(route.model);
         const out = ui.out;
         const turn_start = Io.Clock.awake.now(self.context.io);
-        var tool_count: usize = 0;
         var usage: Usage = .{};
         defer if (usage.requests > 0) {
             ui.usageSummary(usage, "Turn") catch {};
@@ -178,7 +200,6 @@ pub const Agent = struct {
                     const input = try j.get(block, "input");
                     try ui.toolStart(name, input);
                     const start = Io.Clock.awake.now(self.context.io);
-                    tool_count += 1;
                     const result = self.runTool(name, input, ui, &usage) catch |err| blk: {
                         if (err == error.Canceled) return err;
                         break :blk tools.Result{ .text = try formatToolCallError(a, err, name, input), .is_error = true };
@@ -186,7 +207,7 @@ pub const Agent = struct {
                     // Invalid UTF-8 (e.g. binary output) must not corrupt JSON requests.
                     const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
                     const raw_text = if (valid_utf8) result.text else "error: NonUtf8Output";
-                    const is_err = result.is_error or !valid_utf8;
+                    const is_err = result.is_error or !valid_utf8 or budget.denied;
                     const text = blk_txt: {
                         if (is_err) {
                             const sig = try std.fmt.allocPrint(a, "{s}:{s}", .{ name, try j.encode(sa, input) });
@@ -213,7 +234,7 @@ pub const Agent = struct {
             if (results.items.len == 0) {
                 if (self.context.todo) |todo| {
                     const pending = todo.pending();
-                    if (pending > 0 and !self.context.read_only and !checklist_reviewed) {
+                    if (pending > 0 and budget.remaining > 0 and !self.context.read_only and !checklist_reviewed) {
                         checklist_reviewed = true;
                         try self.history.append(a, .{ .role = "user", .content = .{
                             .string = "Before finishing, reconcile the session checklist with the work actually observed. " ++
@@ -231,11 +252,12 @@ pub const Agent = struct {
                 try self.checkpoint();
                 try out.writeAll("\n  Completed · ");
                 try ui.elapsed(turn_start);
-                try out.print(" · {d} tool {s}\n\n", .{ tool_count, if (tool_count == 1) "call" else "calls" });
+                try out.print(" · {d} tool {s}\n\n", .{ budget.calls, if (budget.calls == 1) "call" else "calls" });
                 return out.flush();
             }
             try self.history.append(a, .{ .role = "user", .content = .{ .array = results.toManaged(a) } });
             try self.checkpoint();
+            if (budget.denied) return error.ToolLimit;
         }
     }
 
@@ -541,7 +563,13 @@ pub const Agent = struct {
         return @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
     }
 
+    fn systemWithBudget(self: *const Agent, a: std.mem.Allocator, system: []const u8) ![]const u8 {
+        const budget = self.tool_budget orelse return a.dupe(u8, system);
+        return std.fmt.allocPrint(a, "{s}\nShared model-tool budget remaining at task start: {d}, including failed calls and delegated tools. Plan within it and report partial work if the task cannot be completed.", .{ system, budget.remaining });
+    }
+
     fn runTool(self: *Agent, name: []const u8, input: j.Value, ui: Ui, usage: *Usage) !tools.Result {
+        if (self.tool_budget) |budget| try budget.take();
         try self.context.checkToolAllowed(name);
         if (std.mem.eql(u8, name, "task")) return .{ .text = try self.runTask(input, ui, usage) };
         if (std.mem.eql(u8, name, "review")) return .{ .text = try self.runReview(input, ui, usage) };
@@ -577,6 +605,13 @@ pub const Agent = struct {
 
     pub fn runReviewFocus(self: *Agent, focus: []const u8, ui: Ui, parent_usage: *Usage) ![]const u8 {
         if (self.subagent) return error.NestedSubagent;
+        var review_budget: ToolBudget = .{ .remaining = 0 };
+        const previous_budget = self.tool_budget;
+        if (previous_budget == null) {
+            review_budget.remaining = if (self.env.get("MAX_TOOL_CALLS")) |value| try @import("config.zig").parseMaxToolCalls(value) else @import("config.zig").default_max_tool_calls;
+            self.tool_budget = &review_budget;
+        }
+        defer self.tool_budget = previous_budget;
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const sa = scratch.allocator();
@@ -603,10 +638,12 @@ pub const Agent = struct {
         const slop_sys = try std.fmt.allocPrint(sa, "You are the adversarial Anti-Slop & Simplicity Critic (read-only). cwd: {s}\nHunt ruthlessly for AI slop: dead code, speculative abstractions, single-use wrappers, comments that merely restate the code, style drift, unnecessary allocations, and missing tests for changed behavior. Cite exact file:line locations. If the code is minimal and idiomatic, state so briefly. End with a final line: VERDICT: PASS or VERDICT: FAIL.{s}", .{ cwd, extra });
         const critic1 = try self.runChild(correctness_sys, review_prompt, true, true, "Critic (correctness)", ui, parent_usage);
         const critic2 = try self.runChild(slop_sys, review_prompt, true, false, "Critic (anti-slop)", ui, parent_usage);
+        if (previous_budget == null and review_budget.denied) return error.ToolLimit;
         return synthesizeReviewVerdict(self.context.a, critic1.text, critic2.text, critic1.passed and critic2.passed);
     }
 
     fn runChild(self: *Agent, system: []const u8, prompt: []const u8, read_only: bool, strong: bool, label: []const u8, ui: Ui, parent_usage: ?*Usage) !ChildReport {
+        if (self.tool_budget) |budget| if (budget.denied) return self.finishReport("[subagent reached tool budget]", false);
         var child_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer child_arena.deinit();
         const ca = child_arena.allocator();
@@ -626,11 +663,12 @@ pub const Agent = struct {
             .route = route,
             .automatic = false,
             .subagent = true,
+            .tool_budget = self.tool_budget,
             .turn_budget = 16,
             .compaction_budget = 1,
             .cached_catalog = self.cached_catalog,
             .schemas = try j.parse(ca, if (read_only) tools.explore_schema else tools.edit_schema),
-            .system = try ca.dupe(u8, system),
+            .system = try self.systemWithBudget(ca, system),
         };
         try child.history.append(ca, .{ .role = "user", .content = .{ .string = prompt } });
         var child_ui = ui;
@@ -691,10 +729,13 @@ pub const Agent = struct {
                     const input = try j.get(block, "input");
                     try child_ui.toolStart(name, input);
                     const start = Io.Clock.awake.now(child.context.io);
-                    const result = (if (std.mem.eql(u8, name, "task") or std.mem.eql(u8, name, "review"))
-                        @as(anyerror!tools.Result, error.NestedSubagent)
-                    else
-                        ui.work("Running subagent tool...", tools.Context.runResult, .{ child.context, name, input })) catch |err| blk: {
+                    const result = run: {
+                        if (child.tool_budget) |budget| budget.take() catch |err| break :run @as(anyerror!tools.Result, err);
+                        break :run if (std.mem.eql(u8, name, "task") or std.mem.eql(u8, name, "review"))
+                            @as(anyerror!tools.Result, error.NestedSubagent)
+                        else
+                            ui.work("Running subagent tool...", tools.Context.runResult, .{ child.context, name, input });
+                    } catch |err| blk: {
                         if (err == error.Canceled) return err;
                         break :blk tools.Result{ .text = try formatToolCallError(ca, err, name, input), .is_error = true };
                     };
@@ -713,14 +754,16 @@ pub const Agent = struct {
             if (turn_text.items.len > 0) last_text = turn_text.items;
             if (results.items.len == 0) return self.finishReport(if (last_text.len > 0) last_text else "(subagent completed without text report)", true);
             try child.history.append(ca, .{ .role = "user", .content = .{ .array = results.toManaged(ca) } });
+            if (child.tool_budget) |budget| if (budget.denied) break;
         }
         _ = child.retainCompletedWork(ca) catch false;
-        const fallback = if (last_text.len > 0)
-            try std.fmt.allocPrint(ca, "[subagent reached turn limit; partial report]\n{s}", .{last_text})
-        else if (child.history.items.len > 0 and child.history.items[0].content == .string)
-            try std.fmt.allocPrint(ca, "[subagent reached turn limit; partial report]\n{s}", .{child.history.items[0].content.string})
+        const reason = if (child.tool_budget != null and child.tool_budget.?.denied) "tool budget" else "turn limit";
+        const fallback = if (child.history.items.len > 0 and child.history.items[0].content == .string)
+            try std.fmt.allocPrint(ca, "[subagent reached {s}; partial report]\n{s}", .{ reason, child.history.items[0].content.string })
+        else if (last_text.len > 0)
+            try std.fmt.allocPrint(ca, "[subagent reached {s}; partial report]\n{s}", .{ reason, last_text })
         else
-            "[subagent reached turn limit]";
+            try std.fmt.allocPrint(ca, "[subagent reached {s}]", .{reason});
         return self.finishReport(fallback, false);
     }
 
@@ -761,6 +804,7 @@ fn formatToolError(a: std.mem.Allocator, err: anyerror) ![]const u8 {
         error.MatchNotFound => " (old text not found; use read with offset/limit to inspect exact current lines before calling edit)",
         error.AmbiguousMatch => " (old text matches multiple locations; include more surrounding context lines in old or set all=true)",
         error.StreamTooLong => " (output exceeded size limit; narrow path/glob pattern or filter command output with head/tail/grep)",
+        error.ToolLimit => " (shared MAX_TOOL_CALLS budget reached; no further tool calls were executed)",
         error.Timeout => " (operation exceeded its deadline; narrow scope or use a faster non-interactive command)",
         error.NotRegularFile => " (file tools require a regular file; pipes, devices, sockets, and directories are not supported)",
         error.InvalidPath => " (file paths cannot contain NUL bytes; supply the exact path without embedded NUL)",
@@ -815,7 +859,7 @@ fn recoverMaxTokens(a: std.mem.Allocator, response: j.Value, emit_ui: ?Ui) !?j.V
 
 fn criticPassed(report: []const u8) bool {
     if (std.mem.indexOf(u8, report, "VERDICT: FAIL") != null or
-        std.mem.startsWith(u8, report, "[subagent reached turn limit")) return false;
+        std.mem.startsWith(u8, report, "[subagent reached ")) return false;
     const trimmed = std.mem.trim(u8, report, " \t\r\n");
     return std.mem.eql(u8, trimmed, "VERDICT: PASS") or std.mem.endsWith(u8, trimmed, "\nVERDICT: PASS");
 }
@@ -1068,7 +1112,7 @@ test "review passes require a complete final verdict and retain the overall verd
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ "Quoted VERDICT: PASS is not a conclusion.", "VERDICT: PASS\nMore findings follow", "VERDICT: PASS with caveats", "[subagent reached turn limit; partial report]\nVERDICT: PASS", "VERDICT: FAIL\nVERDICT: PASS" }) |report| {
+    for ([_][]const u8{ "Quoted VERDICT: PASS is not a conclusion.", "VERDICT: PASS\nMore findings follow", "VERDICT: PASS with caveats", "[subagent reached turn limit; partial report]\nVERDICT: PASS", "[subagent reached tool budget; partial report]\nVERDICT: PASS", "VERDICT: FAIL\nVERDICT: PASS" }) |report| {
         try std.testing.expect(!criticPassed(report));
     }
     try std.testing.expect(criticPassed("No findings.\r\nVERDICT: PASS\r\n"));

@@ -366,3 +366,35 @@ checklist reconciliation). A paid installed-binary smoke task read the lab
 README and returned its exact documented test command in 2.6 seconds with one
 tool. Its final checkpoint parsed, ended with an assistant response, and had
 mode `0600`; tracked lab files remained clean.
+
+## Shared model-tool budgets
+
+A paid review previously used six tools despite a five-tool prompt constraint.
+`MAX_TOOL_CALLS` now supplies an enforced per-user-request budget (default 256,
+range 1–4096), shared by parent calls and child tools, including failed calls.
+`/review` gets its own request budget when called directly. The model receives
+the starting allowance; normal completion totals include child calls.
+
+A denied call is recorded as a tool error. Other calls queued after denial do
+not execute; the parent completes the result batch, checkpoints named tasks,
+and returns `ToolLimit` without another model request. A child partial report
+retains deterministic completed-work details and is marked as an error at the
+parent. Denial also prevents launching another review critic. Using exactly the
+allowance can still finish with text; an empty allowance is distinct from an
+attempt beyond it. Checklist reconciliation does not add a futile request when
+no tool allowance remains. Each new user request starts a new budget.
+
+Fault-injected tests cover partial batches and saved-session continuation,
+shared child accounting, exact-limit child completion, direct-review stopping,
+per-request resets, live setting changes, invalid settings, and no accumulation
+of system annotations. Config unit tests verify persistence, range boundaries,
+and preservation of saved/live settings after invalid replacements.
+
+A paid read-only review with `MAX_TOOL_CALLS=5` completed in 50.3 seconds using
+exactly five tools and reported uninspected scope. Several claimed defects were
+checked and rejected: exact-limit text completion is intentional, Context's
+read-only guard is enforced inside `runResult`, and system refresh is called
+outside `respond` in the current REPL flow. The parent batch-stop path was not
+inspected by that reviewer; integration tests verify it directly. Its invalid
+saved-config repair concern is a separate supported follow-up. Reviews remain
+inputs to verification rather than automatic findings.

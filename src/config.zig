@@ -4,10 +4,17 @@ const router = @import("router.zig");
 const status = @import("status.zig");
 
 pub const default_max_turns: usize = 32;
+pub const default_max_tool_calls: usize = 256;
 
 pub fn parseMaxTurns(value: []const u8) !usize {
     const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidTurnLimit;
     if (count == 0 or count > 256) return error.InvalidTurnLimit;
+    return count;
+}
+
+pub fn parseMaxToolCalls(value: []const u8) !usize {
+    const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidToolLimit;
+    if (count == 0 or count > 4096) return error.InvalidToolLimit;
     return count;
 }
 
@@ -33,6 +40,7 @@ pub const allowed_keys = [_][]const u8{
     "MODELS_URL",
     "OMNICODE_STATUS",
     "MAX_TURNS",
+    "MAX_TOOL_CALLS",
 };
 
 pub fn isAllowedKey(key: []const u8) bool {
@@ -129,6 +137,7 @@ fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8) !std
         }
         if (std.mem.indexOfAny(u8, val, "\x00\r\n") != null) return error.InvalidConfigValue;
         if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(val);
+        if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(val);
         // First entry wins, matching the legacy startup loader.
         var duplicate = false;
         for (list.items) |entry| {
@@ -161,6 +170,7 @@ pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.
     if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
         try @import("http.zig").validateEndpoint(value);
     if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(value);
+    if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(value);
     const path = try configPath(a, env);
     var entries = try readEntries(a, io, dir, path);
     var replaced = false;
@@ -236,12 +246,13 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
         \\  FAST_MODEL  = {s}
         \\  VOICE_MODEL = {s}
         \\  MAX_TURNS   = {s} (1-256 per compaction batch; default 32)
+        \\  MAX_TOOL_CALLS = {s} (1-4096 per request, including children; default 256)
         \\Usage:
         \\  /setup <provider> <api_key>     Save API key (e.g. /setup openrouter sk-or-...)
         \\  /setup set <KEY> <VALUE>        Set PROVIDER, MODEL, FAST_MODEL, VOICE_MODEL, etc.
         \\  /setup unset <provider|KEY>     Remove a saved key or setting
         \\
-    , .{ active_provider, active_model, fast_model, voice_model, env.get("MAX_TURNS") orelse "32" });
+    , .{ active_provider, active_model, fast_model, voice_model, env.get("MAX_TURNS") orelse "32", env.get("MAX_TOOL_CALLS") orelse "256" });
     return out.toOwnedSlice();
 }
 
@@ -548,4 +559,30 @@ test "config reloads at the exact serialized byte maximum" {
     try tmp.dir.writeFile(io, .{ .sub_path = "config.env", .data = try std.mem.concat(a, u8, &.{ saved, " " }) });
     try std.testing.expectError(error.StreamTooLong, loadIntoEnv(a, io, tmp.dir, &fresh));
     try std.testing.expectEqualStrings(value, fresh.get("MODEL").?);
+}
+
+test "tool-call limits persist and invalid replacements preserve saved and live settings" {
+    try std.testing.expectEqual(1, try parseMaxToolCalls("1"));
+    try std.testing.expectEqual(4096, try parseMaxToolCalls("4096"));
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_CONFIG", "config.env");
+    try set(a, std.testing.io, tmp.dir, &env, "MAX_TOOL_CALLS", "5");
+    const saved = try tmp.dir.readFileAlloc(std.testing.io, "config.env", a, .limited(max_file_bytes));
+    for ([_][]const u8{ "0", "4097", "-1", "1.5", "invalid", "999999999999999999999999999999" }) |invalid| {
+        try std.testing.expectError(error.InvalidToolLimit, set(a, std.testing.io, tmp.dir, &env, "MAX_TOOL_CALLS", invalid));
+        try std.testing.expectEqualStrings("5", env.get("MAX_TOOL_CALLS").?);
+        try std.testing.expectEqualStrings(saved, try tmp.dir.readFileAlloc(std.testing.io, "config.env", a, .limited(max_file_bytes)));
+    }
+    var fresh = std.process.Environ.Map.init(a);
+    try fresh.put("OMNICODE_CONFIG", "config.env");
+    try loadIntoEnv(a, std.testing.io, tmp.dir, &fresh);
+    try std.testing.expectEqualStrings("5", fresh.get("MAX_TOOL_CALLS").?);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "config.env", .data = "MAX_TOOL_CALLS=0\n" });
+    try std.testing.expectError(error.InvalidToolLimit, loadIntoEnv(a, std.testing.io, tmp.dir, &fresh));
+    try std.testing.expectEqualStrings("5", fresh.get("MAX_TOOL_CALLS").?);
 }
