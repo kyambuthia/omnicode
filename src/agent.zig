@@ -178,8 +178,10 @@ pub const Agent = struct {
                     try ui.toolStart(name, input);
                     const start = Io.Clock.awake.now(self.context.io);
                     tool_count += 1;
-                    const result = self.runTool(name, input, ui, &usage) catch |err|
-                        tools.Result{ .text = try formatToolCallError(a, err, name, input), .is_error = true };
+                    const result = self.runTool(name, input, ui, &usage) catch |err| blk: {
+                        if (err == error.Canceled) return err;
+                        break :blk tools.Result{ .text = try formatToolCallError(a, err, name, input), .is_error = true };
+                    };
                     // Invalid UTF-8 (e.g. binary output) must not corrupt JSON requests.
                     const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
                     const raw_text = if (valid_utf8) result.text else "error: NonUtf8Output";
@@ -674,8 +676,10 @@ pub const Agent = struct {
                     const result = (if (std.mem.eql(u8, name, "task") or std.mem.eql(u8, name, "review"))
                         @as(anyerror!tools.Result, error.NestedSubagent)
                     else
-                        ui.work("Running subagent tool...", tools.Context.runResult, .{ child.context, name, input })) catch |err|
-                        tools.Result{ .text = try formatToolCallError(ca, err, name, input), .is_error = true };
+                        ui.work("Running subagent tool...", tools.Context.runResult, .{ child.context, name, input })) catch |err| blk: {
+                        if (err == error.Canceled) return err;
+                        break :blk tools.Result{ .text = try formatToolCallError(ca, err, name, input), .is_error = true };
+                    };
                     const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
                     const text = if (valid_utf8) result.text else "error: NonUtf8Output";
                     const is_error = result.is_error or !valid_utf8;

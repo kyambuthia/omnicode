@@ -6,6 +6,7 @@ import os
 import struct
 import pty
 import select
+import signal
 import termios
 import time
 from pathlib import Path
@@ -735,6 +736,89 @@ class Integration(unittest.TestCase):
         snapshot = (self.cwd / ".omnicode/sessions/private.json").read_text()
         self.assertNotIn(secret, snapshot)
         self.assertIn("[REDACTED:TOKEN]", snapshot)
+
+    def test_os_interrupt_cleans_up_active_command_descendants(self):
+        command = 'python3 -c \'import time; from pathlib import Path; Path("started").touch(); time.sleep(0.6); Path("late-write").touch()\' & wait'
+        self.reply = lambda body: tools(call("bash", {"cmd": command}))
+        for sig in [signal.SIGINT, signal.SIGTERM]:
+            with self.subTest(signal=sig):
+                (self.cwd / "started").unlink(missing_ok=True)
+                initial_requests = len(self.requests)
+                proc = subprocess.Popen([str(BINARY), "run a command"], cwd=self.cwd, env=self.env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not (self.cwd / "started").exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue((self.cwd / "started").exists())
+                    proc.send_signal(sig)
+                    proc.communicate(timeout=3)
+                    self.assertEqual(proc.returncode, 128 + sig)
+                    self.assertEqual(len(self.requests), initial_requests + 1)
+                    time.sleep(0.7)
+                    self.assertFalse((self.cwd / "late-write").exists())
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.communicate(timeout=3)
+
+    def test_interrupting_subagent_cancels_its_command_without_followup_requests(self):
+        command = 'python3 -c \'import time; from pathlib import Path; Path("started").touch(); time.sleep(0.6); Path("late-write").touch()\''
+        self.reply = lambda body: tools(call("task", {"prompt": "run the command", "mode": "edit"})) if len(self.requests) == 1 else tools(call("bash", {"cmd": command}))
+        proc = subprocess.Popen([str(BINARY), "delegate a command"], cwd=self.cwd, env=self.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 5
+            while not (self.cwd / "started").exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue((self.cwd / "started").exists())
+            proc.send_signal(signal.SIGINT)
+            proc.communicate(timeout=3)
+            self.assertEqual(proc.returncode, 130)
+            self.assertEqual(len(self.requests), 2)
+            time.sleep(0.7)
+            self.assertFalse((self.cwd / "late-write").exists())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate(timeout=3)
+
+    def test_sigterm_restores_raw_terminal_settings(self):
+        master, slave = pty.openpty()
+        original = termios.tcgetattr(slave)
+        proc = subprocess.Popen([str(BINARY)], cwd=self.cwd, env=self.env,
+                                stdin=slave, stdout=slave, stderr=slave)
+        try:
+            deadline = time.monotonic() + 3
+            while termios.tcgetattr(slave)[3] & termios.ICANON and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(termios.tcgetattr(slave)[3] & termios.ICANON)
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=3)
+            self.assertEqual(proc.returncode, 143)
+            self.assertEqual(termios.tcgetattr(slave), original)
+            self.assertEqual(self.requests, [])
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=3)
+            os.close(master)
+            os.close(slave)
+
+    def test_sigterm_cancels_idle_piped_input_without_api_request(self):
+        proc = subprocess.Popen([str(BINARY)], cwd=self.cwd, env=self.env,
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(select.select([proc.stdout], [], [], 3)[0])
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=3)
+            proc.communicate(timeout=3)
+            self.assertEqual(proc.returncode, 143)
+            self.assertEqual(self.requests, [])
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate(timeout=3)
 
     def test_timed_out_shell_cannot_leave_a_child_writing_afterward(self):
         command = 'python3 -c \'import time; from pathlib import Path; time.sleep(0.4); Path("late-write").write_text("orphan")\' & wait'

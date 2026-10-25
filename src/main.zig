@@ -43,7 +43,9 @@ const help =
 ;
 
 pub fn main(init: std.process.Init) void {
-    run(init) catch |err| {
+    @import("interrupt.zig").run(init.io, run, .{init}) catch |err| {
+        if (err == error.Interrupted) std.process.exit(130);
+        if (err == error.Terminated) std.process.exit(143);
         std.debug.print("error: {s}\n", .{@errorName(err)});
         std.process.exit(1);
     };
@@ -162,6 +164,7 @@ fn run(init: std.process.Init) !void {
     }
     if (args.len > first) {
         agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
+            if (err == error.Canceled) return err;
             try ui.errorMessage(err);
             try out.flush();
             return err;
@@ -192,6 +195,7 @@ fn run(init: std.process.Init) !void {
         try ui.statusBar(@tagName(route.provider), model_label, dir, ctx_label);
         try ui.prompt();
         const value = composer.read(init.io, ui, &input.interface) catch |err| {
+            if (err == error.Canceled) return err;
             if (err == error.InputCancelled) continue;
             if (err != error.InputTooLong) return err;
             try ui.errorMessage(err);
@@ -222,6 +226,7 @@ fn run(init: std.process.Init) !void {
             }
             const focus = if (line.len > 9) std.mem.trim(u8, line[9..], " \t") else "";
             agent.compact(ui, null, if (focus.len > 0) focus else null) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 continue;
             };
@@ -240,6 +245,7 @@ fn run(init: std.process.Init) !void {
             const raw = if (line.len > 6) std.mem.trim(u8, line[6..], " \t") else "";
             const name = if (raw.len > 0) raw else "latest";
             agent.saveSession(name) catch |err| {
+                if (err == error.Canceled) return err;
                 try out.print("error: {s}\n", .{@errorName(err)});
                 continue;
             };
@@ -250,6 +256,7 @@ fn run(init: std.process.Init) !void {
             const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
             const name = if (raw.len > 0) raw else "latest";
             agent.loadSession(name) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 continue;
             };
@@ -270,6 +277,7 @@ fn run(init: std.process.Init) !void {
             const rest = if (line.len > prefix_len) std.mem.trim(u8, line[prefix_len..], " \t") else "";
             try redactRetained(&agent, &composer, &secrets, ui);
             const msg = core.config.executeProviders(a, init.io, .cwd(), init.environ_map, route.provider, rest) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 continue;
             };
@@ -295,6 +303,7 @@ fn run(init: std.process.Init) !void {
             const rest = if (line.len > 7) std.mem.trim(u8, line[7..], " \t") else "";
             try redactRetained(&agent, &composer, &secrets, ui);
             const msg = core.config.execute(a, init.io, .cwd(), init.environ_map, rest) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 continue;
             };
@@ -317,6 +326,7 @@ fn run(init: std.process.Init) !void {
             const rest = if (line.len > 9) std.mem.trim(u8, line[9..], " \t") else "";
             try redactRetained(&agent, &composer, &secrets, ui);
             const msg = secrets.execute(a, init.io, .cwd(), init.environ_map, rest) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 continue;
             };
@@ -333,6 +343,7 @@ fn run(init: std.process.Init) !void {
                 continue;
             }
             const msg = agent.context.initProject(std.mem.eql(u8, arg, "force")) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 continue;
             };
@@ -344,6 +355,7 @@ fn run(init: std.process.Init) !void {
             const focus = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
             var rev_usage: core.Usage = .{};
             const report = agent.runReviewFocus(focus, ui, &rev_usage) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 continue;
             };
@@ -469,6 +481,7 @@ fn run(init: std.process.Init) !void {
             continue;
         } else if (std.mem.startsWith(u8, line, "/skill ")) {
             const body = agent.context.loadSkill(line[7..]) catch |err| {
+                if (err == error.Canceled) return err;
                 try out.print("error: {s}\n", .{@errorName(err)});
                 continue;
             };
@@ -486,6 +499,7 @@ fn run(init: std.process.Init) !void {
                         try ui.note(try std.fmt.allocPrint(a, "Voice model: {s}", .{cur}));
                     } else {
                         core.config.set(a, init.io, .cwd(), init.environ_map, "VOICE_MODEL", mval) catch |err| {
+                            if (err == error.Canceled) return err;
                             try ui.errorMessage(err);
                             continue;
                         };
@@ -501,12 +515,14 @@ fn run(init: std.process.Init) !void {
                             continue;
                         };
                         break :blk core.voice.recordAudio(agent.context, init.environ_map, secs) catch |err| {
+                            if (err == error.Canceled) return err;
                             try ui.errorMessage(err);
                             continue;
                         };
                     }
                     if (std.fmt.parseInt(usize, varg, 10)) |secs| {
                         break :blk core.voice.recordAudio(agent.context, init.environ_map, secs) catch |err| {
+                            if (err == error.Canceled) return err;
                             try ui.errorMessage(err);
                             continue;
                         };
@@ -515,6 +531,7 @@ fn run(init: std.process.Init) !void {
                     }
                 };
                 const transcript = core.voice.transcribeFile(agent.context, init.environ_map, route, audio_path, ui) catch |err| {
+                    if (err == error.Canceled) return err;
                     try ui.errorMessage(err);
                     continue;
                 };
@@ -525,6 +542,7 @@ fn run(init: std.process.Init) !void {
                 continue;
             }
             agent.respond(active_prompt, ui) catch |err| {
+                if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 if (agent.retainCompletedWork(arena.allocator()) catch false) {
                     if (agent.resetArena(&arena)) |_| {

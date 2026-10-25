@@ -414,6 +414,10 @@ files immediately. Keep skills local and trusted.
 | `task` | Delegate a sub-task to a depth-1 child agent (`mode: explore\|edit`, `tier: fast\|strong`); returns only its final report |
 | `review` | Run adversarial multi-agent code review (Correctness/Security critic + Anti-Slop/Simplicity critic) on current workspace changes; returns findings and `OVERALL VERDICT: PASS\|FAIL` |
 
+On Linux, SIGINT and SIGTERM cancel active work and clean up its command process
+group before exiting with status 130 or 143. Interactive raw terminal settings
+are restored during cancellation.
+
 Tools execute sequentially with your user's filesystem and process permissions.
 There is **no sandbox or approval prompt**. Run in a checkout you trust; inspect
 changes with Git. Symlinks are followed normally. Files and selected tool output
