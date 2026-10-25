@@ -454,6 +454,21 @@ python3 tests/integration.py -v
 python3 tests/installer.py -v
 ```
 
+For an opt-in paid DeepSeek repair evaluation, run:
+
+```sh
+python3 tests/live_agent.py --allow-paid-api --binary ./zig-out/bin/omnicode
+```
+
+This creates a fresh project under `~/Projects/omnicode-lab/evals`, reproduces a
+seeded failure, asks Omnicode to repair it through the real API, then runs
+independent reference checks for Unicode normalization, blank values, iterators,
+and preservation of inputs. Each project retains the agent transcript, baseline
+and reference logs, and a `result.json` with exit codes, elapsed time, and tool
+counts. It uses the CLI's configured DeepSeek credential and makes paid calls;
+it is separate from the offline test suite. `--model`, `--projects`, and
+`--timeout` customize the run.
+
 The Python standard-library integration suite runs the actual binary in temporary
 workspaces against a loopback mock Messages server, with fake keys and no paid
 API calls. It covers both routes/authentication, every tool, skill discovery and
