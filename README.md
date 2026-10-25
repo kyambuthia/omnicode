@@ -328,12 +328,17 @@ omnicode --session build "Continue from the saved progress"
 
 `--session NAME` resumes `.omnicode/sessions/NAME.json` when it exists and creates
 it when missing. It requires a task prompt; interactive sessions retain `/save`
-and `/resume`. Checkpoints are written before model requests, after complete
-tool rounds, and after the final response. They include the checklist, use atomic
-private writes, and redact registered secrets. Invalid existing sessions fail
+and `/resume`. Checkpoints are written before main task requests (after any
+needed compaction), after complete tool rounds, and after the final response.
+They include the checklist, use atomic private writes, and redact registered
+secrets. Invalid existing sessions fail
 before a model request and are preserved. `--read-only` can be combined with
 `--session`: model tools remain restricted while the explicitly requested local
 checkpoint is written.
+
+Context compaction retries a truncated summary once, increasing its output budget
+from 4,096 to 8,192 tokens. It discards incomplete summaries and preserves the
+previous history if the retry also fails. Both requests count toward usage.
 
 Each checkpoint has the normal 2 MiB/128-message session limits. A failed write
 stops the task and preserves the preceding checkpoint. A crash during a tool

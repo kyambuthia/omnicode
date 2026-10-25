@@ -1036,6 +1036,38 @@ class Integration(unittest.TestCase):
         self.assertIn("TurnLimit", result.stderr)
         self.assertIn("3 compaction(s)", result.stdout)
 
+    def test_compaction_retries_truncated_summary_once(self):
+        attempts = []
+        def reply(body):
+            if "tools" in body:
+                return text("initial answer" if len(self.requests) == 1 else "continued")
+            attempts.append(body)
+            if len(attempts) == 1:
+                return {"stop_reason": "max_tokens", "content": [{"type": "text", "text": "incomplete summary"}]}
+            return text("complete summary")
+        self.reply = reply
+        result = self.run_agent(stdin="original goal\n/compact\ncontinue\n/usage\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([r["max_tokens"] for r in attempts], [4096, 8192])
+        self.assertEqual(attempts[0]["messages"], attempts[1]["messages"])
+        self.assertIn("retrying once", result.stdout)
+        self.assertIn("1 compaction(s)", result.stdout)
+        saved = self.requests[-1][0]["messages"][0]["content"]
+        self.assertIn("original goal", saved)
+        self.assertIn("complete summary", saved)
+        self.assertNotIn("incomplete summary", saved)
+
+    def test_exhausted_summary_retry_preserves_history(self):
+        self.reply = lambda body: text("initial answer") if "tools" in body else {"stop_reason": "max_tokens"}
+        result = self.run_agent(stdin="original goal\n/save before\n/compact\n/save after\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 3)
+        self.assertIn("IncompleteResponse", result.stdout)
+        self.assertNotIn("Context compacted.", result.stdout)
+        sessions = self.cwd / ".omnicode/sessions"
+        self.assertEqual(json.loads((sessions / "before.json").read_text()),
+                         json.loads((sessions / "after.json").read_text()))
+
     def test_compaction_commands_and_tool_pair_preservation(self):
         def reply(body):
             if "tools" not in body:

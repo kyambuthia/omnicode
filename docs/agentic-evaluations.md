@@ -15,6 +15,8 @@ fixtures or source control. Provider responses did not report dollar costs.
 | Counter repair evaluation 2 | 10 | 1 | Same independent checks pass; one shell syntax failure recovered |
 | Journalbox initial build | 36 | 2 | 14 tests pass; separate oversized SQLite ID probe exposed an HTTP 500 |
 | Journalbox boundary repair | 49 | 1 | 17 tests pass; independent raw HTTP probes return 404 for oversized IDs and 413 for a 5,000-digit Content-Length, with empty server stderr |
+| Intervalkit first named session | 12 | 0 | 15 tests pass; 300 independent randomized merge checks pass |
+| Intervalkit resumed extension | 16 | 1 | 29 tests pass; 500 independent randomized gap checks pass; complete 18-message prefix retained in the final 42-message checkpoint |
 
 Failed-tool counts include expected failures while reproducing bugs. These are
 individual, different tasks, not a controlled model-quality comparison or a
@@ -87,3 +89,25 @@ an API error after a successful write, then verify that a new invocation sees
 the saved history and completed effect. Additional checks cover private file
 permissions, secret redaction, malformed archive preservation, and compaction
 when a saved history is full. This is retained context, not transactional replay.
+
+Intervalkit exercised the installed ReleaseSafe binary with two paid invocations
+of `--session milestone`. They took 23.0 and 37.2 seconds, and committed the
+project as `3e4a8b1` and `a4c0b6e`. The checkpoint retained its checklist and mode
+`0600`; session files stayed ignored by Git. Independent checks compared covered
+and missing integer sets, ordering, adjacency, generators, input preservation,
+and invalid endpoint handling. The second task also repaired default unittest
+discovery, which had found zero tests despite the explicit test-directory command
+passing. The built-in workflow now asks for observed test discovery and results.
+
+A separate paid read-only review of the session feature ended inconclusively:
+its compaction summary reached the output limit. This exposed a recovery gap,
+not a supported defect in the reviewed feature. Compaction now retries a
+truncated summary once with an 8,192-token budget, discards partial summaries,
+and preserves history if both attempts fail. Offline tests cover successful
+retry and exhausted retry without history replacement.
+
+A paid `/resume milestone` → `/compact` → `/save compacted` pass on the updated
+binary successfully reduced Intervalkit's 42-message history to four messages,
+retaining its original goal and checklist with mode `0600`. This particular
+summary completed on the first attempt; bounded retry behavior is covered by
+the local API fixtures rather than inferred from this successful paid call.

@@ -340,15 +340,31 @@ pub const Agent = struct {
         } else {
             try msgs.append(sa, .{ .role = "user", .content = .{ .string = prompt } });
         }
-        const body = try self.encodePayload(sa, route, msgs.items, false);
+        var body = try self.encodePayload(sa, route, msgs.items, false);
         if (body.len > max_bytes) return error.HistoryLimit;
-        const response = try ui.work("Compacting context...", Agent.request, .{ self, route, body });
-        var delta = Usage.response(response, route);
-        delta.compactions = 1;
-        if (turn_usage) |u| u.add(delta);
-        if (ui.usage) |total| total.add(delta);
-        const content = try validate(response);
-        if (!std.mem.eql(u8, try j.str(response, "stop_reason"), "end_turn")) return error.InvalidResponse;
+        const content = retry: {
+            var attempt: usize = 0;
+            while (true) : (attempt += 1) {
+                const response = try ui.work("Compacting context...", Agent.request, .{ self, route, body });
+                var delta = Usage.response(response, route);
+                delta.compactions = if (attempt == 0) 1 else 0;
+                if (turn_usage) |u| u.add(delta);
+                if (ui.usage) |total| total.add(delta);
+                const complete = validate(response) catch |err| {
+                    if (err == error.IncompleteResponse and attempt == 0) {
+                        // Retry from the original messages, never a truncated summary.
+                        var payload = try j.parse(sa, body);
+                        try payload.object.put(sa, "max_tokens", .{ .integer = 8192 });
+                        body = try j.encode(sa, payload);
+                        try ui.note("Summary hit output token limit; retrying once with a larger budget...");
+                        continue;
+                    }
+                    return err;
+                };
+                if (!std.mem.eql(u8, try j.str(response, "stop_reason"), "end_turn")) return error.InvalidResponse;
+                break :retry complete;
+            }
+        };
         var summary: std.ArrayList(u8) = .empty;
         for (content.array.items) |block| {
             if (std.mem.eql(u8, try j.str(block, "type"), "text")) {
