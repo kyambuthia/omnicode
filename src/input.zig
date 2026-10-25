@@ -129,18 +129,18 @@ pub const Input = struct {
                 } else {
                     pending = sequence.len + 1;
                 }
-                if (pending == 1 or (pending == 2 and c == '[')) continue;
+                if (pending == 1 or (pending == 2 and (c == '[' or c == 'O'))) continue;
                 if (c == '[' or (c >= 0x20 and c <= 0x3f)) continue;
                 const escape = if (pending <= sequence.len) sequence[0..pending] else "";
                 if (std.mem.eql(u8, escape, "\x1b[200~")) paste = true;
                 if (std.mem.eql(u8, escape, "\x1b[201~")) paste = false;
-                if (!paste and std.mem.indexOfScalar(u8, self.bytes[0..n], '\n') == null and
-                    (std.mem.eql(u8, escape, "\x1b[A") or std.mem.eql(u8, escape, "\x1b[B")))
-                {
+                const up = std.mem.eql(u8, escape, "\x1b[A") or std.mem.eql(u8, escape, "\x1bOA");
+                const down = std.mem.eql(u8, escape, "\x1b[B") or std.mem.eql(u8, escape, "\x1bOB");
+                if (!paste and std.mem.indexOfScalar(u8, self.bytes[0..n], '\n') == null and (up or down)) {
                     const oldest = self.count -| self.history.len;
-                    if (std.mem.eql(u8, escape, "\x1b[A") and cursor > oldest) {
+                    if (up and cursor > oldest) {
                         cursor -= 1;
-                    } else if (std.mem.eql(u8, escape, "\x1b[B") and cursor < self.count) {
+                    } else if (down and cursor < self.count) {
                         cursor += 1;
                     }
                     const item = if (cursor < self.count) self.getHistory(cursor) else "";

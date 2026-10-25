@@ -1199,11 +1199,11 @@ class Integration(unittest.TestCase):
                     until(b"\x1b[?2004h")
                     if finish == b"/q\r":
                         output.clear()
-                        os.write(master, b"/todo\r")
+                        os.write(master, b"/to\x1bOP\x1bOQ\x1bOR\x1bOS\x1bOH\x1bOFdo\r")
                         until(b"(empty todo list)")
                         until(b"\x1b[?2004h")
                         output.clear()
-                        os.write(master, b"\x1b[A\r")
+                        os.write(master, b"\x1bOA\x1bOB\x1b[A\r")
                         until(b"(empty todo list)")
                         until(b"\x1b[?2004h")
                     os.write(master, finish)
