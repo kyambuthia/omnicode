@@ -1324,7 +1324,7 @@ class Integration(unittest.TestCase):
         self.reply = lambda _: text("deepseek reply")
         run_ds = self.run_agent("explain code")
         self.assertEqual(run_ds.returncode, 0, run_ds.stderr)
-        self.assertEqual(self.requests[-1][0]["model"], "deepseek-chat")
+        self.assertEqual(self.requests[-1][0]["model"], "deepseek-flash")
         self.assertEqual(self.requests[-1][1]["authorization"], "Bearer sk-deepseek-secret-9876")
 
         # 2. In REPL: configure OpenRouter via /setup, transcribe a WAV file and a recorded voice clip via /voice.

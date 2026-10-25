@@ -313,6 +313,10 @@ controls model tools; commands you explicitly enter, such as `/save`, `/init`,
 read tools can access files available to your user, and model requests still send
 project context to the configured provider.
 
+DeepSeek's built-in fast/strong routes use `deepseek-flash` and
+`deepseek-v4-pro`, matching its [documented Anthropic-compatible models](https://api-docs.deepseek.com/guides/anthropic_api/).
+Explicit `MODEL`, `FAST_MODEL`, and `/model` choices take precedence.
+
 ## Token and cost usage
 
 Each turn reports input/output tokens, cache reads/writes, and cost across every

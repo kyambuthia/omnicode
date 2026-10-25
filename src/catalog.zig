@@ -162,8 +162,8 @@ pub const ModelMenu = struct {
             const presets = [_]struct { p: Provider, m: []const u8, tier: []const u8 }{
                 .{ .p = .anthropic, .m = "claude-haiku-4-5", .tier = "fast" },
                 .{ .p = .anthropic, .m = "claude-sonnet-4-5", .tier = "strong" },
-                .{ .p = .deepseek, .m = "deepseek-chat", .tier = "fast" },
-                .{ .p = .deepseek, .m = "deepseek-reasoner", .tier = "strong" },
+                .{ .p = .deepseek, .m = Provider.deepseek.defaultModel(false), .tier = "fast" },
+                .{ .p = .deepseek, .m = Provider.deepseek.defaultModel(true), .tier = "strong" },
                 .{ .p = .xai, .m = "grok-3-mini", .tier = "fast" },
                 .{ .p = .xai, .m = "grok-4", .tier = "strong" },
                 .{ .p = .openai, .m = "gpt-4.1-mini", .tier = "fast" },
