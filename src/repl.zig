@@ -2,7 +2,7 @@ const std = @import("std");
 const core = @import("omnicode");
 const cli = @import("cli.zig");
 
-pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, secrets: *core.Secrets, mode: @FieldType(core.Route, "mode"), read_only: bool, initial_route: core.Route) !void {
+pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, secrets: *core.Secrets, mode: @FieldType(core.Route, "mode"), read_only: bool, dry_run: bool, initial_route: core.Route) !void {
     var ui = initial_ui;
     const out = ui.out;
     const usage = ui.usage.?;
@@ -13,6 +13,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
     var todo: core.Todo = .{};
     var menu: core.ModelMenu = .{};
     var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
+    agent.dry_run = dry_run;
     const cwd = try std.process.currentPathAlloc(init.io, a);
     try ui.banner(@tagName(route.provider), cwd);
     var status: core.Status = .{ .clock = core.Clock.load(a, init.io, init.environ_map) };
@@ -404,6 +405,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         route.mode = mode;
         agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
         agent.automatic = automatic;
+        agent.dry_run = dry_run;
         try out.writeAll("Conversation cleared.\n");
     }
 }

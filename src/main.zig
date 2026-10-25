@@ -30,6 +30,7 @@ fn run(init: std.process.Init) !void {
     const mode = options.mode;
     const prompt_only = options.prompt_only;
     const read_only = options.read_only;
+    const dry_run = options.dry_run;
     const session_name = options.session_name;
     if (!prompt_only and args.len > first and (std.mem.eql(u8, args[first], "--version") or std.mem.eql(u8, args[first], "-V"))) {
         try out.writeAll("omnicode " ++ core.version ++ "\n");
@@ -94,6 +95,7 @@ fn run(init: std.process.Init) !void {
         defer arena.deinit();
         var todo: core.Todo = .{};
         var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets, .read_only = read_only }, init.environ_map, route);
+        agent.dry_run = dry_run;
         if (session_name) |name| {
             agent.loadSession(name) catch |err| switch (err) {
                 error.FileNotFound => {},
@@ -109,5 +111,5 @@ fn run(init: std.process.Init) !void {
         };
         return;
     }
-    try @import("repl.zig").run(init, a, ui, &secrets, mode, read_only, route);
+    try @import("repl.zig").run(init, a, ui, &secrets, mode, read_only, dry_run, route);
 }

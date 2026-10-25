@@ -38,6 +38,7 @@ pub const Agent = struct {
     context: tools.Context,
     env: *const std.process.Environ.Map,
     route: Route,
+    dry_run: bool = false,
     automatic: bool = true,
     subagent: bool = false,
     checkpoint_name: ?[]const u8 = null,
@@ -104,6 +105,7 @@ pub const Agent = struct {
         const a = self.context.a;
         const previous_system = self.system;
         self.system = try self.systemWithBudget(a, self.system);
+        if (self.dry_run) self.system = try std.fmt.allocPrint(a, "{s}\nDry-run mode: request tools as usual. The client will preview the first tool batch and stop without executing it. Do not claim any tool effects.", .{self.system});
         defer self.system = previous_system;
         var route = if (self.automatic) self.route.forTask(self.env, prompt) else self.route;
         var metadata = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -189,6 +191,28 @@ pub const Agent = struct {
                 return err;
             };
             continuations = 0;
+            if (self.dry_run and hasToolUse(content)) {
+                var planned: usize = 0;
+                var full = ui;
+                full.verbose = true;
+                for (content.array.items) |block| {
+                    if (!std.mem.eql(u8, try j.str(block, "type"), "tool_use")) continue;
+                    const name = try j.str(block, "name");
+                    const input = try j.get(block, "input");
+                    try ui.toolStart(name, input);
+                    var safe_input = try j.parse(a, try j.encode(a, input));
+                    if (self.context.secrets) |secrets| try secrets.scrubJson(a, &safe_input, self.env);
+                    const encoded = try j.encode(a, safe_input);
+                    try full.preview(utf8Prefix(encoded, 64 * 1024), "");
+                    if (encoded.len > 64 * 1024) try ui.note("Tool input preview truncated at 64 KiB.");
+                    planned += 1;
+                }
+                const summary = try std.fmt.allocPrint(a, "Dry run: previewed {d} tool call(s); none executed.", .{planned});
+                try ui.note(summary);
+                try self.history.append(a, .{ .role = "assistant", .content = .{ .string = summary } });
+                try self.checkpoint();
+                return out.flush();
+            }
             try self.history.append(a, .{ .role = "assistant", .content = content });
             var results: std.ArrayList(j.Value) = .empty;
             for (content.array.items) |block| {

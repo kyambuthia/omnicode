@@ -2,7 +2,7 @@ const std = @import("std");
 const core = @import("omnicode");
 
 pub const help =
-    \\omnicode [--free|--cost-max] [--verbose] [--read-only] [--session NAME] [prompt ...]       Run a task, or start a REPL without arguments.
+    \\omnicode [--free|--cost-max] [--verbose] [--read-only] [--dry-run] [--session NAME] [prompt ...]  Run a task, or start a REPL without arguments.
     \\omnicode --version         Print version (v0.2.0).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
@@ -12,6 +12,7 @@ pub const help =
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
     \\--session NAME            Resume and checkpoint a named one-shot task
     \\--read-only               Restrict model tools to read, glob, grep, and skill
+    \\--dry-run                 Preview the first proposed tool batch without executing it
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
@@ -48,6 +49,7 @@ pub const Options = struct {
     mode: @FieldType(core.Route, "mode"),
     prompt_only: bool,
     read_only: bool,
+    dry_run: bool,
     session_name: ?[]const u8,
     verbose: bool,
 
@@ -58,6 +60,7 @@ pub const Options = struct {
         var policy_set = false;
         var prompt_only = false;
         var read_only = false;
+        var dry_run = false;
         var session_name: ?[]const u8 = null;
         while (first < args.len) : (first += 1) {
             const arg = args[first];
@@ -65,6 +68,8 @@ pub const Options = struct {
                 verbose = true;
             } else if (std.mem.eql(u8, arg, "--read-only")) {
                 read_only = true;
+            } else if (std.mem.eql(u8, arg, "--dry-run")) {
+                dry_run = true;
             } else if (std.mem.eql(u8, arg, "--session")) {
                 if (session_name != null) return error.ConflictingOptions;
                 first += 1;
@@ -83,6 +88,6 @@ pub const Options = struct {
                 return error.UnknownOption;
             } else break;
         }
-        return .{ .first = first, .mode = mode, .prompt_only = prompt_only, .read_only = read_only, .session_name = session_name, .verbose = verbose };
+        return .{ .first = first, .mode = mode, .prompt_only = prompt_only, .read_only = read_only, .dry_run = dry_run, .session_name = session_name, .verbose = verbose };
     }
 };

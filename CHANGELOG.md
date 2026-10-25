@@ -14,6 +14,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 ### Added
 
 - Contributor instructions and a change history for future releases.
+- `--dry-run` previews the first proposed tool batch and stops before executing
+  any tool calls.
 
 ## 0.2.0
 

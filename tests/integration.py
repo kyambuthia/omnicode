@@ -618,6 +618,32 @@ class Integration(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertTrue(all(body["provider"]["max_price"]["prompt"] == 0 for body, _ in self.requests))
 
+    def test_dry_run_previews_every_tool_without_side_effects_and_saves_valid_session(self):
+        secret = 'quote"slash\\tail'
+        setup = self.run_agent("--secrets", "set", "TOKEN", secret)
+        self.assertEqual(setup.returncode, 0, setup.stderr)
+        self.reply = lambda _: tools(
+            call("write", {"path": "created.txt", "content": secret}, "write"),
+            call("bash", {"cmd": "touch forbidden"}, "shell"),
+        )
+        result = self.run_agent("--dry-run", "--session", "preview", "make changes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Dry run: previewed 2 tool call(s); none executed.", result.stdout)
+        self.assertIn('"path":"created.txt"', result.stdout)
+        self.assertIn("touch forbidden", result.stdout)
+        self.assertIn("[REDACTED:TOKEN]", result.stdout)
+        self.assertNotIn(secret, result.stdout)
+        self.assertNotIn(json.dumps(secret)[1:-1], result.stdout)
+        self.assertFalse((self.cwd / "created.txt").exists())
+        self.assertFalse((self.cwd / "forbidden").exists())
+        self.assertEqual(len(self.requests), 1)
+        snapshot = json.loads((self.cwd / ".omnicode/sessions/preview.json").read_text())
+        self.assertEqual(snapshot["messages"][-1]["content"], "Dry run: previewed 2 tool call(s); none executed.")
+        self.assertNotIn(secret, json.dumps(snapshot))
+        resumed = self.run_agent("--dry-run", "--session", "preview", "continue")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(len(self.requests), 2)
+
     def test_policy_flags_preserve_offline_commands_and_literal_prompt(self):
         self.catalog_status = 503
         for flags in (("--free", "--help"), ("--cost-max", "--skills")):
