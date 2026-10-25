@@ -20,6 +20,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
   private file under `.omnicode/exports/`.
 - `/model compare` lists eligible OpenRouter models in recent median throughput
   order with catalog input and output prices before selecting a model number.
+- `--json` emits one structured result for a one-shot task, including final
+  text, usage, and proposed tools in dry-run mode. Progress is sent to stderr.
 
 ## 0.2.0
 

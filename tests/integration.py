@@ -618,6 +618,47 @@ class Integration(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertTrue(all(body["provider"]["max_price"]["prompt"] == 0 for body, _ in self.requests))
 
+    def test_json_one_shot_output_covers_success_preview_and_errors(self):
+        secret = "fixture-json-secret"
+        setup = self.run_agent("--secrets", "set", "TOKEN", secret)
+        self.assertEqual(setup.returncode, 0, setup.stderr)
+        self.reply = lambda _: text("answer " + secret)
+        result = self.run_agent("--json", "summarize")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["text"], "answer [REDACTED:TOKEN]")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["usage"]["requests"], 1)
+        self.assertEqual(payload["proposed_tools"], [])
+        self.assertNotIn(secret, result.stdout)
+        self.assertIn("Assistant", result.stderr)
+
+        self.reply = lambda _: tools(call("write", {"path": "blocked.txt", "content": secret}))
+        preview = self.run_agent("--json", "--dry-run", "create a file")
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        planned = json.loads(preview.stdout)
+        self.assertTrue(planned["dry_run"])
+        self.assertEqual(planned["proposed_tools"], [{"name": "write", "input": {"path": "blocked.txt", "content": "[REDACTED:TOKEN]"}}])
+        self.assertFalse((self.cwd / "blocked.txt").exists())
+
+        self.reply = lambda _: (429, b"private upstream body")
+        failed = self.run_agent("--json", "summarize")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(json.loads(failed.stdout), {"ok": False, "error": "ApiRateLimited"})
+        self.assertNotIn("private upstream body", failed.stdout + failed.stderr)
+        missing = self.run_agent("--json")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertEqual(json.loads(missing.stdout), {"ok": False, "error": "JsonRequiresPrompt"})
+        malformed = self.run_agent("--json", "--bogus", "summarize")
+        self.assertNotEqual(malformed.returncode, 0)
+        self.assertEqual(json.loads(malformed.stdout), {"ok": False, "error": "UnknownOption"})
+        config = self.cwd / ".config/omnicode/config.env"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("malformed line\n")
+        startup = self.run_agent("--json", "summarize")
+        self.assertNotEqual(startup.returncode, 0)
+        self.assertEqual(json.loads(startup.stdout), {"ok": False, "error": "InvalidConfigFile"})
+
     def test_dry_run_previews_every_tool_without_side_effects_and_saves_valid_session(self):
         secret = 'quote"slash\\tail'
         setup = self.run_agent("--secrets", "set", "TOKEN", secret)

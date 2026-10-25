@@ -13,24 +13,41 @@ pub fn main(init: std.process.Init) void {
 
 fn run(init: std.process.Init) !void {
     const a = init.arena.allocator();
-    var secrets: core.Secrets = .{};
     const args = try init.minimal.args.toSlice(a);
+    const options = cli.Options.parse(args) catch |err| {
+        if (jsonRequested(args)) try emitJsonError(init, a, err);
+        return err;
+    };
+    return runParsed(init, a, args, options) catch |err| {
+        if (options.json_output and err != error.Canceled) try emitJsonError(init, a, err);
+        return err;
+    };
+}
+
+fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const u8, options: cli.Options) !void {
+    var secrets: core.Secrets = .{};
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.Writer.init(.stdout(), init.io, &output_buffer);
     const out = &output.interface;
-    var ui = core.Ui.init(out, init.io, init.environ_map);
+    var progress_buffer: [4096]u8 = undefined;
+    var progress_output = std.Io.File.Writer.init(.stderr(), init.io, &progress_buffer);
+    var ui = core.Ui.init(if (options.json_output) &progress_output.interface else out, init.io, init.environ_map);
+    if (options.json_output) {
+        ui.interactive = false;
+        ui.color = false;
+    }
     ui.secrets = &secrets;
     var details: core.Details = .{};
     ui.details = &details;
     var usage: core.Usage = .{};
     ui.usage = &usage;
-    const options = try cli.Options.parse(args);
     ui.verbose = options.verbose;
     const first = options.first;
     const mode = options.mode;
     const prompt_only = options.prompt_only;
     const read_only = options.read_only;
     const dry_run = options.dry_run;
+    const json_output = options.json_output;
     const session_name = options.session_name;
     if (!prompt_only and args.len > first and (std.mem.eql(u8, args[first], "--version") or std.mem.eql(u8, args[first], "-V"))) {
         try out.writeAll("omnicode " ++ core.version ++ "\n");
@@ -44,6 +61,9 @@ fn run(init: std.process.Init) !void {
         if (!core.validName(name)) return error.InvalidSessionName;
         if (first == args.len or (!prompt_only and std.mem.startsWith(u8, args[first], "-")))
             return error.SessionRequiresPrompt;
+    }
+    if (json_output and (first == args.len or (!prompt_only and std.mem.startsWith(u8, args[first], "--")))) {
+        return error.JsonRequiresPrompt;
     }
     const setup_command = if (!prompt_only and args.len > first and std.mem.eql(u8, args[first], "--setup"))
         try std.mem.join(a, " ", args[first + 1 ..])
@@ -106,10 +126,43 @@ fn run(init: std.process.Init) !void {
         agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
             if (err == error.Canceled) return err;
             try ui.errorMessage(err);
-            try out.flush();
+            try ui.out.flush();
             return err;
         };
+        if (json_output) {
+            const encoded = try std.json.Stringify.valueAlloc(a, .{
+                .ok = true,
+                .text = try agent.resultText(a),
+                .usage = usage,
+                .dry_run = dry_run,
+                .proposed_tools = try agent.proposedTools(a),
+            }, .{});
+            try out.writeAll(encoded);
+            try out.writeByte('\n');
+            try out.flush();
+        }
         return;
     }
     try @import("repl.zig").run(init, a, ui, &secrets, mode, read_only, dry_run, route);
+}
+
+fn jsonRequested(args: []const []const u8) bool {
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--")) break;
+        if (std.mem.eql(u8, arg, "--json")) return true;
+    }
+    return false;
+}
+
+fn emitJsonError(init: std.process.Init, a: std.mem.Allocator, err: anyerror) !void {
+    var output_buffer: [256]u8 = undefined;
+    var output = std.Io.File.Writer.init(.stdout(), init.io, &output_buffer);
+    try writeJsonError(a, &output.interface, err);
+}
+
+fn writeJsonError(a: std.mem.Allocator, out: *std.Io.Writer, err: anyerror) !void {
+    const encoded = try std.json.Stringify.valueAlloc(a, .{ .ok = false, .@"error" = @errorName(err) }, .{});
+    try out.writeAll(encoded);
+    try out.writeByte('\n');
+    try out.flush();
 }

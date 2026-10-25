@@ -40,6 +40,7 @@ pub const Agent = struct {
     env: *const std.process.Environ.Map,
     route: Route,
     dry_run: bool = false,
+    previewed_content: ?j.Value = null,
     automatic: bool = true,
     subagent: bool = false,
     checkpoint_name: ?[]const u8 = null,
@@ -98,6 +99,7 @@ pub const Agent = struct {
     }
 
     pub fn respond(self: *Agent, prompt: []const u8, ui: Ui) !void {
+        self.previewed_content = null;
         const turn_budget = if (self.env.get("MAX_TURNS")) |value| try @import("config.zig").parseMaxTurns(value) else self.turn_budget;
         var budget: ToolBudget = .{ .remaining = if (self.env.get("MAX_TOOL_CALLS")) |value| try @import("config.zig").parseMaxToolCalls(value) else @import("config.zig").default_max_tool_calls };
         const previous_budget = self.tool_budget;
@@ -193,6 +195,7 @@ pub const Agent = struct {
             };
             continuations = 0;
             if (self.dry_run and hasToolUse(content)) {
+                self.previewed_content = content;
                 var planned: usize = 0;
                 var full = ui;
                 full.verbose = true;
@@ -559,6 +562,42 @@ pub const Agent = struct {
         try self.context.dir.createDirPath(self.context.io, ".omnicode/exports");
         try @import("storage.zig").writePrivate(self.context.io, self.context.dir, path, data);
         return path;
+    }
+
+    /// Return the final visible assistant text for structured one-shot output.
+    pub fn resultText(self: *const Agent, a: std.mem.Allocator) ![]const u8 {
+        if (self.history.items.len == 0) return "";
+        const last = self.history.items[self.history.items.len - 1];
+        if (!std.mem.eql(u8, last.role, "assistant")) return "";
+        var out: Io.Writer.Allocating = .init(a);
+        if (last.content == .string) {
+            try out.writer.writeAll(last.content.string);
+        } else if (last.content == .array) {
+            for (last.content.array.items) |block| {
+                if (!std.mem.eql(u8, j.str(block, "type") catch "", "text")) continue;
+                if (out.writer.end > 0) try out.writer.writeByte('\n');
+                try out.writer.writeAll(try j.str(block, "text"));
+            }
+        }
+        const raw = try out.toOwnedSlice();
+        return if (self.context.secrets) |secrets| secrets.scrub(a, raw, self.env) else raw;
+    }
+
+    /// Return redacted proposed tool calls from a dry run for structured output.
+    pub fn proposedTools(self: *const Agent, a: std.mem.Allocator) !j.Value {
+        var calls: std.ArrayList(j.Value) = .empty;
+        if (self.previewed_content) |content| {
+            for (content.array.items) |block| {
+                if (!std.mem.eql(u8, j.str(block, "type") catch "", "tool_use")) continue;
+                try calls.append(a, try j.parse(a, try j.encode(a, .{
+                    .name = try j.str(block, "name"),
+                    .input = try j.get(block, "input"),
+                })));
+            }
+        }
+        var result: j.Value = .{ .array = calls.toManaged(a) };
+        if (self.context.secrets) |secrets| try secrets.scrubJson(a, &result, self.env);
+        return result;
     }
 
     /// Resume a saved session from `.omnicode/sessions/<name>.json`.
