@@ -418,3 +418,15 @@ The repair completed in 40.91 seconds with 23 tools and one failed tool; indepen
 reference checks passed. The resumed extension also passed independent checks,
 retained the original history prefix, and left a valid checkpoint. This run
 exercised ordinary bounded completion; denial is covered by deterministic tests.
+
+### Evidence requirements for built-in reviews
+
+The paid tool-budget review above asserted missing protections without inspecting
+where they were enforced. Built-in review instructions now ask critics to trace
+callers, guards, tests, and documented contracts before reporting a defect, and
+to give its concrete trigger and impact. Unverified concerns, optional style
+preferences, and uninspected scope must be distinguished from confirmed issues.
+This replaces wording that presumed subtle bugs or demanded stylistic findings.
+The two-critic execution, read-only enforcement, verdict parsing, and budgets
+are unchanged. Mocked end-to-end tests verify that flow; no quantitative claim
+about review accuracy follows from this prompt change.
