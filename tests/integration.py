@@ -667,6 +667,40 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
 
+    def test_successful_error_prefixed_output_keeps_success_status(self):
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("bash", {"cmd": "printf 'error: example'"}, "one"),
+                             call("bash", {"cmd": "printf 'error: example'"}, "two"),
+                             call("bash", {"cmd": "printf normal; exit 7"}, "failed"))
+            return text("finished")
+        self.reply = reply
+        result = self.run_agent("inspect diagnostic output")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        results = {item["tool_use_id"]: item for item in self.requests[-1][0]["messages"][-1]["content"]}
+        for name in ("one", "two"):
+            self.assertFalse(results[name]["is_error"])
+            self.assertEqual(results[name]["content"], "error: example")
+        self.assertTrue(results["failed"]["is_error"])
+        self.assertIn("normal", results["failed"]["content"])
+
+    def test_subagent_preserves_successful_error_prefixed_output(self):
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("task", {"prompt": "inspect diagnostics", "mode": "edit"}))
+            if len(self.requests) == 2:
+                return tools(call("bash", {"cmd": "printf 'error: example'"}))
+            if len(self.requests) == 3:
+                result = body["messages"][-1]["content"][0]
+                self.assertFalse(result["is_error"])
+                self.assertEqual(result["content"], "error: example")
+                return text("child finished")
+            return text("parent finished")
+        self.reply = reply
+        result = self.run_agent("inspect with a subagent")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 4)
+
     def test_invalid_tool_arguments_return_schema_for_recovery(self):
         def reply(body):
             if len(self.requests) == 1:

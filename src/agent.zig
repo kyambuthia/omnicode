@@ -177,10 +177,11 @@ pub const Agent = struct {
                     const start = Io.Clock.awake.now(self.context.io);
                     tool_count += 1;
                     const result = self.runTool(name, input, ui, &usage) catch |err|
-                        try formatToolCallError(a, err, name, input);
+                        tools.Result{ .text = try formatToolCallError(a, err, name, input), .is_error = true };
                     // Invalid UTF-8 (e.g. binary output) must not corrupt JSON requests.
-                    const raw_text = if (std.unicode.utf8ValidateSlice(result)) result else "error: NonUtf8Output";
-                    const is_err = std.mem.startsWith(u8, raw_text, "error:");
+                    const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
+                    const raw_text = if (valid_utf8) result.text else "error: NonUtf8Output";
+                    const is_err = result.is_error or !valid_utf8;
                     const text = blk_txt: {
                         if (is_err) {
                             const sig = try std.fmt.allocPrint(a, "{s}:{s}", .{ name, try j.encode(sa, input) });
@@ -495,11 +496,11 @@ pub const Agent = struct {
         return @import("http.zig").fetch(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
     }
 
-    fn runTool(self: *Agent, name: []const u8, input: j.Value, ui: Ui, usage: *Usage) ![]const u8 {
+    fn runTool(self: *Agent, name: []const u8, input: j.Value, ui: Ui, usage: *Usage) !tools.Result {
         try self.context.checkToolAllowed(name);
-        if (std.mem.eql(u8, name, "task")) return self.runTask(input, ui, usage);
-        if (std.mem.eql(u8, name, "review")) return self.runReview(input, ui, usage);
-        return ui.work("Running tool...", tools.Context.run, .{ self.context, name, input });
+        if (std.mem.eql(u8, name, "task")) return .{ .text = try self.runTask(input, ui, usage) };
+        if (std.mem.eql(u8, name, "review")) return .{ .text = try self.runReview(input, ui, usage) };
+        return ui.work("Running tool...", tools.Context.runResult, .{ self.context, name, input });
     }
 
     /// Delegate a self-contained investigation or sub-task to a depth-1 child agent.
@@ -646,17 +647,19 @@ pub const Agent = struct {
                     try child_ui.toolStart(name, input);
                     const start = Io.Clock.awake.now(child.context.io);
                     const result = (if (std.mem.eql(u8, name, "task") or std.mem.eql(u8, name, "review"))
-                        @as(anyerror![]const u8, error.NestedSubagent)
+                        @as(anyerror!tools.Result, error.NestedSubagent)
                     else
-                        ui.work("Running subagent tool...", tools.Context.run, .{ child.context, name, input })) catch |err|
-                        try formatToolCallError(ca, err, name, input);
-                    const text = if (std.unicode.utf8ValidateSlice(result)) result else "error: NonUtf8Output";
-                    try child_ui.toolEnd(name, input, text, std.mem.startsWith(u8, text, "error:"), start);
+                        ui.work("Running subagent tool...", tools.Context.runResult, .{ child.context, name, input })) catch |err|
+                        tools.Result{ .text = try formatToolCallError(ca, err, name, input), .is_error = true };
+                    const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
+                    const text = if (valid_utf8) result.text else "error: NonUtf8Output";
+                    const is_error = result.is_error or !valid_utf8;
+                    try child_ui.toolEnd(name, input, text, is_error, start);
                     try results.append(ca, try j.parse(ca, try j.encode(ca, .{
                         .type = "tool_result",
                         .tool_use_id = try j.str(block, "id"),
                         .content = text,
-                        .is_error = std.mem.startsWith(u8, text, "error:"),
+                        .is_error = is_error,
                     })));
                 }
             }

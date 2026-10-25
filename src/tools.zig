@@ -2,6 +2,7 @@ const std = @import("std");
 const j = @import("json.zig");
 const Io = std.Io;
 pub const limit = 64 * 1024;
+pub const Result = struct { text: []const u8, is_error: bool = false };
 
 const explore_tools =
     \\{"name":"read","description":"Read numbered lines, zero-based offset; max 1 MiB file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
@@ -69,11 +70,15 @@ pub const Context = struct {
     }
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
+        return (try c.runResult(name, args)).text;
+    }
+
+    pub fn runResult(c: Context, name: []const u8, args: j.Value) !Result {
         try c.checkToolAllowed(name);
-        const out = try c.runRaw(name, args);
         // Commands redact before applying their output cap.
-        if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) return out;
-        return c.scrub(out);
+        if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep"))
+            return c.runCommandTool(name, args);
+        return .{ .text = try c.scrub(try c.runRaw(name, args)) };
     }
 
     fn scrub(c: Context, text: []const u8) ![]const u8 {
@@ -143,13 +148,17 @@ pub const Context = struct {
             try c.dir.writeFile(c.io, .{ .sub_path = path, .data = replacement });
             return "ok";
         }
+        return error.UnknownTool;
+    }
+
+    fn runCommandTool(c: Context, name: []const u8, args: j.Value) !Result {
         if (std.mem.eql(u8, name, "bash")) {
             const timeout = try j.number(args, "timeout_ms", 30_000);
             if (timeout == 0 or timeout > 300_000) return error.InvalidTimeout;
-            return c.command(&.{ "sh", "-c", try j.str(args, "cmd") }, false, @intCast(timeout));
+            return c.commandResult(&.{ "sh", "-c", try j.str(args, "cmd") }, false, @intCast(timeout));
         }
         const path = try j.optional(args, "path", ".");
-        if (std.mem.eql(u8, name, "glob")) return c.command(&.{
+        if (std.mem.eql(u8, name, "glob")) return c.commandResult(&.{
             "rg",             "--no-config",   "--files",
             "--glob",         "!.git",         "--glob",
             "!.venv",         "--glob",        "!venv",
@@ -161,7 +170,7 @@ pub const Context = struct {
             "!.pytest_cache", "--glob",        try j.str(args, "pat"),
             "--",             path,
         }, true, 30_000);
-        if (std.mem.eql(u8, name, "grep")) return c.command(&.{
+        if (std.mem.eql(u8, name, "grep")) return c.commandResult(&.{
             "rg",             "--no-config",   "--color=never",
             "-n",             "-m",            "50",
             "--glob",         "!.git",         "--glob",
@@ -178,6 +187,10 @@ pub const Context = struct {
     }
 
     pub fn command(c: Context, argv: []const []const u8, search: bool, milliseconds: i64) ![]const u8 {
+        return (try c.commandResult(argv, search, milliseconds)).text;
+    }
+
+    fn commandResult(c: Context, argv: []const []const u8, search: bool, milliseconds: i64) !Result {
         for (argv) |arg| {
             if (std.mem.indexOfScalar(u8, arg, 0) != null) return error.InvalidCommandArgument;
         }
@@ -188,12 +201,12 @@ pub const Context = struct {
             .stdout_limit = .limited(4 * limit),
             .stderr_limit = .limited(4 * limit),
         } }, milliseconds);
-        if (search and result.term == .exited and result.term.exited == 1) return "none";
+        if (search and result.term == .exited and result.term.exited == 1) return .{ .text = "none" };
         const full = if (!result.term.success())
             try std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, result.stdout, result.stderr })
         else
             try std.fmt.allocPrint(c.a, "{s}{s}", .{ result.stdout, result.stderr });
-        return capCommandOutput(c.a, try c.scrub(full));
+        return .{ .text = try capCommandOutput(c.a, try c.scrub(full)), .is_error = !result.term.success() };
     }
 
     pub fn loadSkill(c: Context, name: []const u8) ![]const u8 {
