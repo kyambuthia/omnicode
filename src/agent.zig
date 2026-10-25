@@ -109,7 +109,9 @@ pub const Agent = struct {
                 if (price.variable) " (variable base rates)" else "",
             });
         }
-        const safe_prompt = if (self.context.secrets) |s| try s.scrub(a, prompt, self.env) else try a.dupe(u8, prompt);
+        const scrubbed_prompt = if (self.context.secrets) |s| try s.scrub(a, prompt, self.env) else prompt;
+        // Input buffers are reused on the next REPL read; history owns its text.
+        const safe_prompt = if (scrubbed_prompt.ptr == prompt.ptr) try a.dupe(u8, scrubbed_prompt) else scrubbed_prompt;
         try self.history.append(a, .{ .role = "user", .content = .{ .string = safe_prompt } });
         var turns: usize = 0;
         var compactions: usize = 0;

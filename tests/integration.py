@@ -473,6 +473,13 @@ class Integration(unittest.TestCase):
             "API_URL": f"http://127.0.0.1:{self.server.server_port}/v1/messages",
         }
 
+    def test_oversized_piped_input_recovers_at_next_line(self):
+        result = self.run_agent(stdin="x" * 16385 + "\n/help\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("InputTooLong", result.stdout)
+        self.assertIn("omnicode [--free", result.stdout)
+        self.assertEqual(self.requests, [])
+
     def run_agent(self, *args, stdin=None):
         return subprocess.run([str(BINARY), *args], input=stdin, text=True,
                               capture_output=True, cwd=self.cwd, env=self.env, timeout=15)

@@ -45,9 +45,34 @@ pub const Input = struct {
         return self.history[slot][0..self.lengths[slot]];
     }
 
+    // Consume the entire rejected line so the next command remains readable.
+    fn readPlain(self: *Input, reader: *Io.Reader) !?[]const u8 {
+        var n: usize = 0;
+        var overflow = false;
+        while (true) {
+            const byte = reader.takeByte() catch |err| switch (err) {
+                error.EndOfStream => {
+                    if (overflow) return error.InputTooLong;
+                    return if (n == 0) null else self.bytes[0..n];
+                },
+                else => return err,
+            };
+            if (byte == '\n') {
+                if (overflow) return error.InputTooLong;
+                return self.bytes[0..n];
+            }
+            if (n == self.bytes.len) {
+                overflow = true;
+            } else {
+                self.bytes[n] = byte;
+                n += 1;
+            }
+        }
+    }
+
     pub fn read(self: *Input, io: Io, ui: Ui, plain: *Io.Reader) !?[]const u8 {
         if (!ui.interactive or !(Io.File.stdin().isTty(io) catch false))
-            return plain.takeDelimiter('\n');
+            return self.readPlain(plain);
         const original = try std.posix.tcgetattr(0);
         var raw = original;
         raw.lflag.ICANON = false;
@@ -189,4 +214,20 @@ test "history redaction survives secret removal and drops oversized replacements
     input.record(&full);
     try input.redactHistory(&secrets, &env);
     try std.testing.expectEqualStrings("", input.getHistory(1));
+}
+
+test "plain input accepts the boundary and drains oversized lines through EOF" {
+    var input: Input = .{};
+    const full: [16 * 1024]u8 = @splat('x');
+    var exact = Io.Reader.fixed(&full);
+    try std.testing.expectEqualStrings(&full, (try input.readPlain(&exact)).?);
+    try std.testing.expectEqual(null, try input.readPlain(&exact));
+    const lines = full ++ "\n" ++ full ++ "x\n/help\n\n" ++ full ++ "x";
+    var reader = Io.Reader.fixed(lines);
+    try std.testing.expectEqualStrings(&full, (try input.readPlain(&reader)).?);
+    try std.testing.expectError(error.InputTooLong, input.readPlain(&reader));
+    try std.testing.expectEqualStrings("/help", (try input.readPlain(&reader)).?);
+    try std.testing.expectEqualStrings("", (try input.readPlain(&reader)).?);
+    try std.testing.expectError(error.InputTooLong, input.readPlain(&reader));
+    try std.testing.expectEqual(null, try input.readPlain(&reader));
 }
