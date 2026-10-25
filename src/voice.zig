@@ -82,7 +82,7 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
     var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer scratch.deinit();
     const sa = scratch.allocator();
-    const audio = try c.dir.readFileAlloc(c.io, path, sa, .limited(max_audio_bytes));
+    const audio = try @import("storage.zig").readRegular(c.io, c.dir, path, sa, .limited(max_audio_bytes));
     if (audio.len == 0) return error.EmptyAudio;
     const encoded_len = std.base64.standard.Encoder.calcSize(audio.len);
     const encoded = try sa.alloc(u8, encoded_len);

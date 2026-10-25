@@ -98,7 +98,7 @@ const Entry = struct { key: []const u8, val: []const u8 };
 
 fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8) !std.ArrayList(Entry) {
     var list: std.ArrayList(Entry) = .empty;
-    const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
+    const text = @import("storage.zig").readRegular(io, dir, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
         error.FileNotFound => return list,
         else => return err,
     };

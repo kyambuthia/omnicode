@@ -81,7 +81,7 @@ pub const Secrets = struct {
 
     pub fn load(self: *Secrets, a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *const std.process.Environ.Map) !void {
         const path = try secretsPath(a, env);
-        const text = dir.readFileAlloc(io, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
+        const text = @import("storage.zig").readRegular(io, dir, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
         };
@@ -297,7 +297,7 @@ pub const Secrets = struct {
             const file_path = std.mem.trim(u8, parts.rest(), " \t");
             if (file_path.len == 0) return error.InvalidSecretsCommand;
             try @import("storage.zig").validatePath(file_path);
-            const text = try dir.readFileAlloc(io, file_path, a, .limited(max_file_bytes + 1));
+            const text = try @import("storage.zig").readRegular(io, dir, file_path, a, .limited(max_file_bytes + 1));
             var next = self.*;
             const count = try next.parseLines(text);
             const message = try std.fmt.allocPrint(a, "Loaded {d} secret(s) from {s} (values hidden).", .{ count, file_path });

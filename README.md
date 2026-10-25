@@ -438,7 +438,9 @@ File reads and writes, skill loading, and project-instruction loading reject
 non-regular entries before opening them, including pipes, devices, sockets, and
 directories. Writes can create new files, and symlinks to regular files remain
 supported. Forced initialization checks both instruction targets before writing.
-These metadata prechecks do not protect against concurrent path replacement.
+Saved state, secret-import, and audio-file inputs also require regular files;
+unreadable timezone data retains the UTC fallback. These metadata prechecks do
+not protect against concurrent path replacement.
 
 On Linux, SIGINT and SIGTERM cancel active work and clean up its command process
 group before exiting with status 130 or 143. Interactive raw terminal settings

@@ -2010,6 +2010,54 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.requests, [])
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_special_config_and_vault_fail_before_api_requests(self):
+        pipe = self.cwd / "state-pipe"
+        os.mkfifo(pipe)
+        for variable in ("OMNICODE_CONFIG", "OMNICODE_SECRETS"):
+            with self.subTest(variable=variable):
+                self.env[variable] = str(pipe)
+                try:
+                    result = self.run_agent("inspect project")
+                finally:
+                    del self.env[variable]
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("NotRegularFile", result.stderr)
+                self.assertTrue(pipe.is_fifo())
+                self.assertEqual(self.requests, [])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_special_resume_preserves_live_conversation(self):
+        sessions = self.cwd / ".omnicode/sessions"
+        sessions.mkdir(parents=True)
+        os.mkfifo(sessions / "blocked.json")
+        result = self.run_agent("--session", "blocked", "inspect project")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NotRegularFile", result.stderr)
+        self.assertEqual(self.requests, [])
+        result = self.run_agent(stdin="original task\n/resume blocked\n/save retained\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("NotRegularFile", result.stdout)
+        saved = json.loads((sessions / "retained.json").read_text())
+        self.assertEqual(saved["messages"][0]["content"], "original task")
+        self.assertEqual(len(self.requests), 1)
+        self.assertTrue((sessions / "blocked.json").is_fifo())
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_special_import_audio_and_timezone_inputs_do_not_block(self):
+        pipe = self.cwd / "input-pipe"
+        os.mkfifo(pipe)
+        self.env["TZ"] = str(pipe)
+        self.env["OMNICODE_SECRETS"] = str(self.cwd / "vault.env")
+        result = self.run_agent(stdin="/secrets set TOKEN synthetic-value\n/secrets load input-pipe\n/secrets list\n/voice input-pipe\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("NotRegularFile"), 2)
+        self.assertIn("TOKEN", result.stdout)
+        self.assertNotIn("synthetic-value", result.stdout + result.stderr)
+        self.assertTrue(pipe.is_fifo())
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.catalog_requests, [])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
     def test_init_detects_large_manifest_without_reading_special_files(self):
         os.mkfifo(self.cwd / "build.zig")
         (self.cwd / "Cargo.toml").mkdir()

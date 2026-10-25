@@ -475,7 +475,7 @@ pub const Agent = struct {
         defer scratch.deinit();
         const sa = scratch.allocator();
         const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
-        const text = try self.context.dir.readFileAlloc(self.context.io, path, sa, .limited(max_bytes + 1));
+        const text = try @import("storage.zig").readRegular(self.context.io, self.context.dir, path, sa, .limited(max_bytes + 1));
         var root = try j.parse(sa, text);
         try self.scrubConversation(sa, &root);
         const msgs = j.get(root, "messages") catch return error.InvalidSession;

@@ -53,7 +53,7 @@ pub const Clock = struct {
         if (name.len > 0 and name[0] == ':') name = name[1..];
         if (name.len == 0 or std.mem.indexOf(u8, name, "..") != null) return .{};
         const path = if (name[0] == '/') name else std.fmt.allocPrint(a, "/usr/share/zoneinfo/{s}", .{name}) catch return .{};
-        const bytes = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(512 * 1024)) catch return .{};
+        const bytes = @import("storage.zig").readRegular(io, .cwd(), path, a, .limited(512 * 1024)) catch return .{};
         return parse(a, bytes) catch .{};
     }
 

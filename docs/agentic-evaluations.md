@@ -340,3 +340,21 @@ byte check confirmed the exact 15-byte file and that the FIFO remained a FIFO;
 the tracked lab project stayed clean. Offline tests cover direct/symlinked FIFO
 writes, rejected edits, continued creation of nested regular files, preserved
 regular-file symlink writes, and both invalid forced-initialization targets.
+
+A synthetic FIFO config path reproduced the same startup hang. Config and vault
+loading, secret imports, session loading, audio-file transcription inputs, and
+optional timezone data now reuse the regular-file reader while retaining their
+existing limits. Invalid required files report a file-type error; optional
+unreadable timezone data keeps the UTC fallback. The private atomic writer's
+behavior is unchanged.
+
+Synthetic regressions reject config/vault FIFOs before any API request, reject
+one-shot FIFO sessions without replacing them, retain the original live
+conversation after a failed REPL resume, and preserve saved secrets after a
+rejected FIFO import. An audio FIFO produces no transcription/catalog request;
+a timezone FIFO does not block REPL startup. No real credential contents were
+inspected for these tests.
+
+Final saved-state verification: 68/68 Zig unit tests, 96/96 integration tests,
+and 11/11 installer tests passed. Native debug and aarch64 Linux compilation,
+formatting, and whitespace checks passed.
