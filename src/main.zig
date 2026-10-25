@@ -1,7 +1,7 @@
 const std = @import("std");
 const core = @import("omnicode");
 const help =
-    \\omnicode [--free|--cost-max] [--verbose] [prompt ...]       Run a task, or start a REPL without arguments.
+    \\omnicode [--free|--cost-max] [--verbose] [--read-only] [prompt ...]       Run a task, or start a REPL without arguments.
     \\omnicode --version         Print version (v0.2.0).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
@@ -9,6 +9,7 @@ const help =
     \\omnicode --setup [...]     View or configure provider API keys and settings.
     \\omnicode --secrets [...]   Manage zero-leak secrets (passwords, tokens, logins).
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
+    \\--read-only               Restrict model tools to read, glob, grep, and skill
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
@@ -64,10 +65,13 @@ fn run(init: std.process.Init) !void {
     var mode: @FieldType(core.Route, "mode") = .cost_max;
     var policy_set = false;
     var prompt_only = false;
+    var read_only = false;
     while (first < args.len) : (first += 1) {
         const arg = args[first];
         if (std.mem.eql(u8, arg, "--verbose")) {
             ui.verbose = true;
+        } else if (std.mem.eql(u8, arg, "--read-only")) {
+            read_only = true;
         } else if (std.mem.eql(u8, arg, "--free") or std.mem.eql(u8, arg, "--cost-max")) {
             const selected: @TypeOf(mode) = if (std.mem.eql(u8, arg, "--free")) .free else .cost_max;
             if (policy_set and selected != mode) return error.ConflictingOptions;
@@ -136,7 +140,7 @@ fn run(init: std.process.Init) !void {
     defer arena.deinit();
     var todo: core.Todo = .{};
     var menu: core.ModelMenu = .{};
-    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets }, init.environ_map, route);
+    var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets, .read_only = read_only }, init.environ_map, route);
     if (args.len > first) {
         agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
             try ui.errorMessage(err);
@@ -519,7 +523,7 @@ fn run(init: std.process.Init) !void {
         _ = arena.reset(.free_all);
         todo.len = 0;
         route.mode = mode;
-        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets }, init.environ_map, route);
+        agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets, .read_only = read_only }, init.environ_map, route);
         agent.automatic = automatic;
         try out.writeAll("Conversation cleared.\n");
     }

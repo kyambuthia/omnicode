@@ -304,6 +304,15 @@ terminals, and `NO_COLOR` use canonical input. Arbitrary cursor movement and a
 full-screen editor are not implemented; wide-character and wrapped-line backspace
 display is limited. Codex and fx references are recorded in [ROADMAP.md](ROADMAP.md).
 
+Use `omnicode --read-only "inspect this project"` to restrict model tools to
+`read`, `glob`, `grep`, and `skill`. The restriction is checked at execution, so
+unadvertised mutation, shell, checklist, and delegation calls are rejected. It
+persists across conversation clearing, compaction, and session loading. This flag
+controls model tools; commands you explicitly enter, such as `/save`, `/init`,
+`/setup`, and `/review`, keep their normal behavior. It is not a filesystem sandbox:
+read tools can access files available to your user, and model requests still send
+project context to the configured provider.
+
 ## Token and cost usage
 
 Each turn reports input/output tokens, cache reads/writes, and cost across every

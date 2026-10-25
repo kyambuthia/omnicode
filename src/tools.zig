@@ -69,6 +69,7 @@ pub const Context = struct {
     }
 
     pub fn run(c: Context, name: []const u8, args: j.Value) ![]const u8 {
+        try c.checkToolAllowed(name);
         const out = try c.runRaw(name, args);
         // Commands redact before applying their output cap.
         if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) return out;
@@ -80,9 +81,15 @@ pub const Context = struct {
         return text;
     }
 
+    pub fn checkToolAllowed(c: Context, name: []const u8) !void {
+        if (!c.read_only) return;
+        for ([_][]const u8{ "read", "glob", "grep", "skill" }) |allowed| {
+            if (std.mem.eql(u8, name, allowed)) return;
+        }
+        return error.ReadOnlyMode;
+    }
+
     fn runRaw(c: Context, name: []const u8, args: j.Value) ![]const u8 {
-        if (c.read_only and (std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "todo")))
-            return error.ReadOnlySubagent;
         if (std.mem.eql(u8, name, "todo")) {
             const t = c.todo orelse return "(todo unavailable)";
             return c.a.dupe(u8, try t.update(args));
@@ -346,9 +353,9 @@ test "file tools modify real files and reject ambiguous or invalid edits" {
     try std.testing.expectEqualStrings("three\ntwo\nthree", try c.readFile("a"));
     var ro = c;
     ro.read_only = true;
-    try std.testing.expectError(error.ReadOnlySubagent, ro.run("write", try j.parse(c.a, "{\"path\":\"b\",\"content\":\"x\"}")));
-    try std.testing.expectError(error.ReadOnlySubagent, ro.run("edit", edit));
-    try std.testing.expectError(error.ReadOnlySubagent, ro.run("bash", try j.parse(c.a, "{\"cmd\":\"true\"}")));
+    try std.testing.expectError(error.ReadOnlyMode, ro.run("write", try j.parse(c.a, "{\"path\":\"b\",\"content\":\"x\"}")));
+    try std.testing.expectError(error.ReadOnlyMode, ro.run("edit", edit));
+    try std.testing.expectError(error.ReadOnlyMode, ro.run("bash", try j.parse(c.a, "{\"cmd\":\"true\"}")));
     var todo: Todo = .{};
     var with_todo = c;
     with_todo.todo = &todo;

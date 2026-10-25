@@ -667,6 +667,46 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
 
+    def test_read_only_mode_rejects_unadvertised_tools_and_survives_resets(self):
+        (self.cwd / "input.txt").write_text("preserve this")
+        calls = [call("write", {"path": "blocked.txt", "content": "bad"}, "write"),
+                 call("edit", {"path": "input.txt", "old": "preserve", "new": "destroy"}, "edit"),
+                 call("bash", {"cmd": "touch shell-ran"}, "bash"),
+                 call("todo", {"items": [{"task": "blocked", "done": False}]}, "todo"),
+                 call("task", {"prompt": "write a file", "mode": "edit"}, "task"),
+                 call("review", {}, "review"),
+                 call("future-tool", {}, "unknown"),
+                 call("read", {"path": "input.txt"}, "read")]
+        def reply(body):
+            if "tools" not in body:
+                return text("summary of read-only investigation")
+            if isinstance(body["messages"][-1]["content"], list):
+                return text("inspection complete")
+            return tools(*calls)
+        self.reply = reply
+        result = self.run_agent("--read-only", stdin="inspect first\n/compact\ninspect second\n/c\ninspect third\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 7)
+        self.assertEqual((self.cwd / "input.txt").read_text(), "preserve this")
+        self.assertFalse((self.cwd / "blocked.txt").exists())
+        self.assertFalse((self.cwd / "shell-ran").exists())
+        result_sets = []
+        for body, _ in self.requests:
+            if "tools" not in body:
+                continue
+            self.assertEqual({tool["name"] for tool in body["tools"]}, {"read", "glob", "grep", "skill"})
+            self.assertIn("Read-only mode", body["system"])
+            last = body["messages"][-1]["content"]
+            if isinstance(last, list):
+                result_sets.append({item["tool_use_id"]: item for item in last})
+        self.assertEqual(len(result_sets), 3)
+        for results in result_sets:
+            for name in ("write", "edit", "bash", "todo", "task", "review", "unknown"):
+                self.assertTrue(results[name]["is_error"])
+                self.assertIn("ReadOnlyMode", results[name]["content"])
+            self.assertFalse(results["read"]["is_error"])
+            self.assertIn("preserve this", results["read"]["content"])
+
     def test_subagent_task_isolation_explore_restrictions_and_limits(self):
         (self.cwd / "secret.txt").write_text("hidden-intermediate-data\n")
         def reply(body):
@@ -695,9 +735,9 @@ class Integration(unittest.TestCase):
         # Subagent explore schema excludes write/edit/bash/task.
         self.assertEqual({t["name"] for t in self.requests[1][0]["tools"]},
                          {"read", "glob", "grep", "skill"})
-        # Subagent saw ReadOnlySubagent and NestedSubagent errors.
+        # Subagent saw ReadOnlyMode and NestedSubagent errors.
         child_results = {r["tool_use_id"]: r for r in self.requests[2][0]["messages"][-1]["content"]}
-        self.assertIn("ReadOnlySubagent", child_results["c2"]["content"])
+        self.assertIn("ReadOnlyMode", child_results["c2"]["content"])
         self.assertIn("NestedSubagent", child_results["c3"]["content"])
         # Parent history never receives intermediate secret.txt content; only the final report.
         parent_final = json.dumps(self.requests[3][0]["messages"])
