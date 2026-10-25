@@ -34,6 +34,7 @@ pub const help =
     \\  /compact [focus]       Summarize older context on the fast model
     \\  /todo                  Show current session checklist
     \\  /save [name]           Save session under .omnicode/sessions/ (default: latest)
+    \\  /export [name]         Export redacted Markdown under .omnicode/exports/ (default: latest)
     \\  /resume [name]         Resume saved session (default: latest)
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation

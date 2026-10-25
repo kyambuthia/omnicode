@@ -16,6 +16,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Contributor instructions and a change history for future releases.
 - `--dry-run` previews the first proposed tool batch and stops before executing
   any tool calls.
+- `/export [name]` writes a redacted Markdown transcript and checklist to a
+  private file under `.omnicode/exports/`.
 
 ## 0.2.0
 

@@ -29,6 +29,7 @@ const max_tokens_recovery_prompt = "Your previous response hit the output token 
 
 pub const Agent = struct {
     pub const max_bytes = 2 * 1024 * 1024;
+    pub const max_export_bytes = 4 * 1024 * 1024;
     pub const max_messages = 128;
     pub const max_turns = @import("config.zig").default_max_turns;
     pub const max_compactions = 3;
@@ -513,6 +514,53 @@ pub const Agent = struct {
         try @import("storage.zig").writePrivate(self.context.io, self.context.dir, path, data);
     }
 
+    /// Export visible conversation messages, tool calls, results, and the checklist as private Markdown.
+    /// Thinking blocks are omitted. Registered secrets are redacted before formatting.
+    pub fn exportMarkdown(self: *const Agent, name: []const u8) ![]const u8 {
+        if (!tools.validName(name)) return error.InvalidSessionName;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const sa = scratch.allocator();
+        var snapshot = try j.parse(sa, try j.encode(sa, .{
+            .messages = self.history.items,
+            .todo = if (self.context.todo) |todo| todo.slice() else "",
+        }));
+        try self.scrubConversation(sa, &snapshot);
+        var output: Io.Writer.Allocating = .init(sa);
+        try output.writer.print("# Omnicode session: {s}\n\n", .{name});
+        const messages = try j.get(snapshot, "messages");
+        for (messages.array.items) |message| {
+            const role = try j.str(message, "role");
+            try output.writer.print("## {s}\n\n", .{if (std.mem.eql(u8, role, "assistant")) "Assistant" else "User"});
+            const content = try j.get(message, "content");
+            if (content == .string) {
+                try output.writer.print("{s}\n\n", .{content.string});
+                continue;
+            }
+            if (content != .array) return error.InvalidSession;
+            for (content.array.items) |block| {
+                const kind = try j.str(block, "type");
+                if (std.mem.eql(u8, kind, "text")) {
+                    try output.writer.print("{s}\n\n", .{try j.str(block, "text")});
+                } else if (std.mem.eql(u8, kind, "tool_use")) {
+                    try output.writer.print("### Tool call: {s}\n\n", .{try j.str(block, "name")});
+                    try markdownBlock(&output.writer, try j.encode(sa, try j.get(block, "input")));
+                } else if (std.mem.eql(u8, kind, "tool_result")) {
+                    try output.writer.print("### Tool result: {s}\n\n", .{try j.str(block, "tool_use_id")});
+                    try markdownBlock(&output.writer, try j.optional(block, "content", ""));
+                }
+            }
+        }
+        const checklist = try j.optional(snapshot, "todo", "");
+        if (checklist.len > 0) try output.writer.print("## Checklist\n\n{s}\n", .{checklist});
+        const data = try output.toOwnedSlice();
+        if (data.len > max_export_bytes) return error.HistoryLimit;
+        const path = try std.fmt.allocPrint(self.context.a, ".omnicode/exports/{s}.md", .{name});
+        try self.context.dir.createDirPath(self.context.io, ".omnicode/exports");
+        try @import("storage.zig").writePrivate(self.context.io, self.context.dir, path, data);
+        return path;
+    }
+
     /// Resume a saved session from `.omnicode/sessions/<name>.json`.
     pub fn loadSession(self: *Agent, name: []const u8) !void {
         if (!tools.validName(name)) return error.InvalidSessionName;
@@ -808,6 +856,16 @@ fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
     var end = @min(text.len, limit);
     while (end > 0 and !std.unicode.utf8ValidateSlice(text[0..end])) end -= 1;
     return text[0..end];
+}
+
+fn markdownBlock(out: *Io.Writer, value: []const u8) !void {
+    var lines = std.mem.splitScalar(u8, value, '\n');
+    while (lines.next()) |line| {
+        try out.writeAll("    ");
+        try out.writeAll(line);
+        try out.writeByte('\n');
+    }
+    try out.writeByte('\n');
 }
 
 fn formatToolCallError(a: std.mem.Allocator, err: anyerror, name: []const u8, input: j.Value) ![]const u8 {

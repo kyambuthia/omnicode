@@ -731,6 +731,33 @@ class Integration(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.requests), 3)
 
+    def test_export_writes_private_redacted_markdown_with_tools_and_checklist(self):
+        secret = "fixture-export-secret"
+        setup = self.run_agent("--secrets", "set", "TOKEN", secret)
+        self.assertEqual(setup.returncode, 0, setup.stderr)
+        (self.cwd / "source.txt").write_text("fixture source\n")
+        self.reply = lambda _: tools(
+            call("read", {"path": "source.txt"}, "read-id"),
+            call("todo", {"items": [{"task": "inspect source", "done": True}]}, "todo-id"),
+        ) if len(self.requests) == 1 else text("summary " + secret)
+        result = self.run_agent(stdin=f"inspect {secret}\n/export report\n/export ../bad\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Exported session to .omnicode/exports/report.md", result.stdout)
+        self.assertIn("InvalidSessionName", result.stdout)
+        exported = self.cwd / ".omnicode/exports/report.md"
+        self.assertEqual(exported.stat().st_mode & 0o777, 0o600)
+        markdown = exported.read_text()
+        self.assertIn("# Omnicode session: report", markdown)
+        self.assertIn("### Tool call: read", markdown)
+        self.assertIn('    {"path":"source.txt"}', markdown)
+        self.assertIn("### Tool result: read-id", markdown)
+        self.assertIn("fixture source", markdown)
+        self.assertIn("## Checklist", markdown)
+        self.assertIn("1. [x] inspect source", markdown)
+        self.assertIn("[REDACTED:TOKEN]", markdown)
+        self.assertNotIn(secret, markdown)
+        self.assertFalse((self.cwd / "bad.md").exists())
+
     def test_one_shot_session_checkpoints_completed_rounds_and_resumes(self):
         snapshot = self.cwd / ".omnicode/sessions/build.json"
         def reply(body):

@@ -95,6 +95,17 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             try ui.note("Session saved.");
             continue;
         }
+        if (std.mem.eql(u8, line, "/export") or std.mem.startsWith(u8, line, "/export ")) {
+            const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
+            const name = if (raw.len > 0) raw else "latest";
+            const path = agent.exportMarkdown(name) catch |err| {
+                if (err == error.Canceled) return err;
+                try ui.errorMessage(err);
+                continue;
+            };
+            try ui.note(try std.fmt.allocPrint(a, "Exported session to {s}", .{path}));
+            continue;
+        }
         if (std.mem.eql(u8, line, "/resume") or std.mem.startsWith(u8, line, "/resume ")) {
             const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
             const name = if (raw.len > 0) raw else "latest";
