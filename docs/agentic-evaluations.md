@@ -169,3 +169,11 @@ after the first completion check. The final signal check now runs after both
 structured cleanup and restoration of the prior handlers, including ordinary
 error paths. Its proposed timing-only reproduction was not treated as proof: a
 zero exit can also belong to a process that finished before signal delivery.
+
+After installation of the interruption fixes, all five focused signal tests
+also passed against `~/.local/bin/omnicode`. A second paid continuation evaluation
+created `evals/counter-repair-48bo3sgi` and passed in 34.01 seconds with 18 tool
+calls and zero reported tool errors. Both independent reference stages passed,
+the full earlier history prefix was retained, and the checkpoint remained
+private and complete. Tool-error counts are execution-status observations, not
+a substitute for those independent references.
