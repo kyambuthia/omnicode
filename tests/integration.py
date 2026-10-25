@@ -776,6 +776,57 @@ class Integration(unittest.TestCase):
         self.assertIn("<summary>", self.requests[-1][0]["messages"][0]["content"])
         self.assertIn("- tool write: kept.txt", self.requests[-1][0]["messages"][0]["content"])
 
+    def test_turn_limit_can_resume_and_budget_changes_apply_next_request(self):
+        calls = 0
+        def reply(body):
+            nonlocal calls
+            if "tools" not in body:
+                return text("summary of completed file updates")
+            calls += 1
+            if calls <= 4:
+                return tools(call("write", {"path": "progress.txt", "content": str(calls)}, f"step-{calls}"))
+            if calls == 5:
+                self.assertIn("progress.txt", json.dumps(body["messages"]))
+                self.assertIn("Completed before failure", json.dumps(body["messages"]))
+                return tools(call("bash", {"cmd": "printf resumed"}, "resume"))
+            return text("resumed successfully")
+        self.reply = reply
+        result = self.run_agent(stdin=(
+            "/setup set MAX_TURNS 1\nfix task\n"
+            "/setup set MAX_TURNS 2\ncontinue\n/q\n"
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("TurnLimit", result.stdout)
+        self.assertIn("enter continue to resume", result.stdout)
+        self.assertNotIn("Conversation limit reached", result.stdout)
+        self.assertIn("resumed successfully", result.stdout)
+        self.assertEqual((self.cwd / "progress.txt").read_text(), "4")
+        self.assertEqual(calls, 6)
+        self.assertEqual(len(self.requests), 9)  # Six model calls plus three compactions.
+        result = self.run_agent("--setup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("MAX_TURNS   = 2", result.stdout)
+
+    def test_invalid_turn_budget_blocks_requests_and_preserves_settings(self):
+        self.env["PROVIDER"] = "openrouter"
+        for value in ("0", "257", "-1", "invalid"):
+            with self.subTest(value=value):
+                self.env["MAX_TURNS"] = value
+                result = self.run_agent(stdin="inspect project\n/q\n")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("InvalidTurnLimit", result.stdout)
+                self.assertEqual(self.requests, [])
+                self.assertEqual(self.catalog_requests, [])
+        self.env.pop("MAX_TURNS")
+        result = self.run_agent("--setup", "set", "MAX_TURNS", "64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = self.cwd / ".config/omnicode/config.env"
+        saved = config.read_bytes()
+        result = self.run_agent("--setup", "set", "MAX_TURNS", "0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("InvalidTurnLimit", result.stderr)
+        self.assertEqual(config.read_bytes(), saved)
+
     def test_loop_is_bounded(self):
         self.reply = lambda body: text("summary of progress") if "tools" not in body else tools(call("bash", {"cmd": "printf ok"}))
         result = self.run_agent("fix bug")

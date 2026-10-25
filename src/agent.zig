@@ -15,7 +15,7 @@ const max_tokens_recovery_prompt = "Your previous response hit the output token 
 pub const Agent = struct {
     pub const max_bytes = 2 * 1024 * 1024;
     pub const max_messages = 128;
-    pub const max_turns = 32;
+    pub const max_turns = @import("config.zig").default_max_turns;
     pub const max_compactions = 3;
     pub const max_continuations = 2;
     pub const compact_messages = 96;
@@ -79,6 +79,7 @@ pub const Agent = struct {
     }
 
     pub fn respond(self: *Agent, prompt: []const u8, ui: Ui) !void {
+        const turn_budget = if (self.env.get("MAX_TURNS")) |value| try @import("config.zig").parseMaxTurns(value) else self.turn_budget;
         const a = self.context.a;
         var route = if (self.automatic) self.route.forTask(self.env, prompt) else self.route;
         var metadata = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -115,7 +116,7 @@ pub const Agent = struct {
         var continuations: usize = 0;
         var last_failed_sig: []const u8 = "";
         while (true) {
-            if (turns == self.turn_budget) {
+            if (turns == turn_budget) {
                 if (compactions >= self.compaction_budget) return error.TurnLimit;
                 try self.compact(ui, &usage, null);
                 compactions += 1;

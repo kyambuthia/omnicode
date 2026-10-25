@@ -384,7 +384,18 @@ and process waiting; the direct child is killed
 on timeout or output overflow. This is not process-tree isolation: descendants
 may outlive it. HTTP requests have a 120-second deadline and a 2 MiB response
 limit. Redirects are disabled. Requests are limited to 2 MiB serialized history,
-128 messages, 64 content blocks per response, and 32 model calls per user turn.
+128 messages and 64 content blocks per response. The parent agent allows 32 model
+calls per compaction batch by default, with at most three automatic compactions
+per user request. These budgets stop runaway tool loops. Set `MAX_TURNS` to an
+integer from 1 to 256 to change the batch limit; `/setup set MAX_TURNS 64` persists
+it and applies to the next request. `/setup unset MAX_TURNS` restores the default.
+Child-agent budgets remain separate and unchanged.
+
+`TurnLimit` means the model-call budget was exhausted, rather than that the
+conversation is full. In the REPL, completed work is retained in a summary when
+available. Inspect completed tool effects, then enter `continue` to resume from
+that state. Tool actions are not rolled back; avoid restarting the original task
+blindly when earlier commands may already have changed files.
 
 Outgoing headers are validated before connecting. Invalid field names and unsafe
 control bytes in values (including credentials supplied through the environment)

@@ -3,6 +3,14 @@ const Io = std.Io;
 const router = @import("router.zig");
 const status = @import("status.zig");
 
+pub const default_max_turns: usize = 32;
+
+pub fn parseMaxTurns(value: []const u8) !usize {
+    const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidTurnLimit;
+    if (count == 0 or count > 256) return error.InvalidTurnLimit;
+    return count;
+}
+
 const max_file_bytes = 64 * 1024;
 const version_prefix = "# Omnicode configuration v";
 const header = "# Omnicode configuration v2 (JSON values; managed by /setup)";
@@ -24,6 +32,7 @@ pub const allowed_keys = [_][]const u8{
     "API_URL",
     "MODELS_URL",
     "OMNICODE_STATUS",
+    "MAX_TURNS",
 };
 
 pub fn isAllowedKey(key: []const u8) bool {
@@ -119,6 +128,7 @@ fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8) !std
             val = val[1 .. val.len - 1];
         }
         if (std.mem.indexOfAny(u8, val, "\x00\r\n") != null) return error.InvalidConfigValue;
+        if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(val);
         // First entry wins, matching the legacy startup loader.
         var duplicate = false;
         for (list.items) |entry| {
@@ -150,6 +160,7 @@ pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.
     if (value.len == 0 or std.mem.indexOfAny(u8, value, "\x00\r\n") != null) return error.InvalidConfigValue;
     if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
         try @import("http.zig").validateEndpoint(value);
+    if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(value);
     const path = try configPath(a, env);
     var entries = try readEntries(a, io, dir, path);
     var replaced = false;
@@ -224,12 +235,13 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
         \\  MODEL       = {s}
         \\  FAST_MODEL  = {s}
         \\  VOICE_MODEL = {s}
+        \\  MAX_TURNS   = {s} (1-256 per compaction batch; default 32)
         \\Usage:
         \\  /setup <provider> <api_key>     Save API key (e.g. /setup openrouter sk-or-...)
         \\  /setup set <KEY> <VALUE>        Set PROVIDER, MODEL, FAST_MODEL, VOICE_MODEL, etc.
         \\  /setup unset <provider|KEY>     Remove a saved key or setting
         \\
-    , .{ active_provider, active_model, fast_model, voice_model });
+    , .{ active_provider, active_model, fast_model, voice_model, env.get("MAX_TURNS") orelse "32" });
     return out.toOwnedSlice();
 }
 
@@ -488,4 +500,27 @@ test "environment allocation failures occur before config writes or partial load
             try std.testing.expect(env.get("FAST_MODEL") == null);
         }
     }
+}
+
+test "turn limit settings are bounded and invalid updates preserve live and saved values" {
+    try std.testing.expectEqual(1, try parseMaxTurns("1"));
+    try std.testing.expectEqual(256, try parseMaxTurns("256"));
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(a);
+    try env.put("OMNICODE_CONFIG", "config.env");
+    try set(a, std.testing.io, tmp.dir, &env, "MAX_TURNS", "64");
+    const saved = try tmp.dir.readFileAlloc(std.testing.io, "config.env", a, .limited(max_file_bytes));
+    for ([_][]const u8{ "0", "257", "-1", "1.5", "forever", "999999999999999999999999999999" }) |invalid| {
+        try std.testing.expectError(error.InvalidTurnLimit, set(a, std.testing.io, tmp.dir, &env, "MAX_TURNS", invalid));
+        try std.testing.expectEqualStrings("64", env.get("MAX_TURNS").?);
+        try std.testing.expectEqualStrings(saved, try tmp.dir.readFileAlloc(std.testing.io, "config.env", a, .limited(max_file_bytes)));
+    }
+    var fresh = std.process.Environ.Map.init(a);
+    try fresh.put("OMNICODE_CONFIG", "config.env");
+    try loadIntoEnv(a, std.testing.io, tmp.dir, &fresh);
+    try std.testing.expectEqualStrings("64", fresh.get("MAX_TURNS").?);
 }

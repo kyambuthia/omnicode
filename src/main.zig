@@ -34,7 +34,7 @@ const help =
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
-    \\Config: PROVIDER=abliteration|anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL
+    \\Config: PROVIDER=abliteration|anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL, MAX_TURNS
     \\Keys: OPENROUTER_API_KEY, ANTHROPIC_API_KEY, etc. (or run /setup). Searches require rg.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
@@ -505,7 +505,7 @@ fn run(init: std.process.Init) !void {
                 try ui.errorMessage(err);
                 if (agent.retainCompletedWork(arena.allocator()) catch false) {
                     if (agent.resetArena(&arena)) |_| {
-                        try out.writeAll("  completed work retained in summary. Inspect tool effects before retrying.\n");
+                        try out.writeAll("  completed work retained in summary. Inspect tool effects, then enter continue to resume.\n");
                         continue;
                     } else |_| {}
                 }
