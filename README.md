@@ -296,7 +296,8 @@ code stays literal. Plain output preserves Markdown source.
 When both input and output are interactive, a small raw-mode composer supports
 append, backspace, Up/Down arrow history navigation across the last 32 single-line
 commands, Ctrl-C to discard input, Ctrl-D on empty input to quit, and bracketed
-paste. Pasted newlines remain in one prompt until Enter is pressed. Input is capped
+paste. History retains complete, valid UTF-8 entries up to 1 KiB; longer entries
+are submitted normally but omitted from arrow-key history. Pasted newlines remain in one prompt until Enter is pressed. Input is capped
 at 16 KiB; overflow discards the prompt on submission. Terminal settings are
 restored on return, errors, and EOF, before model or tool work. Pipes, dumb
 terminals, and `NO_COLOR` use canonical input. Arbitrary cursor movement and a

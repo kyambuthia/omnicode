@@ -11,14 +11,15 @@ pub const Input = struct {
     empty_interrupt: bool = false,
 
     pub fn record(self: *Input, entry: []const u8) void {
-        if (entry.len == 0 or std.mem.indexOfScalar(u8, entry, '\n') != null) return;
+        if (entry.len == 0 or entry.len > self.history[0].len or
+            std.mem.indexOfScalar(u8, entry, '\n') != null or !std.unicode.utf8ValidateSlice(entry)) return;
         if (std.mem.startsWith(u8, entry, "/secrets") or std.mem.startsWith(u8, entry, "/setup") or std.mem.startsWith(u8, entry, "/provider")) return;
         if (self.count > 0) {
             const prev = (self.count - 1) % self.history.len;
             if (std.mem.eql(u8, self.history[prev][0..self.lengths[prev]], entry)) return;
         }
         const slot = self.count % self.history.len;
-        const len = @min(entry.len, self.history[slot].len);
+        const len = entry.len;
         @memcpy(self.history[slot][0..len], entry[0..len]);
         self.lengths[slot] = len;
         self.count += 1;
@@ -230,4 +231,21 @@ test "plain input accepts the boundary and drains oversized lines through EOF" {
     try std.testing.expectEqualStrings("", (try input.readPlain(&reader)).?);
     try std.testing.expectError(error.InputTooLong, input.readPlain(&reader));
     try std.testing.expectEqual(null, try input.readPlain(&reader));
+}
+
+test "history stores complete UTF-8 entries without truncating prompts" {
+    var input: Input = .{};
+    const prefix: [1023]u8 = @splat('a');
+    input.record("keep this");
+    input.record(prefix ++ "é");
+    try std.testing.expectEqual(1, input.count);
+    try std.testing.expectEqualStrings("keep this", input.getHistory(0));
+    input.record("invalid\xff");
+    try std.testing.expectEqual(1, input.count);
+    const exact = @as([1022]u8, @splat('a')) ++ "é";
+    input.record(exact);
+    try std.testing.expectEqualStrings(exact, input.getHistory(1));
+    try std.testing.expect(std.unicode.utf8ValidateSlice(input.getHistory(1)));
+    input.record(exact);
+    try std.testing.expectEqual(2, input.count);
 }
