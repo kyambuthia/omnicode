@@ -107,7 +107,11 @@ fn run(init: std.process.Init) !void {
         if (first == args.len or (!prompt_only and std.mem.startsWith(u8, args[first], "-")))
             return error.SessionRequiresPrompt;
     }
-    try core.config.loadIntoEnv(a, init.io, .cwd(), init.environ_map);
+    const setup_command = if (!prompt_only and args.len > first and std.mem.eql(u8, args[first], "--setup"))
+        try std.mem.join(a, " ", args[first + 1 ..])
+    else
+        null;
+    try core.config.loadForUpdate(a, init.io, .cwd(), init.environ_map, if (setup_command) |command| core.config.repairKey(command) else null);
     try secrets.load(a, init.io, .cwd(), init.environ_map);
     try secrets.injectEnv(init.environ_map);
     const context: core.Context = .{ .a = a, .io = init.io, .dir = .cwd(), .secrets = &secrets, .env = init.environ_map };
@@ -131,9 +135,8 @@ fn run(init: std.process.Init) !void {
         try full.preview(msg, "");
         return out.flush();
     }
-    if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--setup")) {
-        const rest = try std.mem.join(a, " ", args[first + 1 ..]);
-        const msg = try core.config.execute(a, init.io, .cwd(), init.environ_map, rest);
+    if (setup_command != null) {
+        const msg = try core.config.execute(a, init.io, .cwd(), init.environ_map, setup_command.?);
         var full = ui;
         full.verbose = true;
         try full.preview(msg, "");

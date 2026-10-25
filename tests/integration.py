@@ -1398,6 +1398,42 @@ class Integration(unittest.TestCase):
         self.assertNotIn("ToolLimit", result.stdout + result.stderr)
         self.assertTrue(all((self.cwd / name).exists() for name in ("first", "second", "third")))
 
+    def test_setup_repairs_only_the_targeted_invalid_saved_limit(self):
+        config = self.cwd / "repair.env"
+        self.env["OMNICODE_CONFIG"] = str(config)
+        for key in ("MAX_TURNS", "MAX_TOOL_CALLS"):
+            for command in (("set", key, "5"), ("unset", key), (key.lower(), "5")):
+                with self.subTest(key=key, command=command):
+                    config.write_text(f"{key}=0\nMODEL=preserve-model\n")
+                    result = self.run_agent("--setup", *command)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    saved = config.read_text()
+                    self.assertIn('MODEL="preserve-model"', saved)
+                    if command[0] == "unset":
+                        self.assertNotIn(key + "=", saved)
+                    else:
+                        self.assertIn(key + '="5"', saved)
+        invalid = "MAX_TOOL_CALLS=0\nMODEL=preserve-model\n"
+        for command in (("set", "MAX_TOOL_CALLS", "4097"),
+                        ("set", "MODEL", "replacement"), ("unset", "MODEL")):
+            config.write_text(invalid)
+            result = self.run_agent("--setup", *command)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(config.read_text(), invalid)
+        invalid = "MAX_TOOL_CALLS=0\nMAX_TURNS=0\n"
+        config.write_text(invalid)
+        result = self.run_agent("--setup", "set", "MAX_TOOL_CALLS", "5")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(config.read_text(), invalid)
+        for invalid in ('# Omnicode configuration v2 (JSON values; managed by /setup)\nMAX_TOOL_CALLS=broken-json\n',
+                        'MAX_TOOL_CALLS=bad\x00value\n'):
+            config.write_text(invalid)
+            result = self.run_agent("--setup", "unset", "MAX_TOOL_CALLS")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(config.read_text(), invalid)
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.catalog_requests, [])
+
     def test_invalid_tool_limits_fail_before_api_requests(self):
         for value in ("0", "4097", "-1", "invalid"):
             with self.subTest(value=value):

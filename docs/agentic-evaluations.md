@@ -398,3 +398,23 @@ outside `respond` in the current REPL flow. The parent batch-stop path was not
 inspected by that reviewer; integration tests verify it directly. Its invalid
 saved-config repair concern is a separate supported follow-up. Reviews remain
 inputs to verification rather than automatic findings.
+
+### Targeted recovery of invalid saved limits
+
+Confirmed that `MAX_TOOL_CALLS=0` in a hand-edited config blocked startup before
+`--setup set MAX_TOOL_CALLS 5` could repair it. The same startup ordering affected
+`MAX_TURNS`. Explicit set/unset commands now skip only the targeted old limit's
+range validation while loading and updating the file. Replacement validation,
+other settings, JSON parsing, control-character checks, private atomic writes,
+and strict startup for ordinary requests retain their existing behavior.
+
+Integration coverage verifies both limits, shorthand setup, preserved unrelated
+settings, invalid replacements, unrelated invalid limits, malformed JSON, and
+control characters. These recovery commands make no model or catalog requests.
+
+A fresh paid DeepSeek repair-and-resume run in
+`omnicode-lab/evals/counter-repair-y1_8owwn` used `MAX_TOOL_CALLS=24`.
+The repair completed in 40.91 seconds with 23 tools and one failed tool; independent
+reference checks passed. The resumed extension also passed independent checks,
+retained the original history prefix, and left a valid checkpoint. This run
+exercised ordinary bounded completion; denial is covered by deterministic tests.

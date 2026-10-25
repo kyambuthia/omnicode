@@ -475,6 +475,12 @@ default is 256; accepted values are 1–4096. For a small investigation, run
 with `/setup set MAX_TOOL_CALLS 512`. The budget resets for each new user request
 and also applies to `/review`. Completion totals include child tools.
 
+If an invalid saved `MAX_TURNS` or `MAX_TOOL_CALLS` blocks startup, repair that
+key with `omnicode --setup set MAX_TOOL_CALLS 256` or remove it with
+`omnicode --setup unset MAX_TOOL_CALLS` (substitute `MAX_TURNS` as needed).
+Replacement values are validated before saving. Other invalid settings and
+malformed config files still need separate correction.
+
 When a batch exceeds the remaining budget, earlier calls in that batch may have
 completed; later calls receive `ToolLimit` results without executing. The agent
 records the complete batch and checkpoints named tasks before stopping, without

@@ -90,8 +90,13 @@ pub fn configPath(a: std.mem.Allocator, env: *const std.process.Environ.Map) ![]
 
 /// Load persisted settings into `env` without overwriting variables already set in the process environment.
 pub fn loadIntoEnv(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map) !void {
+    return loadForUpdate(a, io, dir, env, null);
+}
+
+/// Only an explicit numeric-setting repair may bypass that setting's old range check.
+pub fn loadForUpdate(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, repair_key: ?[]const u8) !void {
     const path = try configPath(a, env);
-    const entries = try readEntries(a, io, dir, path);
+    const entries = try readEntries(a, io, dir, path, repair_key);
     var pending = std.process.Environ.Map.init(env.allocator);
     defer pending.deinit();
     for (entries.items) |entry| {
@@ -104,7 +109,7 @@ pub fn loadIntoEnv(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.
 
 const Entry = struct { key: []const u8, val: []const u8 };
 
-fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8) !std.ArrayList(Entry) {
+fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, repair_key: ?[]const u8) !std.ArrayList(Entry) {
     var list: std.ArrayList(Entry) = .empty;
     const text = @import("storage.zig").readRegular(io, dir, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
         error.FileNotFound => return list,
@@ -136,8 +141,11 @@ fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8) !std
             val = val[1 .. val.len - 1];
         }
         if (std.mem.indexOfAny(u8, val, "\x00\r\n") != null) return error.InvalidConfigValue;
-        if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(val);
-        if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(val);
+        const repairing = if (repair_key) |target| std.mem.eql(u8, key, target) else false;
+        if (!repairing) {
+            if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(val);
+            if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(val);
+        }
         // First entry wins, matching the legacy startup loader.
         var duplicate = false;
         for (list.items) |entry| {
@@ -172,7 +180,7 @@ pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.
     if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(value);
     if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(value);
     const path = try configPath(a, env);
-    var entries = try readEntries(a, io, dir, path);
+    var entries = try readEntries(a, io, dir, path, key);
     var replaced = false;
     for (entries.items) |*e| {
         if (std.mem.eql(u8, e.key, key)) {
@@ -200,7 +208,7 @@ fn applyPending(env: *std.process.Environ.Map, pending: *std.process.Environ.Map
 pub fn unset(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8) !void {
     if (!isAllowedKey(key)) return error.InvalidConfigKey;
     const path = try configPath(a, env);
-    const entries = try readEntries(a, io, dir, path);
+    const entries = try readEntries(a, io, dir, path, key);
     var kept: std.ArrayList(Entry) = .empty;
     for (entries.items) |e| {
         if (!std.mem.eql(u8, e.key, key)) try kept.append(a, e);
@@ -254,6 +262,20 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
         \\
     , .{ active_provider, active_model, fast_model, voice_model, env.get("MAX_TURNS") orelse "32", env.get("MAX_TOOL_CALLS") orelse "256" });
     return out.toOwnedSlice();
+}
+
+/// Identify the exact limit targeted by a syntactically complete setup command.
+pub fn repairKey(command: []const u8) ?[]const u8 {
+    var parts = std.mem.tokenizeAny(u8, std.mem.trim(u8, command, " \t\r\n"), " \t");
+    const first = parts.next() orelse return null;
+    const removing = std.mem.eql(u8, first, "unset") or std.mem.eql(u8, first, "clear");
+    const explicit_set = std.mem.eql(u8, first, "set");
+    const target = if (removing or explicit_set) parts.next() orelse return null else first;
+    if (removing) {
+        if (parts.next() != null) return null;
+    } else if (std.mem.trim(u8, parts.rest(), " \t").len == 0) return null;
+    const key = resolveKeyName(target) orelse return null;
+    return if (std.mem.eql(u8, key, "MAX_TURNS") or std.mem.eql(u8, key, "MAX_TOOL_CALLS")) key else null;
 }
 
 /// Process a `/setup ...` or `--setup ...` argument string and return a user-facing summary message.
