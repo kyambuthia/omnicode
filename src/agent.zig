@@ -680,6 +680,17 @@ pub const Agent = struct {
 };
 
 fn formatToolCallError(a: std.mem.Allocator, err: anyerror, name: []const u8, input: j.Value) ![]const u8 {
+    if (err == error.MissingField or err == error.ExpectedString or err == error.ExpectedObject or
+        err == error.ExpectedBoolean or err == error.ExpectedNaturalNumber)
+    {
+        const definitions = try j.parse(a, tools.schema);
+        for (definitions.array.items) |definition| {
+            if (!std.mem.eql(u8, try j.str(definition, "name"), name)) continue;
+            return std.fmt.allocPrint(a, "error: {s} (invalid arguments for {s}; expected input schema: {s})", .{
+                @errorName(err), name, try j.encode(a, try j.get(definition, "input_schema")),
+            });
+        }
+    }
     if (err == error.Timeout and std.mem.eql(u8, name, "bash")) {
         const milliseconds = j.number(input, "timeout_ms", 30_000) catch 30_000;
         return std.fmt.allocPrint(a, "error: Timeout (command exceeded {d}ms deadline; run a faster non-interactive command, narrow scope, or set timeout_ms up to 300000)", .{milliseconds});

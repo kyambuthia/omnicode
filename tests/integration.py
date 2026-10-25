@@ -667,6 +667,27 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
 
+    def test_invalid_tool_arguments_return_schema_for_recovery(self):
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("bash", {"command": "touch should-not-run"}, "bad"))
+            if len(self.requests) == 2:
+                error = body["messages"][-1]["content"][0]
+                self.assertTrue(error["is_error"])
+                self.assertIn("MissingField", error["content"])
+                self.assertIn('"required":["cmd"]', error["content"])
+                self.assertNotIn("touch should-not-run", error["content"])
+                return tools(call("bash", {"cmd": "printf recovered"}, "good"))
+            return text("finished")
+        self.reply = reply
+        result = self.run_agent("execute a command")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.cwd / "should-not-run").exists())
+        self.assertEqual(len(self.requests), 3)
+        good = self.requests[-1][0]["messages"][-1]["content"][0]
+        self.assertFalse(good["is_error"])
+        self.assertEqual(good["content"], "recovered")
+
     def test_write_creates_parent_directories_and_read_only_creates_nothing(self):
         self.reply = lambda body: tools(call("write", {"path": "nested/tests/output.txt", "content": "created"})) if len(self.requests) == 1 else text("done")
         result = self.run_agent("create nested file")
