@@ -498,7 +498,12 @@ and preservation of inputs. Each project retains the agent transcript, baseline
 and reference logs, and a `result.json` with exit codes, elapsed time, and tool
 counts. It uses the CLI's configured DeepSeek credential and makes paid calls;
 it is separate from the offline test suite. `--model`, `--projects`, and
-`--timeout` customize the run.
+`--timeout` customize the run (the timeout applies to each paid task).
+Add `--exercise-resume` to run two paid tasks through `--session repair`: repair
+the seed, then extend it with an iterator-safe total-count API. This retains
+`resume.log` and `resume-reference.log`, checks the extension independently, and
+reports checkpoint permissions/completion and whether the earlier message prefix
+was retained. Compaction can replace that prefix with a summary.
 
 The Python standard-library integration suite runs the actual binary in temporary
 workspaces against a loopback mock Messages server, with fake keys and no paid

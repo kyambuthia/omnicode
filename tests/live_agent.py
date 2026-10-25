@@ -32,7 +32,9 @@ def main():
     parser.add_argument("--model", default="deepseek-flash")
     parser.add_argument("--projects", type=Path,
                         default=Path.home() / "Projects/omnicode-lab/evals")
-    parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--exercise-resume", action="store_true",
+                        help="also extend the repaired project through a named session (two paid tasks)")
+    parser.add_argument("--timeout", type=int, default=600, help="deadline per paid task in seconds")
     args = parser.parse_args()
     if args.timeout < 1:
         parser.error("--timeout must be positive")
@@ -72,28 +74,59 @@ Report exact verification commands and observed results.
                API_URL="https://api.deepseek.com/anthropic/v1/messages",
                MAX_TURNS="12", MAX_TOKENS="8192")
     started = time.monotonic()
-    timed_out = False
-    with (project / "agent.log").open("w") as log:
-        try:
-            agent = subprocess.run([binary, "Read OMNICODE.md and complete the repair. "
-                                    "Reproduce the failure, fix the implementation, add edge "
-                                    "tests, run all tests, and report the results."],
-                                   cwd=project, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                   timeout=args.timeout)
-            agent_exit = agent.returncode
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            agent_exit = None
+    session_args = ["--session", "repair"] if args.exercise_resume else []
+    def invoke(prompt, filename):
+        with (project / filename).open("w") as log:
+            try:
+                agent = subprocess.run([binary, *session_args, prompt], cwd=project, env=env,
+                                       stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout)
+                return agent.returncode, False
+            except subprocess.TimeoutExpired:
+                return None, True
+    agent_exit, timed_out = invoke("Read OMNICODE.md and complete the repair. "
+                                  "Reproduce the failure, fix the implementation, add edge "
+                                  "tests, run all tests, and report the results.", "agent.log")
     reference = subprocess.run(["python3", "-c", REFERENCE], cwd=project,
                                capture_output=True, text=True, timeout=30)
     (project / "reference.log").write_text(reference.stdout + reference.stderr)
+    resume = {}
+    if args.exercise_resume and agent_exit == 0 and reference.returncode == 0:
+        snapshot = project / ".omnicode/sessions/repair.json"
+        before = json.loads(snapshot.read_text())["messages"]
+        resumed_exit, resumed_timeout = invoke(
+            "Extend the repaired project from our saved progress. Add tally_total(values) "
+            "to counter.py, returning (counts, total), where counts uses the existing tally "
+            "normalization rules and total is the number of nonblank normalized items. "
+            "Accept one-pass iterators and preserve inputs. Add edge tests, run them, and "
+            "report results. Keep the existing tally API. Do not delegate.", "resume.log")
+        extra = REFERENCE + '''for values in [[], ["A", " a ", ""], ["Straße", "STRASSE", " "]]:
+    original = values.copy()
+    expected = counter.tally(values)
+    assert counter.tally_total(iter(values)) == (expected, sum(expected.values()))
+    assert values == original
+print("resumed extension checks passed")
+'''
+        checked = subprocess.run(["python3", "-c", extra], cwd=project,
+                                 capture_output=True, text=True, timeout=30)
+        (project / "resume-reference.log").write_text(checked.stdout + checked.stderr)
+        after = json.loads(snapshot.read_text())["messages"]
+        prefix = after[:len(before)] == before
+        checkpoint_valid = (bool(after) and after[-1]["role"] == "assistant" and
+                            snapshot.stat().st_mode & 0o777 == 0o600)
+        resume = {"resumed_agent_exit": resumed_exit, "resumed_timed_out": resumed_timeout,
+                  "resumed_reference_exit": checked.returncode, "history_prefix_retained": prefix,
+                  "checkpoint_valid": checkpoint_valid,
+                  "resumed_passed": resumed_exit == 0 and checked.returncode == 0 and checkpoint_valid}
     log = (project / "agent.log").read_text(errors="replace")
+    if (project / "resume.log").exists():
+        log += (project / "resume.log").read_text(errors="replace")
     result = {"project": str(project), "model": args.model, "baseline_exit": baseline.returncode,
               "agent_exit": agent_exit, "timed_out": timed_out,
               "reference_exit": reference.returncode,
               "elapsed_seconds": round(time.monotonic() - started, 2),
               "tool_calls": log.count("• "), "failed_tools": log.count("✗ Failed"),
-              "passed": agent_exit == 0 and reference.returncode == 0}
+              "passed": agent_exit == 0 and reference.returncode == 0 and
+                        (not args.exercise_resume or resume.get("resumed_passed", False)), **resume}
     (project / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2), flush=True)
     return 0 if result["passed"] else 1

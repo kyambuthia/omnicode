@@ -127,3 +127,18 @@ advertise `cmd` as canonical. A shared resolver rejects conflicting values and
 invalid types, and drives execution, the command preview, and retained summaries.
 Offline regressions verify that conflicting, mistyped, and NUL-containing inputs
 do not execute, while both supported spellings preserve execution status.
+
+## Repeatable paid continuation evaluation
+
+```sh
+python3 tests/live_agent.py --allow-paid-api --exercise-resume
+```
+
+The first run against the installed ReleaseSafe binary created
+`evals/counter-repair-qimz5h4e` and passed in 28.47 seconds with 16 tool calls and
+one failed tool (the expected failing baseline test command). Both paid tasks
+exited zero; independent repair and extension references passed. The named
+checkpoint retained the full earlier message prefix, ended with an assistant
+response, and had mode `0600`. The evaluator retains separate agent/reference
+logs for both tasks and reports these outcomes in `result.json`. This is one
+successful run, not a model reliability estimate.
