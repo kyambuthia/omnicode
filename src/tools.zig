@@ -194,7 +194,7 @@ pub const Context = struct {
         for (argv) |arg| {
             if (std.mem.indexOfScalar(u8, arg, 0) != null) return error.InvalidCommandArgument;
         }
-        const result = try @import("deadline.zig").run(c.io, std.process.run, .{ c.a, c.io, std.process.RunOptions{
+        const result = try @import("deadline.zig").run(c.io, @import("command.zig").run, .{ c.a, c.io, std.process.RunOptions{
             .argv = argv,
             .cwd = .{ .dir = c.dir },
             .environ_map = c.env,

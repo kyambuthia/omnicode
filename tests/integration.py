@@ -667,6 +667,23 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
 
+    def test_timed_out_shell_cannot_leave_a_child_writing_afterward(self):
+        command = 'python3 -c \'import time; from pathlib import Path; time.sleep(0.4); Path("late-write").write_text("orphan")\' & wait'
+        self.reply = lambda body: tools(call("bash", {"cmd": command, "timeout_ms": 50})) if len(self.requests) == 1 else text("finished")
+        result = self.run_agent("run a bounded command")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Timeout", result.stdout)
+        time.sleep(0.6)
+        self.assertFalse((self.cwd / "late-write").exists())
+
+    def test_command_timeout_kills_a_term_ignoring_leader(self):
+        self.reply = lambda body: tools(call("bash", {"cmd": "trap '' TERM; exec sleep 10 >/dev/null 2>&1", "timeout_ms": 50})) if len(self.requests) == 1 else text("finished")
+        started = time.monotonic()
+        result = self.run_agent("run a bounded command")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Timeout", result.stdout)
+        self.assertLess(time.monotonic() - started, 3)
+
     def test_successful_error_prefixed_output_keeps_success_status(self):
         def reply(body):
             if len(self.requests) == 1:

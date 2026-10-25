@@ -396,9 +396,11 @@ File reads/writes/edits are limited to 1 MiB; formatted reads and skill bodies
 to 64 KiB. Command output retains up to 64 KiB total, with collection capped
 at 256 KiB per stream. Commands have a 30-second default deadline (`bash` can
 request up to five minutes with `timeout_ms`), covering both output collection
-and process waiting; the direct child is killed
-on timeout or output overflow. This is not process-tree isolation: descendants
-may outlive it. HTTP requests have a 120-second deadline and a 2 MiB response
+and process waiting. Commands run in their own process group; timeout or output
+overflow cleanup sends SIGKILL to that group and reaps the leader, including when
+SIGTERM is ignored. Descendants that deliberately move to another process group
+can escape this cleanup. Successfully completed commands retain their normal
+behavior, including explicitly detached background jobs. HTTP requests have a 120-second deadline and a 2 MiB response
 limit. Redirects are disabled. Requests are limited to 2 MiB serialized history,
 128 messages and 64 content blocks per response. The parent agent allows 32 model
 calls per compaction batch by default, with at most three automatic compactions
