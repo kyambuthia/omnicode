@@ -17,6 +17,7 @@ fixtures or source control. Provider responses did not report dollar costs.
 | Journalbox boundary repair | 49 | 1 | 17 tests pass; independent raw HTTP probes return 404 for oversized IDs and 413 for a 5,000-digit Content-Length, with empty server stderr |
 | Intervalkit first named session | 12 | 0 | 15 tests pass; 300 independent randomized merge checks pass |
 | Intervalkit resumed extension | 16 | 1 | 29 tests pass; 500 independent randomized gap checks pass; complete 18-message prefix retained in the final 42-message checkpoint |
+| Intervalkit JSON CLI extension | 42 | 6 | 44 tests pass; 80 independent randomized CLI checks, nine invalid-input classes, and the exact 1 MiB input boundary pass |
 
 Failed-tool counts include expected failures while reproducing bugs. These are
 individual, different tasks, not a controlled model-quality comparison or a
@@ -111,3 +112,18 @@ binary successfully reduced Intervalkit's 42-message history to four messages,
 retaining its original goal and checklist with mode `0600`. This particular
 summary completed on the first attempt; bounded retry behavior is covered by
 the local API fixtures rather than inferred from this successful paid call.
+
+The third Intervalkit invocation resumed the same named session and committed a
+JSON CLI as `4822d12`. It completed in 141.1 seconds through two automatic
+compactions; both summaries completed without retry. The final valid checkpoint
+contained 20 messages. Independent subprocess probes covered malformed JSON,
+invalid UTF-8, bool endpoints, NaN/Infinity, excessive nesting, oversized integer
+literals, non-array input, oversized input, and the accepted exact byte limit.
+
+Two shell calls used the unadvertised `command` field instead of `cmd`; this
+was confirmed by inspecting input field names in the live checkpoint. Runtime
+execution now accepts `command` as a compatibility alias while continuing to
+advertise `cmd` as canonical. A shared resolver rejects conflicting values and
+invalid types, and drives execution, the command preview, and retained summaries.
+Offline regressions verify that conflicting, mistyped, and NUL-containing inputs
+do not execute, while both supported spellings preserve execution status.

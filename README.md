@@ -404,7 +404,7 @@ files immediately. Keep skills local and trusted.
 | Tool | Behavior |
 |---|---|
 | `read` | Numbered lines; zero-based `offset`, default `limit=200`; marks truncation |
-| `write` | Create or overwrite a file; parent directory must already exist |
+| `write` | Create or overwrite a file; create missing parent directories after validating input |
 | `edit` | Exact nonempty string replacement; reject repeated matches unless `all=true` |
 | `glob` | `rg --files --glob`; respects ripgrep glob and ignore rules |
 | `grep` | Ripgrep regex search with line numbers; up to 50 matches per file |
