@@ -366,6 +366,7 @@ pub const Ui = struct {
             error.HistoryLimit => "Conversation size limit reached. Use /compact or start a smaller task.",
             error.ToolLimit => "Shared tool-call budget reached for this request, including delegated work. Inspect completed effects and resume, or use /setup set MAX_TOOL_CALLS 512 (default 256; range 1-4096).",
             error.InvalidToolLimit => "MAX_TOOL_CALLS must be an integer from 1 to 4096 (default 256). Correct it in the environment or saved configuration; in an active REPL use /setup set MAX_TOOL_CALLS 512 or /setup unset MAX_TOOL_CALLS.",
+            error.InvalidRequestRate => "MAX_REQUESTS_PER_MINUTE must be an integer from 0 to 600 (default 60; 0 disables pacing). Correct it in the environment or saved configuration.",
             error.TurnLimit => "Model-call budget reached for this request. Inspect completed tool effects, then enter continue to resume. For longer tasks: /setup set MAX_TURNS 64 (default 32; range 1-256).",
             error.InvalidTurnLimit => "MAX_TURNS must be an integer from 1 to 256 (default 32). Use /setup set MAX_TURNS 64 or /setup unset MAX_TURNS.",
             error.IncompleteResponse => "Model response was incomplete; no tools in that response were run.",

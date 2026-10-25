@@ -11,9 +11,11 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
     var todo: core.Todo = .{};
+    var limiter: core.RequestLimiter = .{};
     var menu: core.ModelMenu = .{};
     var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
     agent.dry_run = dry_run;
+    agent.rate_limiter = &limiter;
     const cwd = try std.process.currentPathAlloc(init.io, a);
     try ui.banner(@tagName(route.provider), cwd);
     var status: core.Status = .{ .clock = core.Clock.load(a, init.io, init.environ_map) };
@@ -428,6 +430,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
         agent.automatic = automatic;
         agent.dry_run = dry_run;
+        agent.rate_limiter = &limiter;
         try out.writeAll("Conversation cleared.\n");
     }
 }

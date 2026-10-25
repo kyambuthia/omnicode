@@ -4,6 +4,7 @@ pub const Input = @import("input.zig").Input;
 pub const Details = @import("ui.zig").Details;
 pub const Ui = @import("ui.zig").Ui;
 pub const Agent = @import("agent.zig").Agent;
+pub const RequestLimiter = @import("rate_limit.zig").RequestLimiter;
 pub const Context = @import("tools.zig").Context;
 pub const Todo = @import("tools.zig").Todo;
 pub const validName = @import("tools.zig").validName;
@@ -32,4 +33,5 @@ test {
     _ = @import("secrets.zig");
     _ = @import("storage.zig");
     _ = @import("http.zig");
+    _ = @import("rate_limit.zig");
 }

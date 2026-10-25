@@ -5,6 +5,7 @@ const status = @import("status.zig");
 
 pub const default_max_turns: usize = 32;
 pub const default_max_tool_calls: usize = 256;
+pub const default_max_requests_per_minute: usize = 60;
 
 pub fn parseMaxTurns(value: []const u8) !usize {
     const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidTurnLimit;
@@ -15,6 +16,13 @@ pub fn parseMaxTurns(value: []const u8) !usize {
 pub fn parseMaxToolCalls(value: []const u8) !usize {
     const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidToolLimit;
     if (count == 0 or count > 4096) return error.InvalidToolLimit;
+    return count;
+}
+
+/// Zero disables pacing; positive values cap sustained model request starts.
+pub fn parseMaxRequestsPerMinute(value: []const u8) !usize {
+    const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidRequestRate;
+    if (count > 600) return error.InvalidRequestRate;
     return count;
 }
 
@@ -41,6 +49,7 @@ pub const allowed_keys = [_][]const u8{
     "OMNICODE_STATUS",
     "MAX_TURNS",
     "MAX_TOOL_CALLS",
+    "MAX_REQUESTS_PER_MINUTE",
 };
 
 pub fn isAllowedKey(key: []const u8) bool {
@@ -145,6 +154,7 @@ fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, repa
         if (!repairing) {
             if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(val);
             if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(val);
+            if (std.mem.eql(u8, key, "MAX_REQUESTS_PER_MINUTE")) _ = try parseMaxRequestsPerMinute(val);
         }
         // First entry wins, matching the legacy startup loader.
         var duplicate = false;
@@ -179,6 +189,7 @@ pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.
         try @import("http.zig").validateEndpoint(value);
     if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(value);
     if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(value);
+    if (std.mem.eql(u8, key, "MAX_REQUESTS_PER_MINUTE")) _ = try parseMaxRequestsPerMinute(value);
     const path = try configPath(a, env);
     var entries = try readEntries(a, io, dir, path, key);
     var replaced = false;
@@ -255,12 +266,13 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
         \\  VOICE_MODEL = {s}
         \\  MAX_TURNS   = {s} (1-256 per compaction batch; default 32)
         \\  MAX_TOOL_CALLS = {s} (1-4096 per request, including children; default 256)
+        \\  MAX_REQUESTS_PER_MINUTE = {s} (0 disables model pacing; default 60)
         \\Usage:
         \\  /setup <provider> <api_key>     Save API key (e.g. /setup openrouter sk-or-...)
         \\  /setup set <KEY> <VALUE>        Set PROVIDER, MODEL, FAST_MODEL, VOICE_MODEL, etc.
         \\  /setup unset <provider|KEY>     Remove a saved key or setting
         \\
-    , .{ active_provider, active_model, fast_model, voice_model, env.get("MAX_TURNS") orelse "32", env.get("MAX_TOOL_CALLS") orelse "256" });
+    , .{ active_provider, active_model, fast_model, voice_model, env.get("MAX_TURNS") orelse "32", env.get("MAX_TOOL_CALLS") orelse "256", env.get("MAX_REQUESTS_PER_MINUTE") orelse "60" });
     return out.toOwnedSlice();
 }
 
@@ -275,7 +287,8 @@ pub fn repairKey(command: []const u8) ?[]const u8 {
         if (parts.next() != null) return null;
     } else if (std.mem.trim(u8, parts.rest(), " \t").len == 0) return null;
     const key = resolveKeyName(target) orelse return null;
-    return if (std.mem.eql(u8, key, "MAX_TURNS") or std.mem.eql(u8, key, "MAX_TOOL_CALLS")) key else null;
+    return if (std.mem.eql(u8, key, "MAX_TURNS") or std.mem.eql(u8, key, "MAX_TOOL_CALLS") or
+        std.mem.eql(u8, key, "MAX_REQUESTS_PER_MINUTE")) key else null;
 }
 
 /// Process a `/setup ...` or `--setup ...` argument string and return a user-facing summary message.
@@ -607,4 +620,22 @@ test "tool-call limits persist and invalid replacements preserve saved and live 
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "config.env", .data = "MAX_TOOL_CALLS=0\n" });
     try std.testing.expectError(error.InvalidToolLimit, loadIntoEnv(a, std.testing.io, tmp.dir, &fresh));
     try std.testing.expectEqualStrings("5", fresh.get("MAX_TOOL_CALLS").?);
+}
+
+test "model request pacing setting accepts disable and rejects out-of-range values" {
+    try std.testing.expectEqual(@as(usize, 0), try parseMaxRequestsPerMinute("0"));
+    try std.testing.expectEqual(@as(usize, 60), try parseMaxRequestsPerMinute("60"));
+    try std.testing.expectEqual(@as(usize, 600), try parseMaxRequestsPerMinute("600"));
+    for ([_][]const u8{ "", "-1", "601", "abc" }) |invalid| {
+        try std.testing.expectError(error.InvalidRequestRate, parseMaxRequestsPerMinute(invalid));
+    }
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var env = std.process.Environ.Map.init(arena.allocator());
+    try env.put("OMNICODE_CONFIG", "config.env");
+    try set(arena.allocator(), std.testing.io, tmp.dir, &env, "MAX_REQUESTS_PER_MINUTE", "120");
+    try std.testing.expectError(error.InvalidRequestRate, set(arena.allocator(), std.testing.io, tmp.dir, &env, "MAX_REQUESTS_PER_MINUTE", "601"));
+    try std.testing.expectEqualStrings("120", env.get("MAX_REQUESTS_PER_MINUTE").?);
 }

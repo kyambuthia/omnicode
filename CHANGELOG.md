@@ -22,6 +22,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
   order with catalog input and output prices before selecting a model number.
 - `--json` emits one structured result for a one-shot task, including final
   text, usage, and proposed tools in dry-run mode. Progress is sent to stderr.
+- Model requests are paced to 60 starts per minute by default across turns and
+  delegated work. `MAX_REQUESTS_PER_MINUTE` sets 1–600 or 0 to disable pacing.
 
 ## 0.2.0
 

@@ -4,6 +4,7 @@ const tools = @import("tools.zig");
 const Route = @import("router.zig").Route;
 const Io = std.Io;
 const Usage = @import("usage.zig").Usage;
+const RequestLimiter = @import("rate_limit.zig").RequestLimiter;
 const Catalog = @import("catalog.zig").Catalog;
 const Ui = @import("ui.zig").Ui;
 pub const Message = struct { role: []const u8, content: j.Value };
@@ -40,6 +41,7 @@ pub const Agent = struct {
     env: *const std.process.Environ.Map,
     route: Route,
     dry_run: bool = false,
+    rate_limiter: ?*RequestLimiter = null,
     previewed_content: ?j.Value = null,
     automatic: bool = true,
     subagent: bool = false,
@@ -666,6 +668,7 @@ pub const Agent = struct {
 
     fn request(self: *Agent, route: Route, body: []const u8) !j.Value {
         if (route.key.len == 0) return error.MissingApiKey;
+        if (self.rate_limiter) |limiter| try limiter.wait(self.context.io, self.env);
         const a = self.context.a;
         const auth: std.http.Header = if (route.provider == .anthropic)
             .{ .name = "x-api-key", .value = route.key }
@@ -781,6 +784,7 @@ pub const Agent = struct {
             .automatic = false,
             .subagent = true,
             .tool_budget = self.tool_budget,
+            .rate_limiter = self.rate_limiter,
             .turn_budget = 16,
             .compaction_budget = 1,
             .cached_catalog = self.cached_catalog,

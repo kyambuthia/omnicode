@@ -114,8 +114,10 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         var arena = std.heap.ArenaAllocator.init(init.gpa);
         defer arena.deinit();
         var todo: core.Todo = .{};
+        var limiter: core.RequestLimiter = .{};
         var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets, .read_only = read_only }, init.environ_map, route);
         agent.dry_run = dry_run;
+        agent.rate_limiter = &limiter;
         if (session_name) |name| {
             agent.loadSession(name) catch |err| switch (err) {
                 error.FileNotFound => {},

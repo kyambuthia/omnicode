@@ -437,6 +437,7 @@ class Integration(unittest.TestCase):
             def do_POST(self):
                 outer = self.server.active_test
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                outer.request_times.append(time.monotonic())
                 outer.requests.append((body, {k.lower(): v for k, v in self.headers.items()}))
                 result = outer.reply(body)
                 status, result = result if isinstance(result, tuple) else (200, result)
@@ -470,6 +471,7 @@ class Integration(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.cwd = Path(self.tmp.name)
         self.requests = []
+        self.request_times = []
         self.catalog_requests = []
         self.catalog_status = 200
         self.catalog = {"data": [model("strong-test-model"), model("fast-test-model"), model("pinned-model"),
@@ -485,6 +487,7 @@ class Integration(unittest.TestCase):
             "PROVIDER": "anthropic",
             "ANTHROPIC_API_KEY": "fake-anthropic",
             "OPENROUTER_API_KEY": "fake-openrouter",
+            "MAX_REQUESTS_PER_MINUTE": "0",
             "MODEL": "strong-test-model",
             "FAST_MODEL": "fast-test-model",
             "MODELS_URL": f"http://127.0.0.1:{self.server.server_port}/models",
@@ -1288,6 +1291,20 @@ class Integration(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.requests), 1)
         self.assertNotIn("reviewing completion once", result.stdout)
+
+    def test_model_requests_are_paced_across_tool_continuations(self):
+        self.env["MAX_REQUESTS_PER_MINUTE"] = "120"
+        (self.cwd / "source.txt").write_text("ready\n")
+        self.reply = lambda _: tools(call("read", {"path": "source.txt"})) if len(self.requests) == 1 else text("done")
+        result = self.run_agent("inspect source")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.request_times), 2)
+        self.assertGreaterEqual(self.request_times[1] - self.request_times[0], 0.45)
+        self.env["MAX_REQUESTS_PER_MINUTE"] = "601"
+        invalid = self.run_agent("inspect source")
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("InvalidRequestRate", invalid.stderr)
+        self.assertEqual(len(self.requests), 2)
 
     def test_model_server_retries_preserve_requests_and_execute_tools_once(self):
         def reply(body):
