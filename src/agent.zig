@@ -520,7 +520,7 @@ pub const Agent = struct {
             .{ .name = "x-api-key", .value = route.key }
         else
             .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
-        return @import("http.zig").fetch(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
+        return @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
     }
 
     fn runTool(self: *Agent, name: []const u8, input: j.Value, ui: Ui, usage: *Usage) !tools.Result {

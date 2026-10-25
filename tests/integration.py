@@ -430,6 +430,7 @@ class Integration(unittest.TestCase):
                                  model("openai/gpt-4.1-mini", "0.0000004", "0.0000016"),
                                  model("unpriced-custom", overrides=[{"prompt": "0.1"}])]}
         self.reply = lambda _: text()
+        self.response_headers = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -452,6 +453,8 @@ class Integration(unittest.TestCase):
                 data = result if isinstance(result, bytes) else json.dumps(result).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                for name, value in outer.response_headers:
+                    self.send_header(name, value)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 try:
@@ -1107,8 +1110,86 @@ class Integration(unittest.TestCase):
         self.assertIn("429", result.stderr)
         self.assertNotIn("fake-anthropic", result.stderr + result.stdout)
 
+    def test_compressed_model_responses_remain_supported(self):
+        import gzip
+        self.response_headers = [("Content-Encoding", "gzip")]
+        self.reply = lambda _: gzip.compress(json.dumps(text("compressed response")).encode())
+        result = self.run_agent("inspect")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("compressed response", result.stdout)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_model_server_retries_preserve_requests_and_execute_tools_once(self):
+        def reply(body):
+            if len(self.requests) <= 2:
+                return (503, {"error": "private-provider-body fake-anthropic"})
+            if len(self.requests) == 3:
+                return tools(call("bash", {"cmd": "printf once >> executions"}, "execute"))
+            if len(self.requests) <= 5:
+                return (500, {})
+            return text("completed")
+        self.reply = reply
+        result = self.run_agent("complete the task")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 6)
+        self.assertEqual(self.requests[3], self.requests[4])
+        self.assertEqual(self.requests[4], self.requests[5])
+        self.assertEqual(self.requests[0], self.requests[1])
+        self.assertEqual(self.requests[1], self.requests[2])
+        self.assertEqual((self.cwd / "executions").read_text(), "once")
+        self.assertIn("Retrying model request (2/2)", result.stderr)
+        self.assertNotIn("private-provider-body", result.stderr + result.stdout)
+        self.assertNotIn("fake-anthropic", result.stderr + result.stdout)
+
+    def test_model_retries_stop_after_two_attempts_and_preserve_retry_after(self):
+        self.reply = lambda _: (500, {})
+        result = self.run_agent("inspect")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.requests), 3)
+        for delay in ["31", "Wed, 21 Oct 2037 07:28:00 GMT", "invalid", "-1"]:
+            with self.subTest(delay=delay):
+                self.requests.clear()
+                self.response_headers = [("Retry-After", delay)]
+                result = self.run_agent("inspect")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(len(self.requests), 1)
+        self.requests.clear()
+        self.response_headers = [("Retry-After", "0"), ("Retry-After", "0")]
+        result = self.run_agent("inspect")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.requests), 1)
+        self.requests.clear()
+        self.response_headers = [("Retry-After", "2")]
+        self.reply = lambda _: (503, {}) if len(self.requests) == 1 else text()
+        started = time.monotonic()
+        result = self.run_agent("inspect")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 2)
+        self.assertGreaterEqual(time.monotonic() - started, 2)
+
+    def test_interrupt_cancels_model_retry_backoff(self):
+        self.response_headers = [("Retry-After", "30")]
+        self.reply = lambda _: (503, {})
+        process = subprocess.Popen([str(BINARY), "inspect"], cwd=self.cwd, env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 5
+            while not self.requests and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(self.requests)
+            time.sleep(0.15)
+            process.send_signal(signal.SIGINT)
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 130, stdout + stderr)
+            self.assertEqual(len(self.requests), 1)
+            self.assertIn("after 30000 ms", stderr)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
     def test_failed_repl_turn_resets_history(self):
-        self.reply = lambda _: (500, {}) if len(self.requests) == 1 else text()
+        self.reply = lambda _: (400, {}) if len(self.requests) == 1 else text()
         result = self.run_agent(stdin="fix bug\nlist files\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.requests[-1][0]["messages"]), 1)
@@ -1119,7 +1200,7 @@ class Integration(unittest.TestCase):
             if len(self.requests) == 1:
                 return tools(call("write", {"path": "kept.txt", "content": "ok"}))
             if len(self.requests) == 2:
-                return (500, {})
+                return (400, {})
             return text("resumed")
         self.reply = partial
         result = self.run_agent(stdin="fix bug\ncontinue\n/q\n")
@@ -1353,7 +1434,7 @@ class Integration(unittest.TestCase):
                 self.assertIn(f"API HTTP {status}", result.stderr)
                 self.assertNotIn(marker, result.stdout + result.stderr)
                 self.assertNotIn("fake-anthropic", result.stdout + result.stderr)
-                self.assertEqual(len(self.requests), 1)
+                self.assertEqual(len(self.requests), 3 if status == 503 else 1)
 
     def test_invalid_json_response_is_reported_without_echoing_body(self):
         self.reply = lambda _: b"<html>private-response-body fake-anthropic</html>"

@@ -201,3 +201,32 @@ loaded. The latter failure was reproduced by a serialized round-trip unit test
 before the loader fix. Readers now reserve one probe byte, making the documented
 limits inclusive. Exact-limit session/config/vault fixtures pass; one byte over
 is still rejected without replacing prior live state or a saved config/vault.
+
+## Bounded recovery from model server failures
+
+Model HTTP 500/503 responses now retry at most twice with one- then two-second
+backoff, within one shared two-minute deadline. This implements DeepSeek's
+[documented server-error recovery advice](https://api-docs.deepseek.com/quick_start/error_codes/).
+The transport inspects headers before Zig invalidates the response head and
+honors bounded `Retry-After` delta seconds. Unsupported HTTP dates, duplicate or
+malformed values, and delays above 30 seconds decline automatic retry rather
+than retrying early; the field's formats are defined in
+[RFC 9110 section 10.2.3](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after).
+Other statuses and transport/parse failures are not retried. Catalog and voice
+requests retain single-attempt behavior. Failed attempts emit status and retry
+information without response bodies; unavailable usage is not estimated.
+
+Offline tests inject failures before and after a successful tool round, verify
+identical retried request bodies and exactly one tool execution, exhaust the
+retry budget, exercise Retry-After acceptance/refusal, and interrupt a long
+backoff. A gzip response regression checks the lower-level transport path.
+The full 82-test integration suite passed before the final gzip test was added;
+both that test and the strengthened post-tool retry test then passed separately.
+All 65 unit tests and 11 installer tests passed, as did aarch64 Linux compilation.
+
+A real paid DeepSeek run with the debug binary created
+`evals/counter-repair-lri_4fg9`. Repair and named-session extension both passed
+independent references in 40.09 seconds total (18 tools, one failed tool).
+The checkpoint retained its earlier history prefix and passed completeness and
+private-mode checks. No transient provider failure occurred in that live run;
+retry behavior is supported by the fault-injected offline tests.

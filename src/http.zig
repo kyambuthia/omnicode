@@ -27,30 +27,96 @@ pub fn validateEndpoint(url: []const u8) !void {
 
 /// Bounded JSON transport; callers choose deadlines and credentials. Never follow redirects.
 pub fn fetch(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const std.http.Header, limit: usize, timeout: i64) !j.Value {
+    return @import("deadline.zig").run(io, fetchAttempts, .{ a, io, url, payload, headers, limit, false }, timeout);
+}
+
+/// Retry only explicit server failures, before any assistant response is accepted.
+/// The deadline covers every attempt and every cancellable backoff together.
+pub fn fetchModel(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: []const u8, headers: []const std.http.Header, limit: usize, timeout: i64) !j.Value {
+    return @import("deadline.zig").run(io, fetchAttempts, .{ a, io, url, @as(?[]const u8, payload), headers, limit, true }, timeout);
+}
+
+fn fetchAttempts(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const std.http.Header, limit: usize, retry: bool) !j.Value {
     try validateEndpoint(url);
     try validateHeaders(headers);
     const buffer = try std.heap.page_allocator.alloc(u8, limit);
     defer std.heap.page_allocator.free(buffer);
-    var writer = std.Io.Writer.fixed(buffer);
+    var attempt: usize = 0;
+    while (true) : (attempt += 1) {
+        var writer = std.Io.Writer.fixed(buffer);
+        const response = try exchange(io, url, payload, headers, &writer);
+        checkStatus(response.status) catch |err| {
+            const code = @backingInt(response.status);
+            std.debug.print("API HTTP {d}\n", .{code});
+            if (retry and attempt < 2 and (code == 500 or code == 503)) {
+                const delay = response.retry_delay orelse return err;
+                const milliseconds = @max(delay, @as(u64, 1000) << @intCast(attempt));
+                std.debug.print("Retrying model request ({d}/2) after {d} ms\n", .{ attempt + 1, milliseconds });
+                try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(milliseconds)), .awake);
+                continue;
+            }
+            return err;
+        };
+        return parseResponse(a, writer.buffered());
+    }
+}
+
+const Response = struct { status: std.http.Status, retry_delay: ?u64 = 0 };
+
+// Pinned Zig 0.17 Client.fetch exposes only the status. Use its request/body
+// sequence here so Retry-After can be inspected before the head is invalidated.
+fn exchange(io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const std.http.Header, writer: *std.Io.Writer) !Response {
     var client: std.http.Client = .{ .allocator = std.heap.page_allocator, .io = io };
     defer client.deinit();
-    const response = try @import("deadline.zig").run(io, std.http.Client.fetch, .{
-        &client,
-        std.http.Client.FetchOptions{
-            .location = .{ .url = url },
-            .payload = payload,
-            .response_writer = &writer,
-            .redirect_behavior = .unhandled,
-            .headers = .{ .content_type = .{ .override = "application/json" } },
-            // Zig 0.17 does not emit privileged_headers; redirects stay disabled.
-            .extra_headers = headers,
-        },
-    }, timeout);
-    checkStatus(response.status) catch |err| {
-        std.debug.print("API HTTP {d}\n", .{@backingInt(response.status)});
-        return err;
+    var req = try client.request(if (payload != null) .POST else .GET, try std.Uri.parse(url), .{
+        .redirect_behavior = .unhandled,
+        .headers = .{ .content_type = .{ .override = "application/json" } },
+        // Zig 0.17 does not emit privileged_headers; redirects stay disabled.
+        .extra_headers = headers,
+    });
+    defer req.deinit();
+    if (payload) |bytes| {
+        req.transfer_encoding = .{ .content_length = bytes.len };
+        var body = try req.sendBodyUnflushed(&.{});
+        try body.writer.writeAll(bytes);
+        try body.end();
+        try req.connection.?.flush();
+    } else try req.sendBodiless();
+    var response = try req.receiveHead(&.{});
+    var result: Response = .{ .status = response.head.status };
+    var iterator = response.head.iterateHeaders();
+    var seen = false;
+    while (iterator.next()) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "retry-after")) {
+            result.retry_delay = if (seen) null else retryDelay(header.value);
+            seen = true;
+        }
+    }
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .zstd => try client.allocator.alloc(u8, std.compress.zstd.default_window_len),
+        .deflate, .gzip => try client.allocator.alloc(u8, std.compress.flate.max_window_len),
+        .compress => return error.UnsupportedCompressionMethod,
     };
-    return parseResponse(a, writer.buffered());
+    defer client.allocator.free(decompress_buffer);
+    var transfer_buffer: [64]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+    _ = reader.streamRemaining(writer) catch |err| switch (err) {
+        error.ReadFailed => return response.bodyErr().?,
+        else => return err,
+    };
+    return result;
+}
+
+// Delta seconds only. HTTP dates, duplicates, malformed values, and delays
+// above 30 seconds decline automatic retry instead of retrying too early.
+fn retryDelay(value: []const u8) ?u64 {
+    const trimmed = std.mem.trim(u8, value, " \t");
+    if (trimmed.len == 0) return null;
+    for (trimmed) |ch| if (!std.ascii.isDigit(ch)) return null;
+    const seconds = std.fmt.parseInt(u64, trimmed, 10) catch return null;
+    return if (seconds <= 30) seconds * 1000 else null;
 }
 
 // RFC 9110 sections 5.1, 5.5, and 5.6.2. Validate before the
@@ -136,4 +202,12 @@ test "request headers reject injection and unsafe controls before transport" {
     }
     try std.testing.expectError(error.InvalidHttpHeader, validateHeaders(&.{.{ .name = "Authorization", .value = "key\x7f" }}));
     try std.testing.expectError(error.InvalidHttpHeader, fetch(std.testing.allocator, std.testing.io, "http://127.0.0.1:1/", null, &.{.{ .name = "Authorization", .value = "key\r\nInjected: yes" }}, 1024, 1000));
+}
+
+test "retry delays accept bounded delta seconds and decline unsupported values" {
+    try std.testing.expectEqual(@as(?u64, 0), retryDelay("0"));
+    try std.testing.expectEqual(@as(?u64, 2000), retryDelay(" 2\t"));
+    try std.testing.expectEqual(@as(?u64, 30000), retryDelay("30"));
+    for ([_][]const u8{ "", "31", "-1", "+1", "1.5", "1, 2", "999999999999999999999999", "Wed, 21 Oct 2037 07:28:00 GMT" }) |value|
+        try std.testing.expectEqual(@as(?u64, null), retryDelay(value));
 }

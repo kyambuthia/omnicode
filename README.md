@@ -119,7 +119,14 @@ Direct Anthropic does not use the catalog: Haiku 4.5 serves both tiers unless ov
 
 Model IDs must match the selected provider and support tools. An explicit
 provider takes precedence over key-based selection. There is no silent provider
-fallback or automatic retry. For a custom endpoint, its authentication still
+fallback. Model requests retry HTTP 500 and 503 at most twice, waiting one then
+two seconds; a valid `Retry-After` delta of up to 30 seconds increases the wait.
+HTTP-date, malformed, duplicate, or longer `Retry-After` values stop automatic
+retry. The two-minute deadline covers all attempts and backoff together. Other
+HTTP errors, transport failures, and invalid responses are not retried. Failed
+HTTP attempts are printed without response bodies; usage totals count returned
+model responses and do not estimate charges for failed attempts. For a custom
+endpoint, its authentication still
 follows `PROVIDER`; HTTPS is required except for HTTP to literal IPv4 loopback addresses
 (`127.0.0.0/8`) or IPv6 loopback (`[::1]`). This applies to `API_URL`,
 `MODELS_URL`, and `VOICE_URL`. Use `127.0.0.1` instead of `localhost` for local
