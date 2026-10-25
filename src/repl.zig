@@ -256,6 +256,33 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             var full = ui;
             full.verbose = true;
             try full.preview(list, "");
+            if (std.mem.eql(u8, line, "/model")) {
+                var current: usize = 0;
+                if (!automatic) for (1..menu.count + 1) |number| {
+                    const choice = menu.get(number).?;
+                    if (choice.provider == route.provider and std.mem.eql(u8, choice.model, route.model)) {
+                        current = number;
+                        break;
+                    }
+                };
+                if (try core.pickModel(init.io, ui, &menu, current)) |number| {
+                    const choice = menu.get(number).?;
+                    if (mode == .free and choice.provider != .openrouter) {
+                        try ui.note("--free requires OpenRouter; provider switch rejected.");
+                        continue;
+                    }
+                    route = core.Route.init(init.environ_map, @tagName(choice.provider), try a.dupe(u8, choice.model)) catch |err| {
+                        try out.print("error: {s}\n", .{@errorName(err)});
+                        continue;
+                    };
+                    route.mode = mode;
+                    automatic = false;
+                    agent.route = route;
+                    agent.automatic = false;
+                    status.setModel(route.model);
+                    try ui.route(@tagName(route.provider), route.model);
+                }
+            }
             continue;
         }
         if (std.mem.eql(u8, line, "/status") or std.mem.startsWith(u8, line, "/status ")) {

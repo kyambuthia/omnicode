@@ -1,6 +1,73 @@
 const std = @import("std");
 const Io = std.Io;
 const Ui = @import("ui.zig").Ui;
+const ModelMenu = @import("catalog.zig").ModelMenu;
+
+/// Select a displayed model with arrow keys. Null means the user canceled.
+pub fn pickModel(io: Io, ui: Ui, menu: *const ModelMenu, current: usize) !?usize {
+    if (menu.count == 0 or !ui.interactive or !(Io.File.stdin().isTty(io) catch false)) return null;
+    const original = try std.posix.tcgetattr(0);
+    var raw = original;
+    raw.lflag.ICANON = false;
+    raw.lflag.ECHO = false;
+    raw.lflag.ISIG = false;
+    raw.iflag.ICRNL = false;
+    raw.cc[@backingInt(std.posix.V.MIN)] = 1;
+    raw.cc[@backingInt(std.posix.V.TIME)] = 0;
+    try std.posix.tcsetattr(0, .NOW, raw);
+    defer std.posix.tcsetattr(0, .NOW, original) catch {};
+    var selected = if (current >= 1 and current <= menu.count) current else 1;
+    var escape: u8 = 0;
+    try drawModelChoice(ui, menu, selected);
+    while (true) {
+        if (escape != 0) {
+            var fds = [_]std.posix.pollfd{.{ .fd = 0, .events = std.posix.POLL.IN }};
+            if (try std.posix.poll(&fds, 100) == 0) {
+                try ui.out.writeAll("\r\x1b[2KModel selection canceled.\n");
+                return null;
+            }
+        }
+        var byte: [1]u8 = undefined;
+        if (try Io.File.stdin().readStreaming(io, &.{&byte}) == 0) return null;
+        const c = byte[0];
+        if (escape == 1) {
+            if (c == '[' or c == 'O') {
+                escape = 2;
+                continue;
+            }
+            escape = 0;
+            try ui.out.writeAll("\r\x1b[2KModel selection canceled.\n");
+            return null;
+        }
+        if (escape == 2) {
+            escape = 0;
+            if (c == 'A') selected = if (selected == 1) menu.count else selected - 1 else if (c == 'B') selected = if (selected == menu.count) 1 else selected + 1;
+            try drawModelChoice(ui, menu, selected);
+            continue;
+        }
+        switch (c) {
+            27 => escape = 1,
+            3, 4 => {
+                try ui.out.writeAll("\r\x1b[2KModel selection canceled.\n");
+                return null;
+            },
+            '\r', '\n' => {
+                try ui.out.writeAll("\r\x1b[2K");
+                try ui.out.flush();
+                return selected;
+            },
+            else => {},
+        }
+    }
+}
+
+fn drawModelChoice(ui: Ui, menu: *const ModelMenu, selected: usize) !void {
+    const choice = menu.get(selected).?;
+    try ui.out.print("\r\x1b[2K↑/↓ choose · Enter select · Esc cancel: {d}/{d} {s}/{s}", .{
+        selected, menu.count, @tagName(choice.provider), choice.model,
+    });
+    try ui.out.flush();
+}
 
 /// A bounded append/backspace composer with up/down history. Raw mode belongs only to this read call.
 pub const Input = struct {

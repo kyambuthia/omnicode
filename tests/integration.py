@@ -1193,6 +1193,45 @@ class Integration(unittest.TestCase):
         self.assertIn("sort=throughput-high-to-low", self.catalog_requests[0][0])
         self.assertEqual(self.requests, [])
 
+    def test_model_picker_uses_arrow_keys_and_escape_cancels(self):
+        self.env.update(TERM="xterm-256color")
+        master, slave = pty.openpty()
+        original = termios.tcgetattr(slave)
+        proc = subprocess.Popen([str(BINARY)], stdin=slave, stdout=slave, stderr=slave,
+                                cwd=self.cwd, env=self.env)
+        output = bytearray()
+        def until(marker):
+            deadline = time.monotonic() + 15
+            while marker not in output:
+                self.assertLess(time.monotonic(), deadline, output.decode(errors="replace"))
+                if select.select([master], [], [], 0.1)[0]:
+                    output.extend(os.read(master, 4096))
+        try:
+            until(b"\x1b[?2004h")
+            output.clear()
+            os.write(master, b"/model\r")
+            until(b"Enter select")
+            os.write(master, b"\x1b[B\x1b[A\x1b[B\r")
+            until(b"[anthropic / fast-test-model]")
+            until(b"\x1b[?2004h")
+            output.clear()
+            os.write(master, b"/model\r")
+            until(b"Esc cancel: 2/")
+            output.clear()
+            os.write(master, b"\x1b")
+            until(b"Model selection canceled.")
+            until(b"\x1b[?2004h")
+            os.write(master, b"/q\r")
+            proc.wait(timeout=10)
+            self.assertEqual(proc.returncode, 0, output.decode(errors="replace"))
+            self.assertEqual(termios.tcgetattr(slave), original)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            os.close(master)
+            os.close(slave)
+
     def test_repl_history_skill_clear_and_model_override(self):
         self.skill()
         result = self.run_agent(stdin="/skills\n/skill check\nlist files\nfix bug\n/model openrouter pinned-model\nlist files\n/model auto\nlist files\n/c\nlist files\n/q\n")
