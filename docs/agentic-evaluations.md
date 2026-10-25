@@ -13,6 +13,8 @@ fixtures or source control. Provider responses did not report dollar costs.
 | Taskledger JSON-list extension | 27 | 2 | 23 tests pass; filtered JSON, Unicode, and missing-store behavior checked separately |
 | Counter repair evaluation 1 | 9 | 0 | Seeded failing tests repaired; independent Unicode/iterator/input-preservation checks pass |
 | Counter repair evaluation 2 | 10 | 1 | Same independent checks pass; one shell syntax failure recovered |
+| Journalbox initial build | 36 | 2 | 14 tests pass; separate oversized SQLite ID probe exposed an HTTP 500 |
+| Journalbox boundary repair | 49 | 1 | 17 tests pass; independent raw HTTP probes return 404 for oversized IDs and 413 for a 5,000-digit Content-Length, with empty server stderr |
 
 Failed-tool counts include expected failures while reproducing bugs. These are
 individual, different tasks, not a controlled model-quality comparison or a
@@ -69,3 +71,19 @@ that ignore SIGTERM. These remain trusted local commands, not a sandbox.
 
 Primary references: [DeepSeek Anthropic API](https://api-docs.deepseek.com/guides/anthropic_api/),
 [Python 3.13 CSV strict parsing](https://docs.python.org/3.13/library/csv.html#csv.Dialect.strict).
+
+## Longer project continuity
+
+Journalbox was built and repaired through paid CLI tasks, with the initial build
+and boundary repair committed in the project as `fc4c6a8` and `422a34f`. Its
+initial build took 215 seconds; the boundary repair took 186 seconds. A completed task with passing self-authored tests does not imply bug-free
+output: independent behavior probes still found the oversized-ID bug. One verification command also used a pipeline that
+masked the test runner's exit status; shell guidance now asks the model to run
+verification commands directly.
+
+Named one-shot sessions (`--session NAME`) now retain complete tool rounds and
+checklists across invocations. Offline integration tests interrupt a task with
+an API error after a successful write, then verify that a new invocation sees
+the saved history and completed effect. Additional checks cover private file
+permissions, secret redaction, malformed archive preservation, and compaction
+when a saved history is full. This is retained context, not transactional replay.
