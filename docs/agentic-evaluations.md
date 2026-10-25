@@ -358,3 +358,11 @@ inspected for these tests.
 Final saved-state verification: 68/68 Zig unit tests, 96/96 integration tests,
 and 11/11 installer tests passed. Native debug and aarch64 Linux compilation,
 formatting, and whitespace checks passed.
+
+After installation of the final ReleaseSafe saved-state build, nine focused
+checks passed against `~/.local/bin/omnicode` (state/input FIFO rejection,
+continued file-tool use, forced initialization, metadata detection, and
+checklist reconciliation). A paid installed-binary smoke task read the lab
+README and returned its exact documented test command in 2.6 seconds with one
+tool. Its final checkpoint parsed, ended with an assistant response, and had
+mode `0600`; tracked lab files remained clean.
