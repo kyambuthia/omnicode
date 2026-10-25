@@ -1927,6 +1927,25 @@ class Integration(unittest.TestCase):
                 self.assertTrue((self.cwd / "OMNICODE.md").is_file())
                 self.assertEqual(self.requests, [])
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_init_detects_large_manifest_without_reading_special_files(self):
+        os.mkfifo(self.cwd / "build.zig")
+        (self.cwd / "Cargo.toml").mkdir()
+        (self.cwd / "package.json").write_text(" " * (64 * 1024) + "{}")
+        result = self.run_agent("--init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        instructions = (self.cwd / "OMNICODE.md").read_text()
+        self.assertIn("npm run build", instructions)
+        self.assertNotIn("zig build", instructions)
+        self.assertNotIn("cargo build", instructions)
+        self.assertEqual(self.requests, [])
+        (self.cwd / "build.zig").unlink()
+        (self.cwd / "marker").write_text("// zig build marker")
+        (self.cwd / "build.zig").symlink_to("marker")
+        result = self.run_agent("--init", "force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("zig build test", (self.cwd / "OMNICODE.md").read_text())
+
     def test_init_project_instructions_and_adversarial_multi_agent_review(self):
         (self.cwd / "build.zig").write_text("// zig build")
         (self.cwd / "target.zig").write_text("pub fn add(a: i32, b: i32) i32 { return a + b; }\n")

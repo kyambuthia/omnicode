@@ -287,9 +287,12 @@ pub const Context = struct {
         };
     }
 
-    fn hasFile(c: Context, path: []const u8) bool {
-        _ = c.dir.readFileAlloc(c.io, path, c.a, .limited(limit)) catch return false;
-        return true;
+    fn hasFile(c: Context, path: []const u8) !bool {
+        const metadata = c.dir.statFile(c.io, path, .{}) catch |err| switch (err) {
+            error.Canceled => return err,
+            else => return false,
+        };
+        return metadata.kind == .file;
     }
 
     pub fn initProject(c: Context, force: bool) ![]const u8 {
@@ -301,17 +304,17 @@ pub const Context = struct {
                 else => return err,
             }
         }
-        const commands = if (c.hasFile("build.zig"))
+        const commands = if (try c.hasFile("build.zig"))
             "- Build: `zig build`\n- Test: `zig build test`\n- Format check: `zig fmt --check src`"
-        else if (c.hasFile("Cargo.toml"))
+        else if (try c.hasFile("Cargo.toml"))
             "- Build: `cargo build`\n- Test: `cargo test`\n- Format check: `cargo fmt --check`"
-        else if (c.hasFile("package.json"))
+        else if (try c.hasFile("package.json"))
             "- Build: `npm run build`\n- Test: `npm test`"
-        else if (c.hasFile("pyproject.toml") or c.hasFile("pytest.ini"))
+        else if (try c.hasFile("pyproject.toml") or try c.hasFile("pytest.ini"))
             "- Test: `pytest`"
-        else if (c.hasFile("go.mod"))
+        else if (try c.hasFile("go.mod"))
             "- Build: `go build ./...`\n- Test: `go test ./...`"
-        else if (c.hasFile("Makefile"))
+        else if (try c.hasFile("Makefile"))
             "- Build: `make`\n- Test: `make test`"
         else
             "- Add project build, test, and lint commands here.";

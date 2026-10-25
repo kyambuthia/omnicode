@@ -280,3 +280,33 @@ fallback; fault-injected tests cover that path.
 Final verification for this increment: all 66 Zig unit tests, all 88 integration
 tests, and all 11 installer tests passed. Native debug and aarch64 Linux builds
 passed, and formatting/whitespace checks were clean.
+
+## Fresh filesystem project and initialization metadata
+
+The installed ReleaseSafe CLI built `tree-manifest` from a fresh directory with
+paid DeepSeek calls: 104.3 seconds, 22 tools, one compaction, project commit
+`e1de09a`. It hashes regular files incrementally, sorts relative-path records,
+enforces inclusive file/count limits, skips symlinks and special files, and
+provides a JSON CLI. Its 34 discovered tests and a separate hash/CLI reference
+passed, including Unicode, binary/empty/dotfiles, outward/dangling links, FIFOs,
+exact/over limits, and invalid roots.
+
+Additional probes found `link/` and `link/.` bypassed the promised symlink-root
+rejection. A paid resumed repair (101.4 seconds, 20 tools, one compaction) created
+project commit `5fe1bf1`. All 41 tests then passed independently. Separate probes
+confirmed library/CLI rejection of repeated trailing aliases, acceptance of
+real-directory aliases, and preservation of actual `symlink/../sibling`
+semantics. The repair strips only trailing separators/dot components rather
+than lexically normalizing internal `..`. Reference:
+[Linux path resolution](https://www.man7.org/linux/man-pages/man7/path_resolution.7.html).
+The project explicitly does not claim an atomic snapshot or protection from
+hostile concurrent path replacement.
+
+This experiment prompted inspection of Omnicode's own project detection.
+`--init` opened build markers just to determine their presence; the installed
+binary reproducibly blocked on a FIFO named `build.zig`, and a valid JSON
+manifest larger than 64 KiB was not detected. Detection now uses pinned Zig
+0.17 `Dir.statFile` metadata, accepts only regular files, retains symlink-to-file
+behavior, and propagates cancellation. The focused integration fixture combines
+a FIFO marker, a directory marker, a large package manifest, and then a regular
+file symlink, without making any API request.
