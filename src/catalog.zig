@@ -15,6 +15,14 @@ pub const Catalog = struct {
         return parse(value);
     }
 
+    /// Fetch public catalog metadata ordered by recent median output throughput.
+    pub fn loadByThroughput(a: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !Catalog {
+        const base = env.get("MODELS_URL") orelse "https://openrouter.ai/api/v1/models?supported_parameters=tools";
+        const url = try withSort(a, base, "throughput-high-to-low");
+        const value = try @import("http.zig").fetch(a, io, url, null, &.{}, 8 * 1024 * 1024, 15_000);
+        return parse(value);
+    }
+
     pub fn parse(value: j.Value) !Catalog {
         const data = try j.get(value, "data");
         if (data != .array) return error.InvalidCatalog;
@@ -133,24 +141,14 @@ pub const ModelMenu = struct {
                 var shown: usize = 0;
                 for (cat.models) |model| {
                     if (shown >= 10) break;
-                    const id = j.str(model, "id") catch continue;
-                    const price = Price.parse(j.get(model, "pricing") catch continue) orelse continue;
-                    if (route.mode == .free and !price.free) continue;
-                    if (!contains(model, "supported_parameters", "tools") or
-                        !contains(j.get(model, "architecture") catch .null, "output_modalities", "text")) continue;
-                    const ctx = j.number(model, "context_length", 0) catch 0;
-                    if (ctx < 32768) continue;
-                    const top = j.get(model, "top_provider") catch .null;
-                    if ((j.number(top, "max_completion_tokens", 8192) catch 8192) < 8192) continue;
-                    if (std.mem.startsWith(u8, id, "openrouter/") or std.mem.startsWith(u8, id, "~") or
-                        (std.mem.indexOfScalar(u8, id, ':') != null and !std.mem.endsWith(u8, id, ":free"))) continue;
-                    if (self.add(.openrouter, id)) |idx| {
-                        const active = route.provider == .openrouter and std.mem.eql(u8, route.model, id);
-                        if (price.free) {
-                            try out.writer.print("  [{d:>2}]{s} openrouter   {s:<34} · {d}k ctx · free\n", .{ idx, if (active) "*" else " ", id, ctx / 1024 });
+                    const candidate = menuCandidate(model, route.mode) orelse continue;
+                    if (self.add(.openrouter, candidate.id)) |idx| {
+                        const active = route.provider == .openrouter and std.mem.eql(u8, route.model, candidate.id);
+                        if (candidate.price.free) {
+                            try out.writer.print("  [{d:>2}]{s} openrouter   {s:<34} · {d}k ctx · free\n", .{ idx, if (active) "*" else " ", candidate.id, candidate.context / 1024 });
                         } else {
                             try out.writer.print("  [{d:>2}]{s} openrouter   {s:<34} · {d}k ctx · ${d:.2}/${d:.2} per 1M\n", .{
-                                idx, if (active) "*" else " ", id, ctx / 1024, price.input * 1_000_000, price.output * 1_000_000,
+                                idx, if (active) "*" else " ", candidate.id, candidate.context / 1024, candidate.price.input * 1_000_000, candidate.price.output * 1_000_000,
                             });
                         }
                         shown += 1;
@@ -192,7 +190,73 @@ pub const ModelMenu = struct {
         try out.writer.writeAll("Switch: /model <number> | /model <MODEL> | /model <PROVIDER> <MODEL> | /model fast|strong|auto\n");
         return out.toOwnedSlice();
     }
+
+    /// Populate the numbered model menu in throughput order with comparable prices.
+    pub fn compare(self: *ModelMenu, a: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, route: Route) ![]const u8 {
+        self.count = 0;
+        const catalog = try Catalog.loadByThroughput(a, io, env);
+        var out: std.Io.Writer.Allocating = .init(a);
+        try out.writer.writeAll("OpenRouter tool models, fastest recent median throughput first:\n");
+        try out.writer.writeAll("Speed is an ordering from the catalog; actual latency and throughput depend on the provider and request.\n");
+        for (catalog.models) |model| {
+            if (self.count >= 10) break;
+            const candidate = menuCandidate(model, route.mode) orelse continue;
+            const idx = self.add(.openrouter, candidate.id) orelse continue;
+            const active = route.provider == .openrouter and std.mem.eql(u8, route.model, candidate.id);
+            if (candidate.price.free) {
+                try out.writer.print("  [{d:>2}]{s} {s:<38} · free · {d}k ctx\n", .{ idx, if (active) "*" else " ", candidate.id, candidate.context / 1024 });
+            } else {
+                try out.writer.print("  [{d:>2}]{s} {s:<38} · ${d:.2}/${d:.2} per 1M in/out · {d}k ctx{s}\n", .{
+                    idx,                                if (active) "*" else " ", candidate.id, candidate.price.input * 1_000_000,
+                    candidate.price.output * 1_000_000, candidate.context / 1024,
+                    if (candidate.price.variable) " · variable rates" else "",
+                });
+            }
+        }
+        if (self.count == 0) try out.writer.writeAll("  No eligible models in the catalog.\n");
+        try out.writer.writeAll("Switch: /model <number>\n");
+        return out.toOwnedSlice();
+    }
 };
+
+const MenuCandidate = struct { id: []const u8, price: Price, context: usize };
+
+fn menuCandidate(model: j.Value, mode: @FieldType(Route, "mode")) ?MenuCandidate {
+    const id = j.str(model, "id") catch return null;
+    const price = Price.parse(j.get(model, "pricing") catch return null) orelse return null;
+    if (mode == .free and !price.free) return null;
+    if (!contains(model, "supported_parameters", "tools") or
+        !contains(j.get(model, "architecture") catch .null, "output_modalities", "text")) return null;
+    const context = j.number(model, "context_length", 0) catch return null;
+    if (context < 32768) return null;
+    const top = j.get(model, "top_provider") catch .null;
+    if ((j.number(top, "max_completion_tokens", 8192) catch 8192) < 8192) return null;
+    if (std.mem.startsWith(u8, id, "openrouter/") or std.mem.startsWith(u8, id, "~") or
+        (std.mem.indexOfScalar(u8, id, ':') != null and !std.mem.endsWith(u8, id, ":free"))) return null;
+    return .{ .id = id, .price = price, .context = context };
+}
+
+fn withSort(a: std.mem.Allocator, url: []const u8, order: []const u8) ![]const u8 {
+    const question = std.mem.indexOfScalar(u8, url, '?') orelse return std.fmt.allocPrint(a, "{s}?sort={s}", .{ url, order });
+    var out: std.Io.Writer.Allocating = .init(a);
+    try out.writer.writeAll(url[0..question]);
+    var query = std.mem.splitScalar(u8, url[question + 1 ..], '&');
+    var separator: u8 = '?';
+    while (query.next()) |part| {
+        if (part.len == 0 or std.mem.startsWith(u8, part, "sort=")) continue;
+        try out.writer.print("{c}{s}", .{ separator, part });
+        separator = '&';
+    }
+    try out.writer.print("{c}sort={s}", .{ separator, order });
+    return out.toOwnedSlice();
+}
+
+test "catalog sort URL preserves filters and replaces old order" {
+    const a = std.testing.allocator;
+    const url = try withSort(a, "https://openrouter.ai/api/v1/models?supported_parameters=tools&sort=agentic-high-to-low", "throughput-high-to-low");
+    defer a.free(url);
+    try std.testing.expectEqualStrings("https://openrouter.ai/api/v1/models?supported_parameters=tools&sort=throughput-high-to-low", url);
+}
 
 fn contains(value: j.Value, key: []const u8, needle: []const u8) bool {
     const list = j.get(value, key) catch return false;

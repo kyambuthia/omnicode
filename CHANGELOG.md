@@ -18,6 +18,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
   any tool calls.
 - `/export [name]` writes a redacted Markdown transcript and checklist to a
   private file under `.omnicode/exports/`.
+- `/model compare` lists eligible OpenRouter models in recent median throughput
+  order with catalog input and output prices before selecting a model number.
 
 ## 0.2.0
 

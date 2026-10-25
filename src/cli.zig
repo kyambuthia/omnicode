@@ -23,6 +23,7 @@ pub const help =
     \\  /init [force]          Bootstrap OMNICODE.md and verify skill
     \\  /review [focus]        Run adversarial multi-agent code review
     \\  /model [list]          Show current routing and numbered list of available models
+    \\  /model compare         Compare live OpenRouter price and throughput order before switching
     \\  /model <N|MODEL>       Switch to model #N or MODEL (preserves conversation)
     \\  /model PROVIDER MODEL  Switch provider and pin MODEL
     \\  /model auto|fast|strong  Select automatic routing or pin fast/strong tier

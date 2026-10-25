@@ -231,6 +231,17 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             try ui.note("omnicode " ++ core.version);
             continue;
         }
+        if (std.mem.eql(u8, line, "/model compare")) {
+            const comparison = menu.compare(a, init.io, init.environ_map, route) catch |err| {
+                if (err == error.Canceled) return err;
+                try ui.errorMessage(err);
+                continue;
+            };
+            var full = ui;
+            full.verbose = true;
+            try full.preview(comparison, "");
+            continue;
+        }
         if (std.mem.eql(u8, line, "/model") or std.mem.eql(u8, line, "/model list")) {
             try ui.note(if (mode == .free) "--free: live zero-price tool models only; paid overrides are rejected." else "--cost-max (default): optimize live catalog prices within the ranked candidate pool.");
             if (automatic and route.provider == .openrouter) {

@@ -1136,6 +1136,19 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "child-edit.txt").read_text(), "edited")
         self.assertIn("partial report", self.requests[-1][0]["messages"][-1]["content"][0]["content"])
 
+    def test_model_comparison_shows_cost_in_throughput_order_before_selection(self):
+        self.catalog = {"data": [model("fast/expensive", "0.000002", "0.000004"),
+                                 model("slow/cheap", "0.0000001", "0.0000002")]}
+        result = self.run_agent(stdin="/model compare\n/model 1\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("recent median throughput", result.stdout)
+        self.assertLess(result.stdout.index("fast/expensive"), result.stdout.index("slow/cheap"))
+        self.assertIn("$2.00/$4.00 per 1M in/out", result.stdout)
+        self.assertIn("$0.10/$0.20 per 1M in/out", result.stdout)
+        self.assertIn("[openrouter / fast/expensive]", result.stdout)
+        self.assertIn("sort=throughput-high-to-low", self.catalog_requests[0][0])
+        self.assertEqual(self.requests, [])
+
     def test_repl_history_skill_clear_and_model_override(self):
         self.skill()
         result = self.run_agent(stdin="/skills\n/skill check\nlist files\nfix bug\n/model openrouter pinned-model\nlist files\n/model auto\nlist files\n/c\nlist files\n/q\n")
