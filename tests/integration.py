@@ -667,6 +667,18 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
 
+    def test_write_creates_parent_directories_and_read_only_creates_nothing(self):
+        self.reply = lambda body: tools(call("write", {"path": "nested/tests/output.txt", "content": "created"})) if len(self.requests) == 1 else text("done")
+        result = self.run_agent("create nested file")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.cwd / "nested/tests/output.txt").read_text(), "created")
+        self.requests.clear()
+        self.reply = lambda body: tools(call("write", {"path": "blocked/deep/file.txt", "content": "no"})) if len(self.requests) == 1 else text("denied")
+        result = self.run_agent("--read-only", "inspect only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.cwd / "blocked").exists())
+        self.assertIn("ReadOnlyMode", result.stdout)
+
     def test_read_only_mode_rejects_unadvertised_tools_and_survives_resets(self):
         (self.cwd / "input.txt").write_text("preserve this")
         calls = [call("write", {"path": "blocked.txt", "content": "bad"}, "write"),

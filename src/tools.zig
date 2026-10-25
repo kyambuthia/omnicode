@@ -11,7 +11,7 @@ const explore_tools =
 ;
 
 const edit_tools = explore_tools ++ ",\n" ++
-    \\{"name":"write","description":"Create or overwrite a file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
+    \\{"name":"write","description":"Create or overwrite a file; creates missing parent directories","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
     \\{"name":"edit","description":"Replace exact nonempty text; must be unique including overlaps unless all=true (replaces non-overlapping matches)","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
     \\{"name":"bash","description":"Run shell command; default 30s deadline, timeout_ms may request 1-300000ms, bounded output","input_schema":{"type":"object","properties":{"cmd":{"type":"string"},"timeout_ms":{"type":"integer","minimum":1,"maximum":300000}},"required":["cmd"]}},
     \\{"name":"todo","description":"Read or replace the session checklist that survives context compaction","input_schema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"task":{"type":"string"},"done":{"type":"boolean"}},"required":["task","done"]}}}}}
@@ -100,6 +100,7 @@ pub const Context = struct {
             if (content.len > 1024 * 1024) return error.StreamTooLong;
             const path = try j.str(args, "path");
             try @import("storage.zig").validatePath(path);
+            if (std.fs.path.dirname(path)) |parent| try c.dir.createDirPath(c.io, parent);
             try c.dir.writeFile(c.io, .{ .sub_path = path, .data = content });
             return "ok";
         }
@@ -344,6 +345,8 @@ test "file tools modify real files and reject ambiguous or invalid edits" {
     defer tmp.cleanup();
     const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = tmp.dir };
     _ = try c.run("write", try j.parse(c.a, "{\"path\":\"a\",\"content\":\"one\\ntwo\\none\"}"));
+    _ = try c.run("write", try j.parse(c.a, "{\"path\":\"nested/tests/new.txt\",\"content\":\"created\"}"));
+    try std.testing.expectEqualStrings("created", try c.readFile("nested/tests/new.txt"));
     const read = try c.run("read", try j.parse(c.a, "{\"path\":\"a\",\"offset\":1,\"limit\":1}"));
     try std.testing.expect(std.mem.startsWith(u8, read, "2| two\n"));
     try std.testing.expect(std.mem.indexOf(u8, read, "truncated") != null);
