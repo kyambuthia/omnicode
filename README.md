@@ -319,6 +319,28 @@ DeepSeek's built-in fast/strong routes use `deepseek-flash` and
 `deepseek-v4-pro`, matching its [documented Anthropic-compatible models](https://api-docs.deepseek.com/guides/anthropic_api/).
 Explicit `MODEL`, `FAST_MODEL`, and `/model` choices take precedence.
 
+For a long one-shot task, opt into named checkpoints:
+
+```sh
+omnicode --session build "Implement the next milestone and run its tests"
+omnicode --session build "Continue from the saved progress"
+```
+
+`--session NAME` resumes `.omnicode/sessions/NAME.json` when it exists and creates
+it when missing. It requires a task prompt; interactive sessions retain `/save`
+and `/resume`. Checkpoints are written before model requests, after complete
+tool rounds, and after the final response. They include the checklist, use atomic
+private writes, and redact registered secrets. Invalid existing sessions fail
+before a model request and are preserved. `--read-only` can be combined with
+`--session`: model tools remain restricted while the explicitly requested local
+checkpoint is written.
+
+Each checkpoint has the normal 2 MiB/128-message session limits. A failed write
+stops the task and preserves the preceding checkpoint. A crash during a tool
+batch can leave effects beyond the last checkpoint, so inspect completed tool
+effects before retrying an interrupted mutation. Checkpoints provide retained
+context, not exactly-once tool execution.
+
 ## Token and cost usage
 
 Each turn reports input/output tokens, cache reads/writes, and cost across every

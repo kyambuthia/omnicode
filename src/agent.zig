@@ -25,6 +25,7 @@ pub const Agent = struct {
     route: Route,
     automatic: bool = true,
     subagent: bool = false,
+    checkpoint_name: ?[]const u8 = null,
     turn_budget: usize = max_turns,
     compaction_budget: usize = max_compactions,
     last_input_tokens: u64 = 0,
@@ -130,7 +131,7 @@ pub const Agent = struct {
                 try self.compact(ui, &usage, null);
                 compactions += 1;
             }
-            if (self.history.items.len > max_messages) return error.HistoryLimit;
+            if (self.history.items.len > max_messages - 2) return error.HistoryLimit;
             var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer scratch.deinit();
             const sa = scratch.allocator();
@@ -144,6 +145,7 @@ pub const Agent = struct {
                 break :blk initial;
             };
             if (body.len > max_bytes) return error.HistoryLimit;
+            try self.checkpoint();
             turns += 1;
             const response = try ui.work("Thinking...", Agent.request, .{ self, route, body });
             const delta = Usage.response(response, route);
@@ -206,13 +208,19 @@ pub const Agent = struct {
             }
             try out.flush();
             if (results.items.len == 0) {
+                try self.checkpoint();
                 try out.writeAll("\n  Completed · ");
                 try ui.elapsed(turn_start);
                 try out.print(" · {d} tool {s}\n\n", .{ tool_count, if (tool_count == 1) "call" else "calls" });
                 return out.flush();
             }
             try self.history.append(a, .{ .role = "user", .content = .{ .array = results.toManaged(a) } });
+            try self.checkpoint();
         }
+    }
+
+    fn checkpoint(self: *const Agent) !void {
+        if (self.checkpoint_name) |name| try self.saveSession(name);
     }
 
     fn encodePayload(self: *const Agent, a: std.mem.Allocator, route: Route, messages: []const Message, with_tools: bool) ![]const u8 {
@@ -409,6 +417,7 @@ pub const Agent = struct {
     /// Save conversation history and todo list under `.omnicode/sessions/<name>.json`.
     pub fn saveSession(self: *const Agent, name: []const u8) !void {
         if (!tools.validName(name)) return error.InvalidSessionName;
+        if (self.history.items.len > max_messages) return error.HistoryLimit;
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const sa = scratch.allocator();

@@ -667,6 +667,75 @@ class Integration(unittest.TestCase):
         self.assertEqual((self.cwd / "output.txt").read_text(), "after")
         self.assertIn("finished", result.stdout)
 
+    def test_one_shot_session_checkpoints_completed_rounds_and_resumes(self):
+        snapshot = self.cwd / ".omnicode/sessions/build.json"
+        def reply(body):
+            if len(self.requests) == 1:
+                initial = json.loads(snapshot.read_text())
+                self.assertEqual(initial["messages"][0]["content"], "build project")
+                return tools(call("write", {"path": "kept.txt", "content": "completed"}, "kept"))
+            saved = json.loads(snapshot.read_text())
+            self.assertEqual(saved["messages"][-1]["content"][0]["tool_use_id"], "kept")
+            return (500, {})
+        self.reply = reply
+        result = self.run_agent("--session", "build", "build project")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.cwd / "kept.txt").read_text(), "completed")
+        self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+        saved = json.loads(snapshot.read_text())
+        self.assertEqual(len(saved["messages"]), 3)
+        self.reply = lambda body: text("continued successfully")
+        result = self.run_agent("--session", "build", "continue")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        messages = self.requests[-1][0]["messages"]
+        self.assertEqual(messages[:-1], saved["messages"])
+        self.assertEqual(messages[-1]["content"], "continue")
+        self.assertEqual(json.loads(snapshot.read_text())["messages"][-1]["content"][0]["text"], "continued successfully")
+
+    def test_one_shot_full_session_compacts_before_checkpoint(self):
+        snapshot = self.cwd / ".omnicode/sessions/full.json"
+        snapshot.parent.mkdir(parents=True)
+        messages = [{"role": "user" if i % 2 == 0 else "assistant", "content": "original goal" if i == 0 else "earlier exchange"} for i in range(128)]
+        snapshot.write_text(json.dumps({"messages": messages, "todo": ""}))
+        self.reply = lambda body: text("summary of earlier work") if "tools" not in body else text("continued")
+        result = self.run_agent("--session", "full", "continue")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 2)
+        saved = json.loads(snapshot.read_text())
+        self.assertLessEqual(len(saved["messages"]), 128)
+        self.assertIn("original goal", saved["messages"][0]["content"])
+        self.assertIn("summary of earlier work", saved["messages"][0]["content"])
+
+    def test_one_shot_session_rejects_invalid_input_without_overwriting(self):
+        for args in [("--session",), ("--session", "../escape", "task"),
+                     ("--session", "name"), ("--session", "name", "--init"),
+                     ("--session", "one", "--session", "two", "task")]:
+            with self.subTest(args=args):
+                result = self.run_agent(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.requests, [])
+                self.assertFalse((self.cwd / ".omnicode").exists())
+        snapshot = self.cwd / ".omnicode/sessions/bad.json"
+        snapshot.parent.mkdir(parents=True)
+        original = b'{"messages":42,"todo":"keep"}'
+        snapshot.write_bytes(original)
+        result = self.run_agent("--session", "bad", "continue")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("InvalidSession", result.stderr)
+        self.assertEqual(snapshot.read_bytes(), original)
+        self.assertEqual(self.requests, [])
+
+    def test_one_shot_checkpoint_redacts_registered_secrets(self):
+        secret = "fixture-session-password"
+        setup = self.run_agent("--secrets", "set", "TOKEN", secret)
+        self.assertEqual(setup.returncode, 0, setup.stderr)
+        self.reply = lambda body: text("remember " + secret)
+        result = self.run_agent("--read-only", "--session", "private", "inspect " + secret)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = (self.cwd / ".omnicode/sessions/private.json").read_text()
+        self.assertNotIn(secret, snapshot)
+        self.assertIn("[REDACTED:TOKEN]", snapshot)
+
     def test_timed_out_shell_cannot_leave_a_child_writing_afterward(self):
         command = 'python3 -c \'import time; from pathlib import Path; time.sleep(0.4); Path("late-write").write_text("orphan")\' & wait'
         self.reply = lambda body: tools(call("bash", {"cmd": command, "timeout_ms": 50})) if len(self.requests) == 1 else text("finished")

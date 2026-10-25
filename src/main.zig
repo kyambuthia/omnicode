@@ -1,7 +1,7 @@
 const std = @import("std");
 const core = @import("omnicode");
 const help =
-    \\omnicode [--free|--cost-max] [--verbose] [--read-only] [prompt ...]       Run a task, or start a REPL without arguments.
+    \\omnicode [--free|--cost-max] [--verbose] [--read-only] [--session NAME] [prompt ...]       Run a task, or start a REPL without arguments.
     \\omnicode --version         Print version (v0.2.0).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
@@ -9,6 +9,7 @@ const help =
     \\omnicode --setup [...]     View or configure provider API keys and settings.
     \\omnicode --secrets [...]   Manage zero-leak secrets (passwords, tokens, logins).
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
+    \\--session NAME            Resume and checkpoint a named one-shot task
     \\--read-only               Restrict model tools to read, glob, grep, and skill
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
@@ -66,12 +67,18 @@ fn run(init: std.process.Init) !void {
     var policy_set = false;
     var prompt_only = false;
     var read_only = false;
+    var session_name: ?[]const u8 = null;
     while (first < args.len) : (first += 1) {
         const arg = args[first];
         if (std.mem.eql(u8, arg, "--verbose")) {
             ui.verbose = true;
         } else if (std.mem.eql(u8, arg, "--read-only")) {
             read_only = true;
+        } else if (std.mem.eql(u8, arg, "--session")) {
+            if (session_name != null) return error.ConflictingOptions;
+            first += 1;
+            if (first == args.len) return error.MissingSessionName;
+            session_name = args[first];
         } else if (std.mem.eql(u8, arg, "--free") or std.mem.eql(u8, arg, "--cost-max")) {
             const selected: @TypeOf(mode) = if (std.mem.eql(u8, arg, "--free")) .free else .cost_max;
             if (policy_set and selected != mode) return error.ConflictingOptions;
@@ -92,6 +99,11 @@ fn run(init: std.process.Init) !void {
     if (!prompt_only and args.len > first and (std.mem.eql(u8, args[first], "--help") or std.mem.eql(u8, args[first], "-h"))) {
         try out.writeAll(help);
         return out.flush();
+    }
+    if (session_name) |name| {
+        if (!core.validName(name)) return error.InvalidSessionName;
+        if (first == args.len or (!prompt_only and std.mem.startsWith(u8, args[first], "-")))
+            return error.SessionRequiresPrompt;
     }
     try core.config.loadIntoEnv(a, init.io, .cwd(), init.environ_map);
     try secrets.load(a, init.io, .cwd(), init.environ_map);
@@ -141,6 +153,13 @@ fn run(init: std.process.Init) !void {
     var todo: core.Todo = .{};
     var menu: core.ModelMenu = .{};
     var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets, .read_only = read_only }, init.environ_map, route);
+    if (session_name) |name| {
+        agent.loadSession(name) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+        agent.checkpoint_name = name;
+    }
     if (args.len > first) {
         agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
             try ui.errorMessage(err);
