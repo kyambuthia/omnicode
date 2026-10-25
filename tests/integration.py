@@ -787,10 +787,32 @@ class Integration(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.requests), 4)
 
+    def test_bash_command_alias_has_consistent_display_execution_and_validation(self):
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("bash", {"command": "printf alias-ok"}, "alias"),
+                             call("bash", {"cmd": "printf both-ok", "command": "printf both-ok"}, "both"),
+                             call("bash", {"cmd": "touch forbidden", "command": "printf other"}, "conflict"),
+                             call("bash", {"cmd": False, "command": "touch forbidden"}, "invalid"),
+                             call("bash", {"command": "touch forbidden\x00"}, "nul"))
+            return text("finished")
+        self.reply = reply
+        result = self.run_agent("execute compatible commands")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("• bash  printf alias-ok", result.stdout)
+        self.assertFalse((self.cwd / "forbidden").exists())
+        results = {r["tool_use_id"]: r for r in self.requests[-1][0]["messages"][-1]["content"]}
+        for key, output in [("alias", "alias-ok"), ("both", "both-ok")]:
+            self.assertFalse(results[key]["is_error"])
+            self.assertEqual(results[key]["content"], output)
+        for key, error in [("conflict", "ConflictingArguments"), ("invalid", "ExpectedString"), ("nul", "InvalidCommandArgument")]:
+            self.assertTrue(results[key]["is_error"])
+            self.assertIn(error, results[key]["content"])
+
     def test_invalid_tool_arguments_return_schema_for_recovery(self):
         def reply(body):
             if len(self.requests) == 1:
-                return tools(call("bash", {"command": "touch should-not-run"}, "bad"))
+                return tools(call("bash", {"script": "touch should-not-run"}, "bad"))
             if len(self.requests) == 2:
                 error = body["messages"][-1]["content"][0]
                 self.assertTrue(error["is_error"])

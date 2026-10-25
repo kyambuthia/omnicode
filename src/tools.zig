@@ -155,7 +155,7 @@ pub const Context = struct {
         if (std.mem.eql(u8, name, "bash")) {
             const timeout = try j.number(args, "timeout_ms", 30_000);
             if (timeout == 0 or timeout > 300_000) return error.InvalidTimeout;
-            return c.commandResult(&.{ "sh", "-c", try j.str(args, "cmd") }, false, @intCast(timeout));
+            return c.commandResult(&.{ "sh", "-c", try j.aliasedString(args, "cmd", "command") }, false, @intCast(timeout));
         }
         const path = try j.optional(args, "path", ".");
         if (std.mem.eql(u8, name, "glob")) return c.commandResult(&.{

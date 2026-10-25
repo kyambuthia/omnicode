@@ -406,7 +406,7 @@ pub const Agent = struct {
                         const id = j.str(block, "id") catch "";
                         const input = j.get(block, "input") catch .null;
                         const detail = j.optional(input, "path", "") catch "";
-                        const cmd = if (detail.len > 0) detail else j.optional(input, "cmd", "") catch "";
+                        const cmd = if (detail.len > 0) detail else j.aliasedString(input, "cmd", "command") catch "";
                         const target = if (cmd.len > 0) cmd else j.optional(input, "pat", "") catch "";
                         const clean_target = if (self.context.secrets) |secrets| try secrets.scrub(a, target, self.env) else target;
                         const snip = if (id.len > 0) findToolResultSnippet(self.history.items[idx + 1].content, id) else "";
@@ -717,7 +717,7 @@ fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
 
 fn formatToolCallError(a: std.mem.Allocator, err: anyerror, name: []const u8, input: j.Value) ![]const u8 {
     if (err == error.MissingField or err == error.ExpectedString or err == error.ExpectedObject or
-        err == error.ExpectedBoolean or err == error.ExpectedNaturalNumber)
+        err == error.ExpectedBoolean or err == error.ExpectedNaturalNumber or err == error.ConflictingArguments)
     {
         const definitions = try j.parse(a, tools.schema);
         for (definitions.array.items) |definition| {

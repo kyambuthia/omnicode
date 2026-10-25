@@ -408,7 +408,7 @@ files immediately. Keep skills local and trusted.
 | `edit` | Exact nonempty string replacement; reject repeated matches unless `all=true` |
 | `glob` | `rg --files --glob`; respects ripgrep glob and ignore rules |
 | `grep` | Ripgrep regex search with line numbers; up to 50 matches per file |
-| `bash` | Execute through `sh -c`; optional `timeout_ms` from 1 to 300,000 (default 30,000); returns stdout then stderr and reports nonzero exit |
+| `bash` | Execute `cmd` through `sh -c` (`command` is a compatibility alias; conflicting values are rejected); optional `timeout_ms` from 1 to 300,000 (default 30,000); returns stdout then stderr and reports nonzero exit |
 | `skill` | Load an advertised project's skill body by name |
 | `todo` | Read or replace the session checklist (`items: [{task, done}]`); survives compaction and `/save` |
 | `task` | Delegate a sub-task to a depth-1 child agent (`mode: explore\|edit`, `tier: fast\|strong`); returns only its final report |

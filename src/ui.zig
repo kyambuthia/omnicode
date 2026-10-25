@@ -265,7 +265,8 @@ pub const Ui = struct {
             const focus = j.optional(args, "focus", "") catch "";
             try ui.safe(if (focus.len > 0) focus else "working tree", ui.width -| (16 + ui.indent.len));
         } else {
-            try ui.safe(j.str(args, key) catch "(invalid arguments)", ui.width -| (16 + ui.indent.len));
+            const detail = if (std.mem.eql(u8, name, "bash")) j.aliasedString(args, "cmd", "command") else j.str(args, key);
+            try ui.safe(detail catch "(invalid arguments)", ui.width -| (16 + ui.indent.len));
         }
         if (std.mem.eql(u8, key, "pat")) {
             try ui.out.writeAll(" in ");
