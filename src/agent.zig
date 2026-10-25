@@ -373,7 +373,8 @@ pub const Agent = struct {
                     const kind = j.str(block, "type") catch continue;
                     if (std.mem.eql(u8, kind, "text")) {
                         const t = j.str(block, "text") catch continue;
-                        try notes.writer.print("- assistant: {s}\n", .{t[0..@min(t.len, 200)]});
+                        const clean = if (self.context.secrets) |secrets| try secrets.scrub(a, t, self.env) else t;
+                        try notes.writer.print("- assistant: {s}\n", .{utf8Prefix(clean, 200)});
                         completed += 1;
                     } else if (answered and std.mem.eql(u8, kind, "tool_use")) {
                         const name = j.str(block, "name") catch "tool";
@@ -382,11 +383,12 @@ pub const Agent = struct {
                         const detail = j.optional(input, "path", "") catch "";
                         const cmd = if (detail.len > 0) detail else j.optional(input, "cmd", "") catch "";
                         const target = if (cmd.len > 0) cmd else j.optional(input, "pat", "") catch "";
+                        const clean_target = if (self.context.secrets) |secrets| try secrets.scrub(a, target, self.env) else target;
                         const snip = if (id.len > 0) findToolResultSnippet(self.history.items[idx + 1].content, id) else "";
                         if (snip.len > 0) {
-                            try notes.writer.print("- tool {s}: {s} -> {s}\n", .{ name, target[0..@min(target.len, 120)], snip });
+                            try notes.writer.print("- tool {s}: {s} -> {s}\n", .{ name, utf8Prefix(clean_target, 120), snip });
                         } else {
-                            try notes.writer.print("- tool {s}: {s}\n", .{ name, target[0..@min(target.len, 120)] });
+                            try notes.writer.print("- tool {s}: {s}\n", .{ name, utf8Prefix(clean_target, 120) });
                         }
                         completed += 1;
                     }
@@ -678,6 +680,12 @@ pub const Agent = struct {
         return .{ .text = try capReport(a, safe_report), .passed = complete and criticPassed(report) };
     }
 };
+
+fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
+    var end = @min(text.len, limit);
+    while (end > 0 and !std.unicode.utf8ValidateSlice(text[0..end])) end -= 1;
+    return text[0..end];
+}
 
 fn formatToolCallError(a: std.mem.Allocator, err: anyerror, name: []const u8, input: j.Value) ![]const u8 {
     if (err == error.MissingField or err == error.ExpectedString or err == error.ExpectedObject or
@@ -1059,4 +1067,32 @@ test "tool timeout hints report the selected command deadline" {
     try std.testing.expect(std.mem.indexOf(u8, other, "30000") == null);
     const invalid = try formatToolCallError(a, error.InvalidTimeout, "bash", try j.parse(a, "{}"));
     try std.testing.expect(std.mem.indexOf(u8, invalid, "integer from 1 to 300000") != null);
+}
+
+test "failure summaries preserve UTF-8 and redact before shortening" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = std.process.Environ.Map.init(a);
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "private-token-value");
+    const route = try Route.init(&env, "anthropic", "fixture-model");
+    var agent = try Agent.init(.{ .a = a, .io = std.testing.io, .dir = .cwd(), .secrets = &secrets }, &env, route);
+    try agent.history.append(a, .{ .role = "user", .content = .{ .string = "continue project" } });
+    const text_prefix: [199]u8 = @splat('a');
+    const secret_prefix: [195]u8 = @splat('b');
+    const path_prefix: [119]u8 = @splat('c');
+    const secret_path_prefix: [115]u8 = @splat('d');
+    const blocks = try j.parse(a, try j.encode(a, .{
+        .{ .type = "text", .text = text_prefix ++ "é" },
+        .{ .type = "text", .text = secret_prefix ++ "private-token-value" },
+        .{ .type = "tool_use", .name = "write", .id = "one", .input = .{ .path = path_prefix ++ "🧪" } },
+        .{ .type = "tool_use", .name = "write", .id = "two", .input = .{ .path = secret_path_prefix ++ "private-token-value" } },
+    }));
+    try agent.history.append(a, .{ .role = "assistant", .content = blocks });
+    try agent.history.append(a, .{ .role = "user", .content = .{ .string = "tool results" } });
+    try std.testing.expect(try agent.retainCompletedWork(a));
+    const summary = agent.history.items[0].content.string;
+    try std.testing.expect(std.unicode.utf8ValidateSlice(summary));
+    try std.testing.expect(std.mem.indexOf(u8, summary, "priva") == null);
 }
