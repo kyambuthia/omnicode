@@ -1960,6 +1960,56 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.requests, [])
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_file_tools_reject_special_write_targets_and_continue(self):
+        os.mkfifo(self.cwd / "pipe")
+        (self.cwd / "pipe-link").symlink_to("pipe")
+        def reply(body):
+            if len(self.requests) == 1:
+                return tools(call("write", {"path": "pipe", "content": "bad"}, "pipe"),
+                             call("write", {"path": "pipe-link", "content": "bad"}, "link"),
+                             call("edit", {"path": "pipe", "old": "bad", "new": "bad"}, "edit"))
+            if len(self.requests) == 2:
+                for result in body["messages"][-1]["content"]:
+                    self.assertTrue(result["is_error"])
+                    self.assertIn("NotRegularFile", result["content"])
+                return tools(call("write", {"path": "nested/regular", "content": "recovered"}, "regular"))
+            return text("continued after rejected writes")
+        self.reply = reply
+        result = self.run_agent("create project files")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.requests), 3)
+        self.assertEqual((self.cwd / "nested/regular").read_text(), "recovered")
+        self.assertTrue((self.cwd / "pipe").is_fifo())
+        self.assertTrue((self.cwd / "pipe-link").is_symlink())
+        (self.cwd / "regular-link").symlink_to("nested/regular")
+        self.requests.clear()
+        self.reply = lambda _: tools(call("write", {"path": "regular-link", "content": "updated"})) if len(self.requests) == 1 else text()
+        result = self.run_agent("update regular file through its link")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.cwd / "nested/regular").read_text(), "updated")
+        self.assertTrue((self.cwd / "regular-link").is_symlink())
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_forced_init_checks_both_targets_before_overwriting_instructions(self):
+        instructions = self.cwd / "OMNICODE.md"
+        os.mkfifo(instructions)
+        result = self.run_agent("--init", "force")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NotRegularFile", result.stderr)
+        self.assertTrue(instructions.is_fifo())
+        instructions.unlink()
+        instructions.write_text("preserve original instructions")
+        skill = self.cwd / ".omnicode/skills/verify/SKILL.md"
+        skill.parent.mkdir(parents=True, exist_ok=True)
+        os.mkfifo(skill)
+        result = self.run_agent("--init", "force")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NotRegularFile", result.stderr)
+        self.assertEqual(instructions.read_text(), "preserve original instructions")
+        self.assertTrue(skill.is_fifo())
+        self.assertEqual(self.requests, [])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
     def test_init_detects_large_manifest_without_reading_special_files(self):
         os.mkfifo(self.cwd / "build.zig")
         (self.cwd / "Cargo.toml").mkdir()

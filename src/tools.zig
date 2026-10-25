@@ -121,7 +121,7 @@ pub const Context = struct {
             const path = try j.str(args, "path");
             try @import("storage.zig").validatePath(path);
             if (std.fs.path.dirname(path)) |parent| try c.dir.createDirPath(c.io, parent);
-            try c.dir.writeFile(c.io, .{ .sub_path = path, .data = content });
+            try @import("storage.zig").writeRegular(c.io, c.dir, path, content);
             return "ok";
         }
         if (std.mem.eql(u8, name, "edit")) {
@@ -142,7 +142,7 @@ pub const Context = struct {
             const size = std.math.add(usize, text.len - count * old.len, try std.math.mul(usize, count, new.len)) catch return error.StreamTooLong;
             if (size > 1024 * 1024) return error.StreamTooLong;
             const replacement = try std.mem.replaceOwned(u8, c.a, text, old, new);
-            try c.dir.writeFile(c.io, .{ .sub_path = path, .data = replacement });
+            try @import("storage.zig").writeRegular(c.io, c.dir, path, replacement);
             return "ok";
         }
         return error.UnknownTool;
@@ -335,11 +335,15 @@ pub const Context = struct {
         , .{commands});
         const skill_path = try std.fmt.allocPrint(c.a, "{s}/verify", .{c.skills_path});
         const skill_file = try std.fmt.allocPrint(c.a, "{s}/verify/SKILL.md", .{c.skills_path});
+        if (force) {
+            try @import("storage.zig").checkWriteTarget(c.io, c.dir, "OMNICODE.md");
+            try @import("storage.zig").checkWriteTarget(c.io, c.dir, skill_file);
+        }
         try c.dir.createDirPath(c.io, skill_path);
         // Prepare directories before publishing the instruction file, so an
         // invalid skills directory does not leave OMNICODE.md half-initialized.
         if (force) {
-            try c.dir.writeFile(c.io, .{ .sub_path = "OMNICODE.md", .data = doc });
+            try @import("storage.zig").writeRegular(c.io, c.dir, "OMNICODE.md", doc);
         } else if (!try @import("storage.zig").createNew(c.io, c.dir, "OMNICODE.md", doc)) {
             return error.AlreadyInitialized;
         }
@@ -354,7 +358,7 @@ pub const Context = struct {
             \\
         ;
         if (force) {
-            try c.dir.writeFile(c.io, .{ .sub_path = skill_file, .data = verify_skill });
+            try @import("storage.zig").writeRegular(c.io, c.dir, skill_file, verify_skill);
         } else {
             if (!try @import("storage.zig").createNew(c.io, c.dir, skill_file, verify_skill))
                 return "Initialized OMNICODE.md; preserved the existing verification skill.";

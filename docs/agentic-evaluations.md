@@ -325,3 +325,18 @@ file contents. The tracked lab project remained clean; its explicitly requested
 named local checkpoint was retained. Offline regressions cover direct and
 symlinked FIFOs, directory rejection, recovery through a regular-file symlink,
 and special project instructions failing before any API request.
+
+The matching direct-write probe also reproduced a static FIFO hang. Direct
+source writes/edits now precheck existing targets and allow only regular files
+or new destinations. Normal file symlinks retain their existing behavior.
+Forced initialization prechecks both OMNICODE.md and the verification skill
+before publishing either, so a special skill target does not first overwrite
+valid instructions. The atomic private-state publisher remains separate: it
+replaces directory entries without opening the previous destination.
+
+A paid updated-debug probe rejected a FIFO write and then wrote the requested
+normal fixture in 5.5 seconds (two tools, one expected error). An independent
+byte check confirmed the exact 15-byte file and that the FIFO remained a FIFO;
+the tracked lab project stayed clean. Offline tests cover direct/symlinked FIFO
+writes, rejected edits, continued creation of nested regular files, preserved
+regular-file symlink writes, and both invalid forced-initialization targets.

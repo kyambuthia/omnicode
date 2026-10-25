@@ -14,6 +14,22 @@ pub fn readRegular(io: std.Io, dir: std.Io.Dir, path: []const u8, a: std.mem.All
     return dir.readFileAlloc(io, path, a, limit);
 }
 
+/// Direct writes may create a new file or overwrite a regular file, but must
+/// not open an existing special entry. Like reads, this is a metadata precheck.
+pub fn checkWriteTarget(io: std.Io, dir: std.Io.Dir, path: []const u8) !void {
+    try validatePath(path);
+    const metadata = dir.statFile(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    if (metadata.kind != .file) return error.NotRegularFile;
+}
+
+pub fn writeRegular(io: std.Io, dir: std.Io.Dir, path: []const u8, data: []const u8) !void {
+    try checkWriteTarget(io, dir, path);
+    try dir.writeFile(io, .{ .sub_path = path, .data = data });
+}
+
 /// Publish complete contents only if the destination is still absent.
 /// Returns false when any entry (including a dangling symlink) already exists.
 pub fn createNew(io: std.Io, dir: std.Io.Dir, path: []const u8, data: []const u8) !bool {
@@ -98,4 +114,18 @@ test "regular reads preserve limits and reject directories and NUL paths" {
     try std.testing.expectError(error.StreamTooLong, readRegular(io, tmp.dir, "file", a, .limited(4)));
     try std.testing.expectError(error.NotRegularFile, readRegular(io, tmp.dir, ".", a, .limited(16)));
     try std.testing.expectError(error.InvalidPath, readRegular(io, tmp.dir, "file\x00suffix", a, .limited(16)));
+}
+
+test "regular writes create and overwrite files but preserve directory targets" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try writeRegular(io, tmp.dir, "new", "first");
+    try writeRegular(io, tmp.dir, "new", "second");
+    const text = try readRegular(io, tmp.dir, "new", std.testing.allocator, .limited(16));
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("second", text);
+    try tmp.dir.createDir(io, "directory", .default_dir);
+    try std.testing.expectError(error.NotRegularFile, writeRegular(io, tmp.dir, "directory", "data"));
+    try std.testing.expectError(error.InvalidPath, writeRegular(io, tmp.dir, "new\x00suffix", "data"));
 }
