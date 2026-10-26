@@ -64,6 +64,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Read-tool source and redacted intermediate buffers are securely cleared after formatting.
 - File-edit source and replacement buffers are securely cleared after completion or failure.
 - Project instructions and skill descriptions are scrubbed before entering model context.
+- Temporary system-prompt fragments and per-turn budget and dry-run prompt copies are securely cleared after use.
 - Loaded skill bodies are scrubbed before results are retained, and raw buffers are cleared.
 - REPL history slots are securely cleared when overwritten or replaced by redaction.
 - New REPL history entries are scrubbed before they are retained.
