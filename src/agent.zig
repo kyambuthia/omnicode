@@ -498,6 +498,9 @@ pub const Agent = struct {
         var next: std.ArrayList(Message) = .empty;
         try next.append(a, .{ .role = "user", .content = .{ .string = head } });
         for (self.history.items[split..]) |m| try next.append(a, m);
+        for (self.history.items[0..split]) |*message| {
+            if (message.content == .array) j.secureClear(std.heap.page_allocator, &message.content) catch {};
+        }
         self.history.deinit(a);
         self.history = next;
         self.last_input_tokens = 0;
