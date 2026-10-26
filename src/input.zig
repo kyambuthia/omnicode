@@ -310,16 +310,20 @@ fn masksCurrentArgument(line: []const u8) bool {
         return line.len > value_start;
     }
 
+    if (is_providers and tokenEquals(line, action, "url")) {
+        const value_start = afterToken(line, action.end) orelse return false;
+        return line.len > value_start;
+    }
+
     if (is_setup and tokenEquals(line, action, "set")) {
         const key = nextToken(line, &cursor) orelse return false;
-        if (!isSecretKey(line, key)) return false;
+        if (!isSensitiveSetting(line, key)) return false;
         const value_start = afterToken(line, key.end) orelse return false;
         return line.len > value_start;
     }
 
     if (tokenEquals(line, action, "unset") or tokenEquals(line, action, "clear") or
-        tokenEquals(line, action, "remove") or tokenEquals(line, action, "list") or
-        (is_providers and tokenEquals(line, action, "url"))) return false;
+        tokenEquals(line, action, "remove") or tokenEquals(line, action, "list")) return false;
     if (is_providers and (tokenEquals(line, action, "use") or tokenEquals(line, action, "select") or tokenEquals(line, action, "set"))) {
         const provider = nextToken(line, &cursor) orelse return false;
         if (config.resolveProvider(line[provider.start..provider.end]) == null) return false;
@@ -328,14 +332,15 @@ fn masksCurrentArgument(line: []const u8) bool {
     }
 
     if (is_providers and config.resolveProvider(line[action.start..action.end]) == null) return false;
-    if (is_setup and !isSecretKey(line, action)) return false;
+    if (is_setup and !isSensitiveSetting(line, action)) return false;
     const value_start = afterToken(line, action.end) orelse return false;
     return line.len > value_start;
 }
 
-fn isSecretKey(line: []const u8, token: Token) bool {
+fn isSensitiveSetting(line: []const u8, token: Token) bool {
     const name = config.resolveKeyName(line[token.start..token.end]) orelse return false;
-    return std.mem.endsWith(u8, name, "_KEY");
+    return std.mem.endsWith(u8, name, "_KEY") or std.mem.eql(u8, name, "API_URL") or
+        std.mem.eql(u8, name, "VOICE_URL") or std.mem.eql(u8, name, "MODELS_URL");
 }
 
 test "input history records unique single-line entries and bounds capacity" {
