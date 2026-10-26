@@ -300,8 +300,12 @@ fn masksCurrentArgument(line: []const u8) bool {
     const action = nextToken(line, &cursor) orelse return false;
 
     if (is_secrets) {
-        if (!tokenEquals(line, action, "set")) return false;
-        const name = nextToken(line, &cursor) orelse return false;
+        if (tokenEquals(line, action, "unset") or tokenEquals(line, action, "rm") or
+            tokenEquals(line, action, "delete") or tokenEquals(line, action, "load")) return false;
+        const name = if (tokenEquals(line, action, "set") or tokenEquals(line, action, "add"))
+            nextToken(line, &cursor) orelse return false
+        else
+            action;
         const value_start = afterToken(line, name.end) orelse return false;
         return line.len > value_start;
     }

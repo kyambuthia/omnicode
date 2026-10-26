@@ -9,7 +9,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 ### Fixed
 
 - The interactive model picker sanitizes catalog model IDs before displaying them in the terminal.
-- Credential and vault values entered with `/setup`, `/providers`, or `/secrets set`
+- Credential and vault values entered with `/setup`, `/providers`, or `/secrets`
   are masked while typing; recalled input history is scrubbed before display.
 - The REPL drops incomplete Escape sequences after 100 ms instead of waiting
   indefinitely.
