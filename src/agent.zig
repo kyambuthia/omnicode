@@ -632,7 +632,14 @@ pub const Agent = struct {
             }
         }
         const raw = try out.toOwnedSlice();
-        return if (self.context.secrets) |secrets| secrets.scrub(a, raw, self.env) else raw;
+        var keep_raw = true;
+        defer if (keep_raw) std.crypto.secureZero(u8, raw);
+        if (self.context.secrets) |secrets| {
+            const safe = try secrets.scrub(a, raw, self.env);
+            if (safe.ptr != raw.ptr) return safe;
+        }
+        keep_raw = false;
+        return raw;
     }
 
     /// Return redacted proposed tool calls from a dry run for structured output.
