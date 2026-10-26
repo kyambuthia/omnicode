@@ -3,7 +3,7 @@ const j = @import("json.zig");
 const Io = std.Io;
 pub const limit = 64 * 1024;
 const byte_read_limit = 60 * 1024;
-pub const Result = struct { text: []const u8, is_error: bool = false };
+pub const Result = struct { text: []const u8, is_error: bool = false, owned_text: bool = false };
 
 /// Reject unadvertised fields before a tool can read or mutate project state.
 pub fn validateFields(args: j.Value, allowed: []const []const u8) !void {

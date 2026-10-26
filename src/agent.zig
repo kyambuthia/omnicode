@@ -257,8 +257,9 @@ pub const Agent = struct {
                     const start = Io.Clock.awake.now(self.context.io);
                     const result = self.runTool(name, input, ui, &usage) catch |err| blk: {
                         if (err == error.Canceled) return err;
-                        break :blk tools.Result{ .text = try formatToolCallError(a, err, name, input), .is_error = true };
+                        break :blk tools.Result{ .text = try formatToolCallError(a, err, name, input), .is_error = true, .owned_text = true };
                     };
+                    defer if (result.owned_text) std.crypto.secureZero(u8, @constCast(result.text));
                     // Invalid UTF-8 (e.g. binary output) must not corrupt JSON requests.
                     const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
                     const raw_text = if (valid_utf8) result.text else "error: NonUtf8Output";
@@ -833,11 +834,11 @@ pub const Agent = struct {
         try self.context.checkToolAllowed(name);
         if (std.mem.eql(u8, name, "task")) {
             try tools.validateFields(input, &.{ "prompt", "mode", "tier" });
-            return .{ .text = try self.runTask(input, ui, usage) };
+            return .{ .text = try self.runTask(input, ui, usage), .owned_text = true };
         }
         if (std.mem.eql(u8, name, "review")) {
             try tools.validateFields(input, &.{"focus"});
-            return .{ .text = try self.runReview(input, ui, usage) };
+            return .{ .text = try self.runReview(input, ui, usage), .owned_text = true };
         }
         return ui.work("Running tool...", tools.Context.runResult, .{ self.context, name, input });
     }
@@ -1019,8 +1020,9 @@ pub const Agent = struct {
                             ui.work("Running subagent tool...", tools.Context.runResult, .{ child.context, name, input });
                     } catch |err| blk: {
                         if (err == error.Canceled) return err;
-                        break :blk tools.Result{ .text = try formatToolCallError(ca, err, name, input), .is_error = true };
+                        break :blk tools.Result{ .text = try formatToolCallError(ca, err, name, input), .is_error = true, .owned_text = true };
                     };
+                    defer if (result.owned_text) std.crypto.secureZero(u8, @constCast(result.text));
                     const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
                     const text = if (valid_utf8) result.text else "error: NonUtf8Output";
                     const is_error = result.is_error or !valid_utf8;
