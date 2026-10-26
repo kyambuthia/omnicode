@@ -824,6 +824,7 @@ pub const Agent = struct {
         const next_system = try a.dupe(u8, self.system);
         errdefer std.crypto.secureZero(u8, @constCast(next_system));
         const old_a = self.context.a;
+        self.clearPreviewedContent();
         self.clearHistory();
         self.history.deinit(old_a);
         j.secureClear(std.heap.page_allocator, &self.schemas) catch {};

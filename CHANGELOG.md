@@ -69,6 +69,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - JSON-mode result and proposal copies are securely cleared after output.
 - One-shot dry-run response content is securely cleared after output.
 - Starting a new agent turn securely clears any retained dry-run proposal from the previous turn.
+- Arena reallocation clears dry-run proposal content before its source arena is reset.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Old parsed history trees are cleared when sessions load, credentials redact history, or history reallocates.
 - Replaced and removed vault environment copies are securely cleared before release.
