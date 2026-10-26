@@ -245,6 +245,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.errorMessage(err);
                 continue;
             };
+            defer std.crypto.secureZero(u8, @constCast(report));
             try ui.retainDetails(report);
             var full = ui;
             full.verbose = true;
