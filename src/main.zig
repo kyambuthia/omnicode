@@ -126,7 +126,9 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
             };
             agent.checkpoint_name = name;
         }
-        agent.respond(try std.mem.join(a, " ", args[first..]), ui) catch |err| {
+        const prompt = try std.mem.join(a, " ", args[first..]);
+        defer std.crypto.secureZero(u8, prompt);
+        agent.respond(prompt, ui) catch |err| {
             if (err == error.Canceled) return err;
             try ui.errorMessage(err);
             try ui.out.flush();
