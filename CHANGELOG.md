@@ -65,7 +65,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - File-edit source and replacement buffers are securely cleared after completion or failure.
 - Project instructions and skill descriptions are scrubbed before entering model context.
 - Temporary system-prompt fragments and per-turn budget and dry-run prompt copies are securely cleared after use.
-- The standalone skill-list output buffer is securely cleared after display.
+- Standalone and REPL skill-list output buffers are securely cleared after display.
 - Delegated system-prompt copies and owned child prompt copies are securely cleared after each subagent run.
 - Loaded skill bodies are scrubbed before results are retained, and raw buffers are cleared.
 - REPL history slots are securely cleared when overwritten or replaced by redaction.

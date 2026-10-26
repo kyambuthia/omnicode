@@ -140,6 +140,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         }
         if (std.mem.eql(u8, line, "/skills")) {
             const skills = try agent.context.skills();
+            defer std.crypto.secureZero(u8, @constCast(skills));
             try ui.skills(skills);
             continue;
         }
