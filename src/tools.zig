@@ -268,12 +268,20 @@ pub const Context = struct {
             .stdout_limit = .limited(4 * limit),
             .stderr_limit = .limited(4 * limit),
         } }, milliseconds);
+        defer std.crypto.secureZero(u8, @constCast(result.stdout));
+        defer std.crypto.secureZero(u8, @constCast(result.stderr));
         if (search and result.term == .exited and result.term.exited == 1) return .{ .text = "none" };
         const full = if (!result.term.success())
             try std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, result.stdout, result.stderr })
         else
             try std.fmt.allocPrint(c.a, "{s}{s}", .{ result.stdout, result.stderr });
-        return .{ .text = try capCommandOutput(c.a, try c.scrub(full)), .is_error = !result.term.success() };
+        defer std.crypto.secureZero(u8, @constCast(full));
+        const scrubbed = try c.scrub(full);
+        defer {
+            if (scrubbed.ptr != full.ptr) std.crypto.secureZero(u8, @constCast(scrubbed));
+        }
+        const capped = try capCommandOutput(c.a, scrubbed);
+        return .{ .text = try c.a.dupe(u8, capped), .is_error = !result.term.success() };
     }
 
     pub fn loadSkill(c: Context, name: []const u8) ![]const u8 {
