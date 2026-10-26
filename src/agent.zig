@@ -729,7 +729,13 @@ pub const Agent = struct {
         defer std.crypto.secureZero(u8, @constCast(encoded_root));
         if (encoded_root.len > max_bytes) return error.HistoryLimit;
         var next: std.ArrayList(Message) = .empty;
-        errdefer next.deinit(a);
+        errdefer {
+            for (next.items) |*message| {
+                j.secureClear(std.heap.page_allocator, &message.content) catch {};
+                std.crypto.secureZero(u8, @constCast(message.role));
+            }
+            next.deinit(a);
+        }
         for (msgs.array.items) |item| {
             const encoded_content = try j.encode(sa, try j.get(item, "content"));
             defer std.crypto.secureZero(u8, @constCast(encoded_content));

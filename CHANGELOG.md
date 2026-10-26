@@ -16,6 +16,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Imported and serialized vault buffers are securely cleared after use.
 - JSON-decoded vault values are securely cleared after copying into the live vault.
 - Parsed session, voice, and compact-response values, validation copies, and save/export buffers are securely cleared after use through an iterative traversal.
+- Partially loaded session message copies are securely cleared when a later entry fails.
 - Temporary checklist formatting buffers are securely cleared after successful and failed updates.
 - Retired checklist contents are securely cleared on update, redaction, load, and conversation reset.
 - Replaced `/details` output is securely cleared before the next result is retained.
