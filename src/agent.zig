@@ -491,6 +491,10 @@ pub const Agent = struct {
         if (self.history.items.len <= 1) return false;
         const goal = extractGoal(self.history.items[0]);
         var notes: Io.Writer.Allocating = .init(a);
+        defer {
+            std.crypto.secureZero(u8, notes.written());
+            notes.deinit();
+        }
         var completed: usize = 0;
         for (self.history.items[1..], 1..) |m, idx| {
             if (std.mem.eql(u8, m.role, "assistant") and m.content == .array) {
@@ -500,6 +504,7 @@ pub const Agent = struct {
                     if (std.mem.eql(u8, kind, "text")) {
                         const t = j.str(block, "text") catch continue;
                         const clean = if (self.context.secrets) |secrets| try secrets.scrub(a, t, self.env) else t;
+                        defer if (clean.ptr != t.ptr) std.crypto.secureZero(u8, @constCast(clean));
                         try notes.writer.print("- assistant: {s}\n", .{utf8Prefix(clean, 200)});
                         completed += 1;
                     } else if (answered and std.mem.eql(u8, kind, "tool_use")) {
@@ -510,6 +515,7 @@ pub const Agent = struct {
                         const cmd = if (detail.len > 0) detail else j.aliasedString(input, "cmd", "command") catch "";
                         const target = if (cmd.len > 0) cmd else j.optional(input, "pat", "") catch "";
                         const clean_target = if (self.context.secrets) |secrets| try secrets.scrub(a, target, self.env) else target;
+                        defer if (clean_target.ptr != target.ptr) std.crypto.secureZero(u8, @constCast(clean_target));
                         const snip = if (id.len > 0) findToolResultSnippet(self.history.items[idx + 1].content, id) else "";
                         if (snip.len > 0) {
                             try notes.writer.print("- tool {s}: {s} -> {s}\n", .{ name, utf8Prefix(clean_target, 120), snip });
@@ -523,6 +529,7 @@ pub const Agent = struct {
         }
         if (completed == 0) return false;
         const summary = try notes.toOwnedSlice();
+        defer std.crypto.secureZero(u8, summary);
         const todo_block = if (self.context.todo) |t| if (t.len > 0) try std.fmt.allocPrint(a, "\n\n<todo>\n{s}</todo>", .{t.slice()}) else "" else "";
         const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\nCompleted before failure:\n{s}</summary>{s}", .{ goal, summary, todo_block });
         var next: std.ArrayList(Message) = .empty;

@@ -28,6 +28,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Partially serialized `/setup` config data is securely cleared after write errors.
 - Partially formatted session exports are securely cleared after formatting errors.
 - Partially formatted read and skill listings are securely cleared after formatting errors.
+- Fallback-summary redaction and writer buffers are securely cleared after use.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
