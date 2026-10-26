@@ -651,10 +651,12 @@ pub const Agent = struct {
         if (self.previewed_content) |content| {
             for (content.array.items) |block| {
                 if (!std.mem.eql(u8, j.str(block, "type") catch "", "tool_use")) continue;
-                try calls.append(a, try j.parse(a, try j.encode(a, .{
+                const encoded = try j.encode(a, .{
                     .name = try j.str(block, "name"),
                     .input = try j.get(block, "input"),
-                })));
+                });
+                defer std.crypto.secureZero(u8, @constCast(encoded));
+                try calls.append(a, try j.parse(a, encoded));
             }
         }
         var result: j.Value = .{ .array = calls.toManaged(a) };

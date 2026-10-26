@@ -31,6 +31,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Fallback-summary redaction and writer buffers are securely cleared after use.
 - JSON result formatting securely clears replaced raw assistant-text copies.
 - Prompt serialization clears its raw source and parsed JSON tree after encoding.
+- Proposed-tool JSON clears each raw input serialization after parsing.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
