@@ -13,6 +13,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Replaced and removed vault values are securely cleared from active vault slots.
 - Temporary vault copies are securely cleared after a mutation succeeds or fails.
 - Imported and serialized vault buffers are securely cleared after use.
+- REPL history slots are securely cleared when overwritten or replaced by redaction.
 - Custom endpoint summaries redact query strings that may contain credentials.
 - The interactive model picker sanitizes catalog model IDs before displaying them in the terminal.
 - Credential and vault values entered with `/setup`, `/providers`, or `/secrets`

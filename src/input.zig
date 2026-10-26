@@ -89,6 +89,7 @@ pub const Input = struct {
         }
         const slot = self.count % self.history.len;
         const len = entry.len;
+        std.crypto.secureZero(u8, self.history[slot][0..]);
         @memcpy(self.history[slot][0..len], entry[0..len]);
         self.lengths[slot] = len;
         self.count += 1;
@@ -101,11 +102,14 @@ pub const Input = struct {
         for (0..@min(self.count, self.history.len)) |slot| {
             const clean = try secrets.scrub(scratch.allocator(), self.history[slot][0..self.lengths[slot]], env);
             if (clean.len > self.history[slot].len) {
+                std.crypto.secureZero(u8, self.history[slot][0..]);
                 self.lengths[slot] = 0;
                 continue;
             }
-            if (clean.ptr != self.history[slot][0..].ptr)
+            if (clean.ptr != self.history[slot][0..].ptr) {
+                std.crypto.secureZero(u8, self.history[slot][0..]);
                 @memcpy(self.history[slot][0..clean.len], clean);
+            }
             self.lengths[slot] = clean.len;
         }
     }

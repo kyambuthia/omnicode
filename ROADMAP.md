@@ -575,7 +575,7 @@ flowchart LR
 | **Subprocess injection** | `Context.command` (`src/tools.zig`) injects all stored secrets into the child process `environ_map` so `bash` commands can reference `$NAME` directly |
 | **Name-only prompt advertisement** | `Agent.buildSystem` (`src/agent.zig`) appends `Available secret env vars (values hidden; reference as $NAME in bash): NAME1, NAME2` so the model uses secrets without ever seeing their values |
 | **Mandatory scrubber (`Secrets.scrub`)** | Scrubs every `Context.run` output, every user prompt entering `Agent.history`, and terminal previews. Longer values use `[REDACTED:<NAME>]`; short vault values and provider keys use same-length asterisks to avoid leaking them or expanding common one-character matches. |
-| **History exclusion (`src/input.zig`)** | `Input.record` ignores lines starting with `/secrets` or `/setup` so raw credentials never enter Up/Down arrow history |
+| **History exclusion (`src/input.zig`)** | `Input.record` ignores lines starting with `/secrets` or `/setup` so raw credentials never enter Up/Down arrow history; overwritten and redacted history slots are securely cleared |
 
 ---
 
