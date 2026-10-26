@@ -412,8 +412,9 @@ pub const Context = struct {
 };
 
 pub fn capCommandOutput(a: j.Allocator, full: []const u8) ![]const u8 {
+    if (!std.unicode.utf8ValidateSlice(full))
+        return "Command output contained non-UTF-8 bytes and was omitted.";
     if (full.len <= limit) return full;
-    if (!std.unicode.utf8ValidateSlice(full)) return full;
     const marker = "\n...[truncated middle; narrow command or filter output]...\n";
     var head: usize = (limit * 2) / 3;
     while (head > 0 and !std.unicode.utf8ValidateSlice(full[0..head])) head -= 1;
