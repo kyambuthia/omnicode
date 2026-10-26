@@ -416,7 +416,9 @@ pub const Agent = struct {
     pub fn historyBytes(self: *const Agent) usize {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
-        return (j.encode(scratch.allocator(), self.history.items) catch return 0).len;
+        const encoded = j.encode(scratch.allocator(), self.history.items) catch return 0;
+        defer std.crypto.secureZero(u8, @constCast(encoded));
+        return encoded.len;
     }
 
     /// Summarize older exchanges on the fast route, preserving the original goal and recent tool pairs.
