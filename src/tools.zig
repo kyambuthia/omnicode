@@ -226,6 +226,10 @@ pub const Context = struct {
         }
         const truncated = "[truncated; use offset, or byte_offset/byte_limit for long lines]\n";
         var out: Io.Writer.Allocating = .init(c.a);
+        defer {
+            std.crypto.secureZero(u8, out.written());
+            out.deinit();
+        }
         var lines = std.mem.splitScalar(u8, text, '\n');
         var n: usize = 0;
         while (lines.next()) |line| : (n += 1) {
@@ -324,6 +328,10 @@ pub const Context = struct {
         };
         defer dir.close(c.io);
         var out: Io.Writer.Allocating = .init(c.a);
+        defer {
+            std.crypto.secureZero(u8, out.written());
+            out.deinit();
+        }
         var it = dir.iterate();
         while (try it.next(c.io)) |entry| {
             if (entry.kind != .directory or !validName(entry.name)) continue;
