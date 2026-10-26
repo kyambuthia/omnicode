@@ -629,6 +629,10 @@ pub const Agent = struct {
         const last = self.history.items[self.history.items.len - 1];
         if (!std.mem.eql(u8, last.role, "assistant")) return "";
         var out: Io.Writer.Allocating = .init(a);
+        defer {
+            std.crypto.secureZero(u8, out.written());
+            out.deinit();
+        }
         if (last.content == .string) {
             try out.writer.writeAll(last.content.string);
         } else if (last.content == .array) {
