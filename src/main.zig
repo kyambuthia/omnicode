@@ -38,6 +38,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     }
     ui.secrets = &secrets;
     var details: core.Details = .{};
+    defer details.clear();
     ui.details = &details;
     var usage: core.Usage = .{};
     ui.usage = &usage;

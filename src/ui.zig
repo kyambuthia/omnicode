@@ -19,6 +19,13 @@ pub const Details = struct {
         self.present = true;
         self.truncated = self.len < text.len;
     }
+
+    pub fn clear(self: *Details) void {
+        std.crypto.secureZero(u8, self.bytes[0..]);
+        self.len = 0;
+        self.present = false;
+        self.truncated = false;
+    }
 };
 
 /// An append-only transcript: keep native terminal scrolling and copy/paste.

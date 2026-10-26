@@ -19,6 +19,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Temporary checklist formatting buffers are securely cleared after successful and failed updates.
 - Retired checklist contents are securely cleared on update, redaction, load, and conversation reset.
 - Replaced `/details` output is securely cleared before the next result is retained.
+- The retained `/details` output buffer is securely cleared when the CLI or REPL exits.
 - Voice recorder command and captured-output copies are securely cleared after use.
 - Serialized model request bodies, including replaced compact-retry bodies, are securely cleared after use.
 - Subagent request bodies are securely cleared after each turn.
