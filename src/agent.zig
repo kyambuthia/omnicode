@@ -75,7 +75,13 @@ pub const Agent = struct {
     }
 
     fn buildSystem(context: tools.Context, cwd: []const u8, subagent_mode: ?[]const u8) ![]const u8 {
-        const instructions = try context.projectInstructions();
+        const raw_instructions = try context.projectInstructions();
+        defer std.crypto.secureZero(u8, @constCast(raw_instructions));
+        const instructions = try context.scrub(raw_instructions);
+        defer {
+            if (instructions.ptr != raw_instructions.ptr)
+                std.crypto.secureZero(u8, @constCast(instructions));
+        }
         const extra = if (instructions.len > 0)
             try std.fmt.allocPrint(context.a, "\nProject instructions (OMNICODE.md):\n{s}", .{instructions})
         else

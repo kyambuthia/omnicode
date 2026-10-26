@@ -129,7 +129,7 @@ pub const Context = struct {
         return .{ .text = try c.scrub(try c.runRaw(name, args)) };
     }
 
-    fn scrub(c: Context, text: []const u8) ![]const u8 {
+    pub fn scrub(c: Context, text: []const u8) ![]const u8 {
         if (c.secrets) |secrets| return secrets.scrub(c.a, text, c.env);
         return text;
     }
@@ -311,6 +311,7 @@ pub const Context = struct {
                 error.Canceled => return err,
                 else => continue,
             };
+            defer std.crypto.secureZero(u8, @constCast(text));
             var description: []const u8 = "Local instructions";
             var lines = std.mem.splitScalar(u8, text, '\n');
             while (lines.next()) |line| {
@@ -319,7 +320,13 @@ pub const Context = struct {
                     break;
                 }
             }
-            description = try c.scrub(description);
+            const raw_description = description;
+            const safe_description = try c.scrub(raw_description);
+            defer {
+                if (safe_description.ptr != raw_description.ptr)
+                    std.crypto.secureZero(u8, @constCast(safe_description));
+            }
+            description = safe_description;
             var description_len = @min(description.len, 240);
             while (description_len > 0 and !std.unicode.utf8ValidateSlice(description[0..description_len])) description_len -= 1;
             if (out.writer.end + entry.name.len + description_len + 8 > limit) return error.TooManySkills;
