@@ -191,6 +191,10 @@ fn writeEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, ent
         if (parent.len > 0) try dir.createDirPath(io, parent);
     }
     var out: Io.Writer.Allocating = .init(a);
+    defer {
+        std.crypto.secureZero(u8, out.written());
+        out.deinit();
+    }
     try out.writer.print("{s}\n", .{header});
     for (entries) |e| {
         try out.writer.print("{s}=", .{e.key});

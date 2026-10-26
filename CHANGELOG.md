@@ -25,6 +25,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - JSON credential redaction securely clears replaced source strings.
 - Partially built redaction output is securely cleared after allocation or formatting errors.
 - Partially serialized vault data is securely cleared after write errors.
+- Partially serialized `/setup` config data is securely cleared after write errors.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
