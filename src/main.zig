@@ -77,6 +77,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     const context: core.Context = .{ .a = a, .io = init.io, .dir = .cwd(), .secrets = &secrets, .env = init.environ_map };
     if (!prompt_only and args.len == first + 1 and std.mem.eql(u8, args[first], "--skills")) {
         const skills = try context.skills();
+        defer std.crypto.secureZero(u8, @constCast(skills));
         try ui.skills(skills);
         return out.flush();
     }
