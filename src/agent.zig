@@ -911,7 +911,9 @@ pub const Agent = struct {
         const slop_sys = try std.fmt.allocPrint(sa, "You are the adversarial Anti-Slop & Simplicity Critic (read-only). cwd: {s}\nInspect dead code, speculative abstractions, redundant wrappers or comments, style drift, unnecessary allocations, and missing tests for changed behavior. Check usages and existing coverage before reporting an issue. Explain a concrete maintenance or performance cost; a wrapper or abstraction alone is not a defect. Separate optional preferences from confirmed findings. If no confirmed issues are found in the inspected scope, state that and disclose uninspected scope. End with a final line: VERDICT: PASS or VERDICT: FAIL.{s}", .{ cwd, extra });
         defer std.crypto.secureZero(u8, @constCast(slop_sys));
         const critic1 = try self.runChild(correctness_sys, review_prompt, true, true, "Critic (correctness)", ui, parent_usage);
+        defer std.crypto.secureZero(u8, @constCast(critic1.text));
         const critic2 = try self.runChild(slop_sys, review_prompt, true, false, "Critic (anti-slop)", ui, parent_usage);
+        defer std.crypto.secureZero(u8, @constCast(critic2.text));
         if (previous_budget == null and review_budget.denied) return error.ToolLimit;
         return synthesizeReviewVerdict(self.context.a, critic1.text, critic2.text, critic1.passed and critic2.passed);
     }
