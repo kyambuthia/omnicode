@@ -37,6 +37,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Partially formatted read and skill listings are securely cleared after formatting errors.
 - Sorted custom catalog URL copies are securely cleared after use.
 - Fallback-summary redaction and writer buffers are securely cleared after use.
+- Parsed tool-call and tool-result arrays are securely cleared when fallback summaries replace failed history.
 - Adversarial-review diff, instruction, focus, and prompt buffers are securely cleared after critic calls.
 - Duplicate-tool failure signatures and serialized arguments are securely cleared after comparison.
 - Tool-result serialization copies are securely cleared after parsing.

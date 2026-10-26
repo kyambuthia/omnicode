@@ -574,6 +574,10 @@ pub const Agent = struct {
         const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\nCompleted before failure:\n{s}</summary>{s}", .{ goal, summary, todo_block });
         var next: std.ArrayList(Message) = .empty;
         try next.append(a, .{ .role = "user", .content = .{ .string = head } });
+        for (self.history.items) |*message| {
+            if (message.content == .array) j.secureClear(std.heap.page_allocator, &message.content) catch {};
+        }
+        self.history.deinit(a);
         self.history = next;
         return true;
     }
