@@ -500,6 +500,7 @@ fn redactRetained(agent: *core.Agent, composer: *core.Input, secrets: *const cor
     if (ui.details) |retained| if (retained.present) {
         const truncated = retained.truncated;
         const snapshot = try agent.context.a.dupe(u8, retained.bytes[0..retained.len]);
+        defer std.crypto.secureZero(u8, snapshot);
         try ui.retainDetails(snapshot);
         retained.truncated = retained.truncated or truncated;
     };
