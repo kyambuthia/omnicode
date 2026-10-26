@@ -732,9 +732,11 @@ pub const Agent = struct {
     pub fn reallocate(self: *Agent, a: std.mem.Allocator) !void {
         var next: std.ArrayList(Message) = .empty;
         for (self.history.items) |m| {
+            const encoded_content = try j.encode(a, m.content);
+            defer std.crypto.secureZero(u8, @constCast(encoded_content));
             try next.append(a, .{
                 .role = try a.dupe(u8, m.role),
-                .content = try j.parse(a, try j.encode(a, m.content)),
+                .content = try j.parse(a, encoded_content),
             });
         }
         self.context.a = a;
@@ -1088,7 +1090,9 @@ fn recoverMaxTokens(a: std.mem.Allocator, response: j.Value, emit_ui: ?Ui) !?j.V
             const txt = j.str(block, "text") catch return null;
             if (txt.len > 0) {
                 if (emit_ui) |u| try u.message(txt);
-                try kept.append(a, try j.parse(a, try j.encode(a, .{ .type = "text", .text = txt })));
+                const encoded = try j.encode(a, .{ .type = "text", .text = txt });
+                defer std.crypto.secureZero(u8, @constCast(encoded));
+                try kept.append(a, try j.parse(a, encoded));
             }
         } else if (std.mem.eql(u8, kind, "thinking") or std.mem.eql(u8, kind, "redacted_thinking") or std.mem.eql(u8, kind, "tool_use")) {
             // Do not execute or retain truncated tool_use blocks; keep assistant message valid.
