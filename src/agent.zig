@@ -349,20 +349,31 @@ pub const Agent = struct {
             const encoded_tools = try j.encode(a, self.schemas);
             defer std.crypto.secureZero(u8, @constCast(encoded_tools));
             var tools_copy = try j.parse(a, encoded_tools);
+            var tools_transferred = false;
+            defer if (!tools_transferred) j.secureClear(std.heap.page_allocator, &tools_copy) catch {};
             if (tools_copy == .array and tools_copy.array.items.len > 0) {
                 const last_idx = tools_copy.array.items.len - 1;
                 if (tools_copy.array.items[last_idx] == .object) {
-                    try tools_copy.array.items[last_idx].object.put(a, "cache_control", try j.parse(a, "{\"type\":\"ephemeral\"}"));
+                    var cache_control = try j.parse(a, "{\"type\":\"ephemeral\"}");
+                    var cache_transferred = false;
+                    defer if (!cache_transferred) j.secureClear(std.heap.page_allocator, &cache_control) catch {};
+                    try tools_copy.array.items[last_idx].object.put(a, "cache_control", cache_control);
+                    cache_transferred = true;
                 }
             }
             try payload.object.put(a, "tools", tools_copy);
+            tools_transferred = true;
         }
-        if (route.provider == .openrouter) try payload.object.put(a, "provider", try j.parse(a, if (route.mode == .free)
-            "{\"sort\":\"price\",\"require_parameters\":true,\"max_price\":{\"prompt\":0,\"completion\":0,\"request\":0,\"image\":0}}"
-        else if (with_tools)
-            "{\"sort\":\"price\",\"require_parameters\":true}"
-        else
-            "{\"sort\":\"price\"}"));
+        if (route.provider == .openrouter) {
+            var provider = try j.parse(a, if (route.mode == .free)
+                "{\"sort\":\"price\",\"require_parameters\":true,\"max_price\":{\"prompt\":0,\"completion\":0,\"request\":0,\"image\":0}}"
+            else if (with_tools)
+                "{\"sort\":\"price\",\"require_parameters\":true}"
+            else
+                "{\"sort\":\"price\"}");
+            errdefer j.secureClear(std.heap.page_allocator, &provider) catch {};
+            try payload.object.put(a, "provider", provider);
+        }
         return j.encode(a, payload);
     }
 

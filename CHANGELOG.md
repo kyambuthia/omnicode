@@ -56,6 +56,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - JSON result formatting securely clears replaced raw assistant-text copies.
 - Partial JSON result-formatting buffers are securely cleared after errors.
 - Prompt serialization clears its raw source and parsed JSON tree after encoding.
+- Partially assembled tool-schema and provider metadata values are securely cleared if payload construction fails.
 - Proposed-tool JSON clears each raw input serialization after parsing.
 - Dry-run previews clear source, parsed, and encoded tool-input copies after display.
 - Voice prompt and preview copies are securely cleared after the turn.
