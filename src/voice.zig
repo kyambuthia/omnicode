@@ -96,10 +96,14 @@ pub fn extractTranscript(response: j.Value) ![]const u8 {
 }
 
 fn sendVoiceRequest(a: std.mem.Allocator, io: std.Io, url: []const u8, body: []const u8, key: []const u8, anthropic_auth: bool) !j.Value {
-    const auth: std.http.Header = if (anthropic_auth)
-        .{ .name = "x-api-key", .value = key }
-    else
-        .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{key}) };
+    const auth_value = if (anthropic_auth) key else try std.fmt.allocPrint(a, "Bearer {s}", .{key});
+    defer {
+        if (!anthropic_auth) std.crypto.secureZero(u8, @constCast(auth_value));
+    }
+    const auth: std.http.Header = .{
+        .name = if (anthropic_auth) "x-api-key" else "Authorization",
+        .value = auth_value,
+    };
     return @import("http.zig").fetch(a, io, url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, 2 * 1024 * 1024, 60_000);
 }
 

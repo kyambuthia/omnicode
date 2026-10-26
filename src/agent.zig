@@ -676,10 +676,15 @@ pub const Agent = struct {
         if (route.key.len == 0) return error.MissingApiKey;
         if (self.rate_limiter) |limiter| try limiter.wait(self.context.io, self.env);
         const a = self.context.a;
-        const auth: std.http.Header = if (route.provider == .anthropic)
-            .{ .name = "x-api-key", .value = route.key }
-        else
-            .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
+        const owned_auth = route.provider != .anthropic;
+        const auth_value = if (owned_auth) try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) else route.key;
+        defer {
+            if (owned_auth) std.crypto.secureZero(u8, @constCast(auth_value));
+        }
+        const auth: std.http.Header = .{
+            .name = if (owned_auth) "Authorization" else "x-api-key",
+            .value = auth_value,
+        };
         return @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000, waitBeforeRetry, @ptrCast(self));
     }
 
