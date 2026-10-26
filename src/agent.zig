@@ -837,19 +837,26 @@ pub const Agent = struct {
         var diff_ctx = self.context;
         diff_ctx.a = sa;
         const diff = try diff_ctx.collectDiff();
+        defer std.crypto.secureZero(u8, @constCast(diff));
         const cwd = try std.process.currentPathAlloc(self.context.io, sa);
         const instructions = try diff_ctx.projectInstructions();
+        defer std.crypto.secureZero(u8, @constCast(instructions));
         const extra = if (instructions.len > 0)
             try std.fmt.allocPrint(sa, "\nProject instructions (OMNICODE.md):\n{s}", .{instructions})
         else
             "";
+        defer std.crypto.secureZero(u8, @constCast(extra));
         const focus_line = if (focus.len > 0)
             try std.fmt.allocPrint(sa, "Review focus: {s}\n\n", .{focus})
         else
             "";
+        defer std.crypto.secureZero(u8, @constCast(focus_line));
         const review_prompt = try std.fmt.allocPrint(sa, "{s}Workspace git status & diff:\n{s}\n\nInspect modified files and relevant callers, guards, and tests using read/grep/glob. For each confirmed finding, cite exact file:line locations and explain a concrete trigger, the violated contract, and the resulting impact. Trace the relevant execution path before claiming a guard is missing. Separate unverified concerns and uninspected scope from confirmed findings; do not invent defects to fill a review. End your response with a final line: VERDICT: PASS or VERDICT: FAIL.", .{ focus_line, diff });
+        defer std.crypto.secureZero(u8, @constCast(review_prompt));
         const correctness_sys = try std.fmt.allocPrint(sa, "You are the adversarial Correctness & Security Critic (read-only). cwd: {s}\nInvestigate logic errors, off-by-one mistakes, unhandled errors, broken edge cases, race conditions, resource leaks, and security/boundary issues. Verify each suspected defect against the actual callers, guards, tests, and documented contracts before reporting it. Distinguish observed behavior from inference. Intentional documented limits are not defects without a concrete contract violation. If no confirmed defects are found in the inspected scope, state that and disclose uninspected scope. End with a final line: VERDICT: PASS or VERDICT: FAIL.{s}", .{ cwd, extra });
+        defer std.crypto.secureZero(u8, @constCast(correctness_sys));
         const slop_sys = try std.fmt.allocPrint(sa, "You are the adversarial Anti-Slop & Simplicity Critic (read-only). cwd: {s}\nInspect dead code, speculative abstractions, redundant wrappers or comments, style drift, unnecessary allocations, and missing tests for changed behavior. Check usages and existing coverage before reporting an issue. Explain a concrete maintenance or performance cost; a wrapper or abstraction alone is not a defect. Separate optional preferences from confirmed findings. If no confirmed issues are found in the inspected scope, state that and disclose uninspected scope. End with a final line: VERDICT: PASS or VERDICT: FAIL.{s}", .{ cwd, extra });
+        defer std.crypto.secureZero(u8, @constCast(slop_sys));
         const critic1 = try self.runChild(correctness_sys, review_prompt, true, true, "Critic (correctness)", ui, parent_usage);
         const critic2 = try self.runChild(slop_sys, review_prompt, true, false, "Critic (anti-slop)", ui, parent_usage);
         if (previous_budget == null and review_budget.denied) return error.ToolLimit;

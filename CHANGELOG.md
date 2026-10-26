@@ -31,6 +31,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Partially formatted read and skill listings are securely cleared after formatting errors.
 - Sorted custom catalog URL copies are securely cleared after use.
 - Fallback-summary redaction and writer buffers are securely cleared after use.
+- Adversarial-review diff, instruction, focus, and prompt buffers are securely cleared after critic calls.
 - JSON result formatting securely clears replaced raw assistant-text copies.
 - Partial JSON result-formatting buffers are securely cleared after errors.
 - Prompt serialization clears its raw source and parsed JSON tree after encoding.

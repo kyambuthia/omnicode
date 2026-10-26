@@ -449,13 +449,27 @@ pub const Context = struct {
 
     pub fn collectDiff(c: Context) ![]const u8 {
         const raw = c.command(&.{ "sh", "-c", "git status --short 2>/dev/null; printf '\\n---\\n'; git diff HEAD 2>/dev/null || git diff 2>/dev/null" }, false, 15_000) catch
-            return "(git diff unavailable; use glob/read to inspect files)";
-        if (std.mem.startsWith(u8, raw, "error:")) return "(not a git repository; use glob/read to inspect files)";
+            return c.a.dupe(u8, "(git diff unavailable; use glob/read to inspect files)");
+        if (std.mem.startsWith(u8, raw, "error:")) {
+            std.crypto.secureZero(u8, @constCast(raw));
+            return c.a.dupe(u8, "(not a git repository; use glob/read to inspect files)");
+        }
         const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-        if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "---")) return "(working tree clean; inspect recent files with glob/read)";
+        if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "---")) {
+            std.crypto.secureZero(u8, @constCast(raw));
+            return c.a.dupe(u8, "(working tree clean; inspect recent files with glob/read)");
+        }
         var max = @min(raw.len, limit / 2);
         while (max > 0 and !std.unicode.utf8ValidateSlice(raw[0..max])) max -= 1;
-        return raw[0..max];
+        if (max < raw.len) {
+            const prefix = c.a.dupe(u8, raw[0..max]) catch |err| {
+                std.crypto.secureZero(u8, @constCast(raw));
+                return err;
+            };
+            std.crypto.secureZero(u8, @constCast(raw));
+            return prefix;
+        }
+        return raw;
     }
 };
 
