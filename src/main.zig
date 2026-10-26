@@ -70,6 +70,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         try std.mem.join(a, " ", args[first + 1 ..])
     else
         null;
+    defer if (setup_command) |command| std.crypto.secureZero(u8, @constCast(command));
     try core.config.loadForUpdate(a, init.io, .cwd(), init.environ_map, if (setup_command) |command| core.config.repairKey(command) else null);
     try secrets.load(a, init.io, .cwd(), init.environ_map);
     try secrets.injectEnv(init.environ_map);
@@ -88,6 +89,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     }
     if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--providers")) {
         const rest = try std.mem.join(a, " ", args[first + 1 ..]);
+        defer std.crypto.secureZero(u8, rest);
         const msg = try core.config.executeProviders(a, init.io, .cwd(), init.environ_map, null, rest);
         var full = ui;
         full.verbose = true;
@@ -103,6 +105,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     }
     if (!prompt_only and args.len >= first + 1 and std.mem.eql(u8, args[first], "--secrets")) {
         const rest = try std.mem.join(a, " ", args[first + 1 ..]);
+        defer std.crypto.secureZero(u8, rest);
         const msg = try secrets.execute(a, init.io, .cwd(), init.environ_map, rest);
         var full = ui;
         full.verbose = true;

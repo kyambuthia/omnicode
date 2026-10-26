@@ -36,6 +36,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Dry-run previews clear source, parsed, and encoded tool-input copies after display.
 - Voice prompt and preview copies are securely cleared after the turn.
 - Joined one-shot CLI prompts are securely cleared after the response.
+- Joined one-shot `/setup`, `/providers`, and `/secrets` arguments are securely cleared after processing.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
