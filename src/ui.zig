@@ -355,6 +355,7 @@ pub const Ui = struct {
             error.InvalidResponseBody => "The API returned an unreadable response body. Check the endpoint and provider availability.",
             error.InvalidJsonResponse => "The API returned invalid JSON. Check the endpoint and provider availability.",
             error.MissingApiKey => "Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or AN_ABLE_KEY for your selected provider.",
+            error.MissingVoiceApiKey => "Set OPENROUTER_API_KEY for OpenRouter, or configure VOICE_URL/API_URL and a compatible API key.",
             error.NoFreeModels => "No eligible free tool models in the current catalog; no paid request was sent.",
             error.PaidModelInFreeMode => "Configured model is not verified free. Clear MODEL/FAST_MODEL or choose a free model.",
             error.ModelUnavailable => "No eligible model in the live catalog. Check model overrides and MODELS_URL.",

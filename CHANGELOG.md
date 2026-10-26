@@ -19,6 +19,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
   indefinitely.
 - Voice input detects supported audio formats without regard to extension case.
 - Voice input rejects unknown filename extensions instead of labeling arbitrary files as WAV.
+- Voice input requires an OpenRouter key for OpenRouter endpoints; custom
+  compatible endpoints can use their configured key.
 - Voice recording clears its previous output before invoking a recorder, avoiding
   stale-clip reuse.
 - Non-UTF-8 shell output is replaced with a bounded diagnostic before entering

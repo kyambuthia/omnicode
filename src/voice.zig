@@ -32,6 +32,14 @@ fn hasExtension(path: []const u8) bool {
     return std.mem.lastIndexOfScalar(u8, name, '.') != null;
 }
 
+fn isOpenRouterUrl(url: []const u8) bool {
+    const uri = std.Uri.parse(url) catch return false;
+    const host = uri.host orelse return false;
+    return std.ascii.eqlIgnoreCase(switch (host) {
+        .raw, .percent_encoded => |value| value,
+    }, "openrouter.ai");
+}
+
 /// Record mono 16 kHz WAV audio into `.omnicode/voice.wav` using `$OMNICODE_VOICE_CMD`, `arecord`, `rec`, or `ffmpeg`.
 pub fn recordAudio(c: tools.Context, env: *const std.process.Environ.Map, seconds: usize) ![]const u8 {
     const secs = std.math.clamp(seconds, 1, 30);
@@ -108,10 +116,15 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
     const encoded = try sa.alloc(u8, encoded_len);
     _ = std.base64.standard.Encoder.encode(encoded, audio);
 
+    const configured_url = if (env.get("VOICE_URL")) |value|
+        if (value.len > 0) value else env.get("API_URL")
+    else
+        env.get("API_URL");
+    const custom_url = if (configured_url) |value| if (value.len > 0) value else null else null;
+    const url = custom_url orelse "https://openrouter.ai/api/v1/chat/completions";
     const or_key = env.get("OPENROUTER_API_KEY") orelse "";
-    const key = if (or_key.len > 0)
-        or_key
-    else if (route.key.len > 0)
+    const requires_openrouter_key = custom_url == null or isOpenRouterUrl(url);
+    const fallback_key = if (route.key.len > 0)
         route.key
     else if (env.get("OPENAI_API_KEY")) |k|
         k
@@ -121,9 +134,9 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
         k
     else
         "";
-    if (key.len == 0) return error.MissingApiKey;
+    const key = if (or_key.len > 0) or_key else if (!requires_openrouter_key) fallback_key else "";
+    if (key.len == 0) return error.MissingVoiceApiKey;
 
-    const url = env.get("VOICE_URL") orelse env.get("API_URL") orelse "https://openrouter.ai/api/v1/chat/completions";
     const pinned_voice = env.get("VOICE_MODEL");
     const voice_model = if (pinned_voice) |m|
         if (m.len > 0) m else default_voice_model
@@ -148,7 +161,7 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
             },
         }},
     });
-    const anthropic_auth = or_key.len == 0 and route.provider == .anthropic;
+    const anthropic_auth = !requires_openrouter_key and or_key.len == 0 and route.provider == .anthropic;
     const response = try ui.work("Transcribing voice...", sendVoiceRequest, .{ sa, c.io, url, body, key, anthropic_auth });
     var voice_route = route;
     voice_route.model = voice_model;
