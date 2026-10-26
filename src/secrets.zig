@@ -151,6 +151,7 @@ pub const Secrets = struct {
                     else => return error.InvalidSecretFile,
                 };
                 defer decoded.deinit();
+                defer std.crypto.secureZero(u8, @constCast(decoded.value));
                 try self.setMemory(name, decoded.value);
                 added += 1;
                 continue;
