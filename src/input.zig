@@ -250,7 +250,12 @@ pub const Input = struct {
                 const value: u8 = if (c == '\r') '\n' else c;
                 self.bytes[n] = value;
                 n += 1;
-                try ui.out.writeByte(if (masksCurrentArgument(self.bytes[0..n])) '*' else value);
+                const masked = masksCurrentArgument(self.bytes[0..n]);
+                if (!masked) {
+                    try ui.out.writeByte(value);
+                } else if ((value & 0xc0) != 0x80) {
+                    try ui.out.writeByte('*');
+                }
             }
             try ui.out.flush();
         }
