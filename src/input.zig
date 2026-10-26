@@ -119,6 +119,14 @@ pub const Input = struct {
         return self.history[slot][0..self.lengths[slot]];
     }
 
+    fn clearHistory(self: *Input) void {
+        for (0..self.history.len) |slot| {
+            std.crypto.secureZero(u8, self.history[slot][0..]);
+            self.lengths[slot] = 0;
+        }
+        self.count = 0;
+    }
+
     // Consume the entire rejected line so the next command remains readable.
     fn readPlain(self: *Input, reader: *Io.Reader) !?[]const u8 {
         var n: usize = 0;
@@ -241,6 +249,10 @@ pub const Input = struct {
                 try ui.out.writeByte('\n');
                 if (overflow) return error.InputTooLong;
                 self.record(std.mem.trim(u8, self.bytes[0..n], " \t\r"));
+                if (ui.secrets) |secrets| if (ui.env) |env| self.redactHistory(secrets, env) catch |err| {
+                    self.clearHistory();
+                    return err;
+                };
                 return self.bytes[0..n];
             }
             if (!paste and (c == 127 or c == 8)) {
