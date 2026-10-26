@@ -19,6 +19,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Replaced `/details` output is securely cleared before the next result is retained.
 - Voice recorder command and captured-output copies are securely cleared after use.
 - Serialized model request bodies are securely cleared after each turn.
+- Temporary redacted terminal-display copies are securely cleared after rendering.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.

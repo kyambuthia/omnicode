@@ -58,6 +58,7 @@ pub const Ui = struct {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), value, ui.env) else value;
+        defer if (text.ptr != value.ptr) std.crypto.secureZero(u8, @constCast(text));
         const view = std.unicode.Utf8View.init(text) catch {
             try ui.out.writeAll("[non-UTF-8 text]");
             return;
