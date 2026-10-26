@@ -268,12 +268,14 @@ pub const Agent = struct {
                         break :blk_txt raw_text;
                     };
                     try ui.toolEnd(name, input, text, is_err, start);
-                    try results.append(a, try j.parse(a, try j.encode(a, .{
+                    const encoded_result = try j.encode(a, .{
                         .type = "tool_result",
                         .tool_use_id = try j.str(block, "id"),
                         .content = text,
                         .is_error = is_err,
-                    })));
+                    });
+                    defer std.crypto.secureZero(u8, @constCast(encoded_result));
+                    try results.append(a, try j.parse(a, encoded_result));
                 }
             }
             try out.flush();
@@ -971,12 +973,14 @@ pub const Agent = struct {
                     const text = if (valid_utf8) result.text else "error: NonUtf8Output";
                     const is_error = result.is_error or !valid_utf8;
                     try child_ui.toolEnd(name, input, text, is_error, start);
-                    try results.append(ca, try j.parse(ca, try j.encode(ca, .{
+                    const encoded_result = try j.encode(ca, .{
                         .type = "tool_result",
                         .tool_use_id = try j.str(block, "id"),
                         .content = text,
                         .is_error = is_error,
-                    })));
+                    });
+                    defer std.crypto.secureZero(u8, @constCast(encoded_result));
+                    try results.append(ca, try j.parse(ca, encoded_result));
                 }
             }
             if (turn_text.items.len > 0) last_text = turn_text.items;
