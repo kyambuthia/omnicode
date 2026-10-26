@@ -10,11 +10,15 @@ pub const max_audio_bytes = 4 * 1024 * 1024;
 pub const default_voice_model = "google/gemini-2.0-flash-lite-001";
 
 pub fn audioFormat(path: []const u8) []const u8 {
-    if (std.mem.endsWith(u8, path, ".mp3")) return "mp3";
-    if (std.mem.endsWith(u8, path, ".ogg")) return "ogg";
-    if (std.mem.endsWith(u8, path, ".flac")) return "flac";
-    if (std.mem.endsWith(u8, path, ".m4a")) return "m4a";
+    if (endsWithIgnoreCase(path, ".mp3")) return "mp3";
+    if (endsWithIgnoreCase(path, ".ogg")) return "ogg";
+    if (endsWithIgnoreCase(path, ".flac")) return "flac";
+    if (endsWithIgnoreCase(path, ".m4a")) return "m4a";
     return "wav";
+}
+
+fn endsWithIgnoreCase(text: []const u8, suffix: []const u8) bool {
+    return text.len >= suffix.len and std.ascii.eqlIgnoreCase(text[text.len - suffix.len ..], suffix);
 }
 
 /// Record mono 16 kHz WAV audio into `.omnicode/voice.wav` using `$OMNICODE_VOICE_CMD`, `arecord`, `rec`, or `ffmpeg`.

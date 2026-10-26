@@ -13,6 +13,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
   are masked while typing; recalled input history is scrubbed before display.
 - The REPL drops incomplete Escape sequences after 100 ms instead of waiting
   indefinitely.
+- Voice input detects supported audio formats without regard to extension case.
 
 ### Breaking changes
 
