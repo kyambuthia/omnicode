@@ -9,6 +9,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 ### Fixed
 
 - The interactive model picker sanitizes catalog model IDs before displaying them in the terminal.
+- Credential and vault values entered with `/setup`, `/providers`, or `/secrets set`
+  are masked while typing; recalled input history is scrubbed before display.
 
 ### Breaking changes
 

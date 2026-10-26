@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const Ui = @import("ui.zig").Ui;
 const ModelMenu = @import("catalog.zig").ModelMenu;
+const config = @import("config.zig");
 
 /// Select a displayed model with arrow keys. Null means the user canceled.
 pub fn pickModel(io: Io, ui: Ui, menu: *const ModelMenu, current: usize) !?usize {
@@ -206,6 +207,7 @@ pub const Input = struct {
                 const up = std.mem.eql(u8, escape, "\x1b[A") or std.mem.eql(u8, escape, "\x1bOA");
                 const down = std.mem.eql(u8, escape, "\x1b[B") or std.mem.eql(u8, escape, "\x1bOB");
                 if (!paste and std.mem.indexOfScalar(u8, self.bytes[0..n], '\n') == null and (up or down)) {
+                    if (ui.secrets) |secrets| if (ui.env) |env| try self.redactHistory(secrets, env);
                     const oldest = self.count -| self.history.len;
                     if (up and cursor > oldest) {
                         cursor -= 1;
@@ -217,7 +219,7 @@ pub const Input = struct {
                     n = item.len;
                     try ui.out.writeAll("\r\x1b[2K");
                     try ui.prompt();
-                    try ui.out.writeAll(item);
+                    try ui.safe(item, std.math.maxInt(usize));
                     try ui.out.flush();
                 }
                 pending = 0;
@@ -248,12 +250,77 @@ pub const Input = struct {
                 const value: u8 = if (c == '\r') '\n' else c;
                 self.bytes[n] = value;
                 n += 1;
-                try ui.out.writeByte(value);
+                try ui.out.writeByte(if (masksCurrentArgument(self.bytes[0..n])) '*' else value);
             }
             try ui.out.flush();
         }
     }
 };
+
+const Token = struct { start: usize, end: usize };
+
+fn nextToken(line: []const u8, cursor: *usize) ?Token {
+    while (cursor.* < line.len and (line[cursor.*] == ' ' or line[cursor.*] == '\t')) cursor.* += 1;
+    if (cursor.* == line.len) return null;
+    const start = cursor.*;
+    while (cursor.* < line.len and line[cursor.*] != ' ' and line[cursor.*] != '\t') cursor.* += 1;
+    return .{ .start = start, .end = cursor.* };
+}
+
+fn tokenEquals(line: []const u8, token: Token, value: []const u8) bool {
+    return std.mem.eql(u8, line[token.start..token.end], value);
+}
+
+fn afterToken(line: []const u8, end: usize) ?usize {
+    if (end == line.len or (line[end] != ' ' and line[end] != '\t')) return null;
+    var start = end;
+    while (start < line.len and (line[start] == ' ' or line[start] == '\t')) start += 1;
+    return start;
+}
+
+fn masksCurrentArgument(line: []const u8) bool {
+    var cursor: usize = 0;
+    const command = nextToken(line, &cursor) orelse return false;
+    const is_setup = tokenEquals(line, command, "/setup");
+    const is_providers = tokenEquals(line, command, "/providers") or tokenEquals(line, command, "/provider");
+    const is_secrets = tokenEquals(line, command, "/secrets");
+    if (!is_setup and !is_providers and !is_secrets) return false;
+    const action = nextToken(line, &cursor) orelse return false;
+
+    if (is_secrets) {
+        if (!tokenEquals(line, action, "set")) return false;
+        const name = nextToken(line, &cursor) orelse return false;
+        const value_start = afterToken(line, name.end) orelse return false;
+        return line.len > value_start;
+    }
+
+    if (is_setup and tokenEquals(line, action, "set")) {
+        const key = nextToken(line, &cursor) orelse return false;
+        if (!isSecretKey(line, key)) return false;
+        const value_start = afterToken(line, key.end) orelse return false;
+        return line.len > value_start;
+    }
+
+    if (tokenEquals(line, action, "unset") or tokenEquals(line, action, "clear") or
+        tokenEquals(line, action, "remove") or tokenEquals(line, action, "list") or
+        (is_providers and tokenEquals(line, action, "url"))) return false;
+    if (is_providers and (tokenEquals(line, action, "use") or tokenEquals(line, action, "select") or tokenEquals(line, action, "set"))) {
+        const provider = nextToken(line, &cursor) orelse return false;
+        if (config.resolveProvider(line[provider.start..provider.end]) == null) return false;
+        const value_start = afterToken(line, provider.end) orelse return false;
+        return line.len > value_start;
+    }
+
+    if (is_providers and config.resolveProvider(line[action.start..action.end]) == null) return false;
+    if (is_setup and !isSecretKey(line, action)) return false;
+    const value_start = afterToken(line, action.end) orelse return false;
+    return line.len > value_start;
+}
+
+fn isSecretKey(line: []const u8, token: Token) bool {
+    const name = config.resolveKeyName(line[token.start..token.end]) orelse return false;
+    return std.mem.endsWith(u8, name, "_KEY");
+}
 
 test "input history records unique single-line entries and bounds capacity" {
     var input: Input = .{};
