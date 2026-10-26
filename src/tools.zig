@@ -168,6 +168,7 @@ pub const Context = struct {
         if (std.mem.eql(u8, name, "edit")) {
             const path = try j.str(args, "path");
             const text = try c.readFile(path);
+            defer std.crypto.secureZero(u8, @constCast(text));
             const old = try j.str(args, "old");
             const new = try j.str(args, "new");
             if (old.len == 0) return error.EmptyMatch;
@@ -183,6 +184,7 @@ pub const Context = struct {
             const size = std.math.add(usize, text.len - count * old.len, try std.math.mul(usize, count, new.len)) catch return error.StreamTooLong;
             if (size > 1024 * 1024) return error.StreamTooLong;
             const replacement = try std.mem.replaceOwned(u8, c.a, text, old, new);
+            defer std.crypto.secureZero(u8, replacement);
             try @import("storage.zig").writeRegular(c.io, c.dir, path, replacement);
             return "ok";
         }
