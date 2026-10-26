@@ -59,7 +59,9 @@ pub fn recordAudio(c: tools.Context, env: *const std.process.Environ.Map, second
                 "ffmpeg -y -loglevel error -f alsa -i default -t {d} -ar 16000 -ac 1 {s} 2>/dev/null",
             .{ secs, out_path, out_path, secs, secs, out_path },
         );
+    defer std.crypto.secureZero(u8, @constCast(cmd));
     const res = try c.command(&.{ "sh", "-c", cmd }, false, @intCast((secs + 15) * 1000));
+    defer std.crypto.secureZero(u8, @constCast(res));
     if (std.mem.startsWith(u8, res, "error:")) return error.VoiceRecordFailed;
     return out_path;
 }
