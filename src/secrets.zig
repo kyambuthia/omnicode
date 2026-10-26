@@ -304,7 +304,10 @@ pub const Secrets = struct {
     /// Prepare all environment allocations before saving, then commit without failure.
     fn commit(self: *Secrets, next: *const Secrets, a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, removed: ?[]const u8) !void {
         var pending = std.process.Environ.Map.init(env.allocator);
-        defer pending.deinit();
+        defer {
+            for (pending.values()) |value| std.crypto.secureZero(u8, @constCast(value));
+            pending.deinit();
+        }
         for (0..next.count) |i| {
             const name = next.nameAt(i);
             const value = next.valAt(i);

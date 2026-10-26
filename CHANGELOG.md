@@ -38,6 +38,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
+- Pending vault environment copies are securely cleared if persistence fails.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
 - Active route credential and endpoint references refresh after `/setup` and `/secrets` changes.
 - Allocated `Bearer` header copies are cleared after model and voice requests.
