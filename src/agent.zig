@@ -435,10 +435,11 @@ pub const Agent = struct {
         var body = try self.encodePayload(sa, route, msgs.items, false);
         defer std.crypto.secureZero(u8, @constCast(body));
         if (body.len > max_bytes) return error.HistoryLimit;
-        const content = retry: {
+        var content = retry: {
             var attempt: usize = 0;
             while (true) : (attempt += 1) {
-                const response = try ui.work("Compacting context...", Agent.request, .{ self, route, body });
+                var response = try ui.work("Compacting context...", Agent.request, .{ self, route, body });
+                defer j.secureClear(std.heap.page_allocator, &response) catch {};
                 var delta = Usage.response(response, route);
                 delta.compactions = if (attempt == 0) 1 else 0;
                 if (turn_usage) |u| u.add(delta);
@@ -458,9 +459,12 @@ pub const Agent = struct {
                     return err;
                 };
                 if (!std.mem.eql(u8, try j.str(response, "stop_reason"), "end_turn")) return error.InvalidResponse;
-                break :retry complete;
+                const encoded_complete = try j.encode(sa, complete);
+                defer std.crypto.secureZero(u8, @constCast(encoded_complete));
+                break :retry try j.parse(sa, encoded_complete);
             }
         };
+        defer j.secureClear(std.heap.page_allocator, &content) catch {};
         var summary: std.ArrayList(u8) = .empty;
         for (content.array.items) |block| {
             if (std.mem.eql(u8, try j.str(block, "type"), "text")) {

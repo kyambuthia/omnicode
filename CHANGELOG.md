@@ -14,7 +14,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Temporary vault copies are securely cleared after a mutation succeeds or fails.
 - Imported and serialized vault buffers are securely cleared after use.
 - JSON-decoded vault values are securely cleared after copying into the live vault.
-- Parsed session and voice-response values, validation copies, and save/export buffers are securely cleared after use through an iterative traversal.
+- Parsed session, voice, and compact-response values, validation copies, and save/export buffers are securely cleared after use through an iterative traversal.
 - Temporary checklist formatting buffers are securely cleared after successful and failed updates.
 - Replaced `/details` output is securely cleared before the next result is retained.
 - Voice recorder command and captured-output copies are securely cleared after use.
