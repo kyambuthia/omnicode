@@ -34,6 +34,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Prompt serialization clears its raw source and parsed JSON tree after encoding.
 - Proposed-tool JSON clears each raw input serialization after parsing.
 - Dry-run previews clear source, parsed, and encoded tool-input copies after display.
+- Voice prompt and preview copies are securely cleared after the turn.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.

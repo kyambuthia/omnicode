@@ -31,6 +31,8 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
     var input = std.Io.File.Reader.init(.stdin(), init.io, &input_buffer);
     var composer: core.Input = .{};
     while (true) {
+        var voice_prompt: ?[]const u8 = null;
+        defer if (voice_prompt) |prompt_text| std.crypto.secureZero(u8, @constCast(prompt_text));
         if (ui.interactive) ui.width = core.terminalWidth(init.environ_map);
         var label: [256]u8 = undefined;
         const policy = if (route.provider == .anthropic) "auto" else if (mode == .free) "auto (free)" else "auto (cost-max)";
@@ -455,7 +457,12 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                     try ui.errorMessage(err);
                     continue;
                 };
-                try ui.note(try std.fmt.allocPrint(a, "Voice: {s}", .{transcript}));
+                voice_prompt = transcript;
+                var note_scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer note_scratch.deinit();
+                const note = try std.fmt.allocPrint(note_scratch.allocator(), "Voice: {s}", .{transcript});
+                defer std.crypto.secureZero(u8, note);
+                try ui.note(note);
                 active_prompt = transcript;
             } else if (line[0] == '/') {
                 try out.writeAll("Unknown command. Use /help for available commands.\n");
