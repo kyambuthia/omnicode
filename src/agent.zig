@@ -433,6 +433,7 @@ pub const Agent = struct {
             try msgs.append(sa, .{ .role = "user", .content = .{ .string = prompt } });
         }
         var body = try self.encodePayload(sa, route, msgs.items, false);
+        defer std.crypto.secureZero(u8, @constCast(body));
         if (body.len > max_bytes) return error.HistoryLimit;
         const content = retry: {
             var attempt: usize = 0;
@@ -446,8 +447,11 @@ pub const Agent = struct {
                     if (err == error.IncompleteResponse and attempt == 0) {
                         // Retry from the original messages, never a truncated summary.
                         var payload = try j.parse(sa, body);
+                        defer j.secureClear(std.heap.page_allocator, &payload) catch {};
                         try payload.object.put(sa, "max_tokens", .{ .integer = 8192 });
-                        body = try j.encode(sa, payload);
+                        const retry_body = try j.encode(sa, payload);
+                        std.crypto.secureZero(u8, @constCast(body));
+                        body = retry_body;
                         try ui.note("Summary hit output token limit; retrying once with a larger budget...");
                         continue;
                     }
