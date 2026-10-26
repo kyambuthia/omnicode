@@ -672,6 +672,13 @@ pub const Agent = struct {
         return result;
     }
 
+    pub fn clearPreviewedContent(self: *Agent) void {
+        if (self.previewed_content) |*content| {
+            j.secureClear(std.heap.page_allocator, content) catch {};
+            self.previewed_content = null;
+        }
+    }
+
     /// Resume a saved session from `.omnicode/sessions/<name>.json`.
     pub fn loadSession(self: *Agent, name: []const u8) !void {
         if (!tools.validName(name)) return error.InvalidSessionName;

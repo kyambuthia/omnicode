@@ -138,13 +138,19 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
             return err;
         };
         if (json_output) {
+            defer agent.clearPreviewedContent();
+            const result_text = try agent.resultText(a);
+            defer std.crypto.secureZero(u8, @constCast(result_text));
+            var proposed_tools: core.JsonValue = try agent.proposedTools(a);
+            defer core.secureClearJson(std.heap.page_allocator, &proposed_tools) catch {};
             const encoded = try std.json.Stringify.valueAlloc(a, .{
                 .ok = true,
-                .text = try agent.resultText(a),
+                .text = result_text,
                 .usage = usage,
                 .dry_run = dry_run,
-                .proposed_tools = try agent.proposedTools(a),
+                .proposed_tools = proposed_tools,
             }, .{});
+            defer std.crypto.secureZero(u8, encoded);
             try out.writeAll(encoded);
             try out.writeByte('\n');
             try out.flush();
