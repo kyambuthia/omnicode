@@ -233,6 +233,19 @@ pub fn maskSecret(val: []const u8) []const u8 {
     return "configured (***)";
 }
 
+fn displayEndpoint(a: std.mem.Allocator, url: []const u8) ![]const u8 {
+    const query = std.mem.indexOfScalar(u8, url, '?') orelse return url;
+    if (query + 1 == url.len) return url;
+    return std.fmt.allocPrint(a, "{s}?<redacted>", .{url[0..query]});
+}
+
+fn displayConfigValue(a: std.mem.Allocator, key: []const u8, value: []const u8) ![]const u8 {
+    if (std.mem.endsWith(u8, key, "_KEY")) return maskSecret(value);
+    if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
+        return displayEndpoint(a, value);
+    return value;
+}
+
 pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) ![]const u8 {
     const raw_path = try configPath(a, env);
     const path = try status.shortenHome(a, raw_path, env.get("HOME") orelse "");
@@ -309,7 +322,7 @@ pub fn execute(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Envi
         const key = resolveKeyName(raw_key) orelse return error.InvalidConfigKey;
         if (std.mem.eql(u8, key, "PROVIDER") and std.meta.stringToEnum(router.Provider, val) == null) return error.UnknownProvider;
         try set(a, io, dir, env, key, val);
-        const shown = if (std.mem.endsWith(u8, key, "_KEY")) maskSecret(val) else val;
+        const shown = try displayConfigValue(a, key, val);
         return std.fmt.allocPrint(a, "Saved {s} = {s}", .{ key, shown });
     }
     // `/setup <provider_or_key> <value>`
@@ -320,7 +333,7 @@ pub fn execute(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Envi
     if (std.meta.stringToEnum(router.Provider, first)) |p| {
         if (env.get("PROVIDER") == null) try set(a, io, dir, env, "PROVIDER", @tagName(p));
     }
-    const shown = if (std.mem.endsWith(u8, key, "_KEY")) maskSecret(val) else val;
+    const shown = try displayConfigValue(a, key, val);
     return std.fmt.allocPrint(a, "Saved {s} ({s}).", .{ key, shown });
 }
 
@@ -341,13 +354,14 @@ pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map
             try std.fmt.allocPrint(a, "{s}", .{strong})
         else
             try std.fmt.allocPrint(a, "{s} / {s}", .{ strong, fast });
-        const url = if (custom_url.len > 0 and active != null and active.? == p) custom_url else p.defaultUrl();
+        const raw_url = if (custom_url.len > 0 and active != null and active.? == p) custom_url else p.defaultUrl();
+        const url = try displayEndpoint(a, raw_url);
         try out.writer.print("  {c} {d:>2}. {s:<12} key: {s:<14} [{s}]  models: {s}  url: {s}\n", .{
             mark, idx, @tagName(p), maskSecret(val), p.envKey(), models_buf, url,
         });
     }
     if (custom_url.len > 0) {
-        try out.writer.print("Custom API_URL override: {s}\n", .{custom_url});
+        try out.writer.print("Custom API_URL override: {s}\n", .{try displayEndpoint(a, custom_url)});
     }
     try out.writer.writeAll(
         \\Usage:
@@ -385,7 +399,7 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
             return a.dupe(u8, "Reset API_URL to provider default.");
         }
         try set(a, io, dir, env, "API_URL", url);
-        return std.fmt.allocPrint(a, "Saved API_URL = {s}", .{url});
+        return std.fmt.allocPrint(a, "Saved API_URL = {s}", .{try displayEndpoint(a, url)});
     }
     const is_explicit_verb = std.mem.eql(u8, first, "use") or std.mem.eql(u8, first, "select") or std.mem.eql(u8, first, "set");
     const target_tok = if (is_explicit_verb) (parts.next() orelse return error.InvalidProvidersCommand) else first;
