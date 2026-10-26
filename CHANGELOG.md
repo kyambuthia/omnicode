@@ -41,6 +41,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Parsed tool-call and tool-result arrays are securely cleared when fallback summaries replace failed history.
 - Adversarial-review diff, instruction, focus, and prompt buffers are securely cleared after critic calls.
 - Intermediate adversarial-review reports are securely cleared after synthesis.
+- Temporary redacted subagent-report copies are securely cleared after output is capped.
 - Duplicate-tool failure signatures and serialized arguments are securely cleared after comparison.
 - Tool-result serialization copies are securely cleared after parsing.
 - Tool-schema and session-validation JSON encodings and parsed validation copies are securely cleared after use.

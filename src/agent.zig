@@ -1054,6 +1054,7 @@ pub const Agent = struct {
     fn finishReport(self: *const Agent, report: []const u8, complete: bool) !ChildReport {
         const a = self.context.a;
         const safe_report = if (self.context.secrets) |secrets| try secrets.scrub(a, report, self.env) else report;
+        defer if (safe_report.ptr != report.ptr) std.crypto.secureZero(u8, @constCast(safe_report));
         return .{ .text = try capReport(a, safe_report), .passed = complete and criticPassed(report) };
     }
 };
