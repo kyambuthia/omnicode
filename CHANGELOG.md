@@ -24,6 +24,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Serialized model request bodies, including replaced compact-retry bodies, are securely cleared after use.
 - Subagent request bodies are securely cleared after each turn.
 - Temporary redacted terminal-display copies are securely cleared after rendering.
+- Temporary redacted `/details` copies are securely cleared after retention.
 - Raw retained-detail snapshots are securely cleared after credential-driven redaction.
 - JSON credential redaction securely clears replaced source strings.
 - Partially built redaction output is securely cleared after allocation or formatting errors.

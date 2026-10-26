@@ -314,6 +314,7 @@ pub const Ui = struct {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const safe_text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), text, ui.env) else text;
+        defer if (safe_text.ptr != text.ptr) std.crypto.secureZero(u8, @constCast(safe_text));
         // Redact before bounding the retained prefix, which could cut a secret in half.
         details.save(safe_text);
     }
