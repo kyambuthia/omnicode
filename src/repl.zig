@@ -40,13 +40,28 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         try ui.statusBar(@tagName(route.provider), model_label, dir, ctx_label);
         try ui.prompt();
         const value = composer.read(init.io, ui, &input.interface) catch |err| {
-            if (err == error.Canceled) return err;
-            if (err == error.InputCancelled) continue;
-            if (err != error.InputTooLong) return err;
+            if (err == error.Canceled) {
+                composer.clearCurrent();
+                return err;
+            }
+            if (err == error.InputCancelled) {
+                composer.clearCurrent();
+                continue;
+            }
+            if (err != error.InputTooLong) {
+                composer.clearCurrent();
+                return err;
+            }
+            composer.clearCurrent();
             try ui.errorMessage(err);
             continue;
         };
-        const line = std.mem.trim(u8, value orelse break, " \t\r");
+        const raw_line = value orelse {
+            composer.clearCurrent();
+            break;
+        };
+        defer composer.clearCurrent();
+        const line = std.mem.trim(u8, raw_line, " \t\r");
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "/exit") or std.mem.eql(u8, line, "exit")) break;
         if (std.mem.eql(u8, line, "/usage")) {

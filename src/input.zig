@@ -119,6 +119,10 @@ pub const Input = struct {
         return self.history[slot][0..self.lengths[slot]];
     }
 
+    pub fn clearCurrent(self: *Input) void {
+        std.crypto.secureZero(u8, self.bytes[0..]);
+    }
+
     fn clearHistory(self: *Input) void {
         for (0..self.history.len) |slot| {
             std.crypto.secureZero(u8, self.history[slot][0..]);
