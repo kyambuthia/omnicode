@@ -763,6 +763,13 @@ pub const Agent = struct {
     /// Clone history into a fresh allocator.
     pub fn reallocate(self: *Agent, a: std.mem.Allocator) !void {
         var next: std.ArrayList(Message) = .empty;
+        errdefer {
+            for (next.items) |*message| {
+                j.secureClear(std.heap.page_allocator, &message.content) catch {};
+                std.crypto.secureZero(u8, @constCast(message.role));
+            }
+            next.deinit(a);
+        }
         for (self.history.items) |m| {
             const encoded_content = try j.encode(a, m.content);
             defer std.crypto.secureZero(u8, @constCast(encoded_content));
