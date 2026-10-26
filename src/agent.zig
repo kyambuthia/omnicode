@@ -521,6 +521,7 @@ pub const Agent = struct {
         const source = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
         defer std.crypto.secureZero(u8, @constCast(source));
         var snapshot = try j.parse(sa, source);
+        defer secureClearJson(&snapshot);
         try self.scrubConversation(sa, &snapshot);
         const data = try j.encode(sa, snapshot);
         defer std.crypto.secureZero(u8, @constCast(data));
@@ -541,6 +542,7 @@ pub const Agent = struct {
         });
         defer std.crypto.secureZero(u8, @constCast(source));
         var snapshot = try j.parse(sa, source);
+        defer secureClearJson(&snapshot);
         try self.scrubConversation(sa, &snapshot);
         var output: Io.Writer.Allocating = .init(sa);
         try output.writer.print("# Omnicode session: {s}\n\n", .{name});
@@ -560,7 +562,9 @@ pub const Agent = struct {
                     try output.writer.print("{s}\n\n", .{try j.str(block, "text")});
                 } else if (std.mem.eql(u8, kind, "tool_use")) {
                     try output.writer.print("### Tool call: {s}\n\n", .{try j.str(block, "name")});
-                    try markdownBlock(&output.writer, try j.encode(sa, try j.get(block, "input")));
+                    const input = try j.encode(sa, try j.get(block, "input"));
+                    defer std.crypto.secureZero(u8, @constCast(input));
+                    try markdownBlock(&output.writer, input);
                 } else if (std.mem.eql(u8, kind, "tool_result")) {
                     try output.writer.print("### Tool result: {s}\n\n", .{try j.str(block, "tool_use_id")});
                     try markdownBlock(&output.writer, try j.optional(block, "content", ""));
@@ -625,6 +629,7 @@ pub const Agent = struct {
         const text = try @import("storage.zig").readRegular(self.context.io, self.context.dir, path, sa, .limited(max_bytes + 1));
         defer std.crypto.secureZero(u8, @constCast(text));
         var root = try j.parse(sa, text);
+        defer secureClearJson(&root);
         try self.scrubConversation(sa, &root);
         const msgs = j.get(root, "messages") catch return error.InvalidSession;
         if (msgs != .array or msgs.array.items.len > max_messages) return error.InvalidSession;
@@ -632,13 +637,17 @@ pub const Agent = struct {
         if (saved_todo.len > @sizeOf(@FieldType(tools.Todo, "text"))) return error.InvalidSession;
         for (msgs.array.items) |item| try validateStoredMessage(sa, item);
         try validateStoredToolPairs(msgs.array.items);
-        if ((try j.encode(sa, root)).len > max_bytes) return error.HistoryLimit;
+        const encoded_root = try j.encode(sa, root);
+        defer std.crypto.secureZero(u8, @constCast(encoded_root));
+        if (encoded_root.len > max_bytes) return error.HistoryLimit;
         var next: std.ArrayList(Message) = .empty;
         errdefer next.deinit(a);
         for (msgs.array.items) |item| {
+            const encoded_content = try j.encode(sa, try j.get(item, "content"));
+            defer std.crypto.secureZero(u8, @constCast(encoded_content));
             try next.append(a, .{
                 .role = try a.dupe(u8, try j.str(item, "role")),
-                .content = try j.parse(a, try j.encode(sa, try j.get(item, "content"))),
+                .content = try j.parse(a, encoded_content),
             });
         }
         if (self.context.todo) |t| {
@@ -917,6 +926,22 @@ pub const Agent = struct {
         return .{ .text = try capReport(a, safe_report), .passed = complete and criticPassed(report) };
     }
 };
+
+fn secureClearJson(value: *j.Value) void {
+    switch (value.*) {
+        .string => |text| std.crypto.secureZero(u8, @constCast(text)),
+        .number_string => |text| std.crypto.secureZero(u8, @constCast(text)),
+        .array => |*array| for (array.items) |*item| secureClearJson(item),
+        .object => |*object| {
+            var it = object.iterator();
+            while (it.next()) |entry| {
+                std.crypto.secureZero(u8, @constCast(entry.key_ptr.*));
+                secureClearJson(entry.value_ptr);
+            }
+        },
+        else => {},
+    }
+}
 
 fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
     var end = @min(text.len, limit);
