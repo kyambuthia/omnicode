@@ -139,7 +139,11 @@ pub const Context = struct {
         if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep"))
             return c.runCommandTool(name, args);
         if (std.mem.eql(u8, name, "todo")) {
-            const todo = c.todo orelse return .{ .text = "(todo unavailable)" };
+            const todo = c.todo orelse {
+                const raw = "(todo unavailable)";
+                const scrubbed = try c.scrub(raw);
+                return .{ .text = scrubbed, .owned_text = scrubbed.ptr != raw.ptr };
+            };
             const raw = try c.a.dupe(u8, try todo.update(args));
             errdefer std.crypto.secureZero(u8, @constCast(raw));
             const scrubbed = try c.scrub(raw);
@@ -314,7 +318,11 @@ pub const Context = struct {
         } }, milliseconds);
         defer std.crypto.secureZero(u8, @constCast(result.stdout));
         defer std.crypto.secureZero(u8, @constCast(result.stderr));
-        if (search and result.term == .exited and result.term.exited == 1) return .{ .text = "none" };
+        if (search and result.term == .exited and result.term.exited == 1) {
+            const raw = "none";
+            const scrubbed = try c.scrub(raw);
+            return .{ .text = scrubbed, .owned_text = scrubbed.ptr != raw.ptr };
+        }
         const full = if (!result.term.success())
             try std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, result.stdout, result.stderr })
         else
