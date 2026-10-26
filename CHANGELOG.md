@@ -14,6 +14,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Temporary vault copies are securely cleared after a mutation succeeds or fails.
 - Imported and serialized vault buffers are securely cleared after use.
 - Replaced and removed vault environment copies are securely cleared before release.
+- Startup vault injection clears any replaced environment values before swapping them.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
 - Active route credential and endpoint references refresh after `/setup` and `/secrets` changes.
 - Allocated `Bearer` header copies are cleared after model and voice requests.

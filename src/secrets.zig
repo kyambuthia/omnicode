@@ -167,9 +167,20 @@ pub const Secrets = struct {
 
     /// Populate a child environment map with all stored secrets for subprocess execution.
     pub fn injectEnv(self: *const Secrets, env: *std.process.Environ.Map) !void {
-        for (0..self.count) |i| {
-            try env.put(self.nameAt(i), self.valAt(i));
+        var pending = std.process.Environ.Map.init(env.allocator);
+        defer {
+            for (pending.values()) |value| std.crypto.secureZero(u8, @constCast(value));
+            pending.deinit();
         }
+        for (0..self.count) |i| {
+            try pending.put(self.nameAt(i), self.valAt(i));
+        }
+        try env.array_hash_map.ensureUnusedCapacity(env.allocator, pending.count());
+        for (pending.keys(), pending.values()) |key, value| {
+            if (env.get(key)) |old| std.crypto.secureZero(u8, @constCast(old));
+            env.putMove(@constCast(key), @constCast(value)) catch unreachable;
+        }
+        pending.array_hash_map.clearRetainingCapacity();
     }
 
     /// Return comma-separated secret names (values omitted) for the system prompt.
