@@ -765,7 +765,7 @@ pub const Agent = struct {
         }
     }
 
-    /// Clear parsed provider/tool payloads and detach stale history slots.
+    /// Clear owned text and parsed payloads, then detach stale history slots.
     pub fn clearHistory(self: *Agent) void {
         for (self.history.items) |*message| {
             secureClearHistoryContent(message);
@@ -1625,7 +1625,7 @@ test "sessions round trip at the exact serialized byte maximum" {
     var env = std.process.Environ.Map.init(a);
     const route = try Route.init(&env, "anthropic", "claude-haiku-4-5");
     var agent = try Agent.init(.{ .a = a, .io = std.testing.io, .dir = tmp.dir }, &env, route);
-    const empty = [_]Message{.{ .role = "user", .content = .{ .string = "" } }};
+    const empty = [_]EncodedMessage{.{ .role = "user", .content = .{ .string = "" } }};
     const overhead = (try j.encode(a, .{ .messages = empty, .todo = "" })).len;
     const text = try a.alloc(u8, Agent.max_bytes - overhead);
     @memset(text, 'x');
