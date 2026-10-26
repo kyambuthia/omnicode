@@ -114,7 +114,7 @@ pub const Agent = struct {
     }
 
     pub fn respond(self: *Agent, prompt: []const u8, ui: Ui) !void {
-        self.previewed_content = null;
+        self.clearPreviewedContent();
         const turn_budget = if (self.env.get("MAX_TURNS")) |value| try @import("config.zig").parseMaxTurns(value) else self.turn_budget;
         var budget: ToolBudget = .{ .remaining = if (self.env.get("MAX_TOOL_CALLS")) |value| try @import("config.zig").parseMaxToolCalls(value) else @import("config.zig").default_max_tool_calls };
         const previous_budget = self.tool_budget;

@@ -66,6 +66,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Joined one-shot `/setup`, `/providers`, and `/secrets` arguments are securely cleared after processing.
 - JSON-mode result and proposal copies are securely cleared after output.
 - Dry-run response content is securely cleared after one-shot JSON output.
+- Starting a new agent turn securely clears any retained dry-run proposal from the previous turn.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
