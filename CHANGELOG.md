@@ -89,6 +89,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Temporary system-prompt fragments and per-turn budget and dry-run prompt copies are securely cleared after use.
 - Standalone and REPL skill-list output buffers are securely cleared after display.
 - Delegated system-prompt copies and owned child prompt copies are securely cleared after each subagent run.
+- Child-agent histories, schemas, and system prompts are cleared before delegated arenas are released.
 - Loaded skill bodies are scrubbed before results are retained, and raw buffers are cleared.
 - The REPL `/skill` command now scrubs skill text before adding it to conversation history.
 - REPL history slots are securely cleared when overwritten or replaced by redaction.

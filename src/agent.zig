@@ -994,6 +994,12 @@ pub const Agent = struct {
             .schemas = try j.parse(ca, if (read_only) tools.explore_schema else tools.edit_schema),
             .system = child_system,
         };
+        defer {
+            child.clearHistory();
+            child.clearPreviewedContent();
+            j.secureClear(std.heap.page_allocator, &child.schemas) catch {};
+            std.crypto.secureZero(u8, @constCast(child.system));
+        }
         try child.history.append(ca, .{ .role = "user", .content = .{ .string = child_prompt } });
         var child_ui = ui;
         child_ui.indent = "  ";
