@@ -108,8 +108,12 @@ fn exchange(io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const 
         .deflate, .gzip => try client.allocator.alloc(u8, std.compress.flate.max_window_len),
         .compress => return error.UnsupportedCompressionMethod,
     };
-    defer client.allocator.free(decompress_buffer);
+    defer {
+        std.crypto.secureZero(u8, decompress_buffer);
+        client.allocator.free(decompress_buffer);
+    }
     var transfer_buffer: [64]u8 = undefined;
+    defer std.crypto.secureZero(u8, &transfer_buffer);
     var decompress: std.http.Decompress = undefined;
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
     _ = reader.streamRemaining(writer) catch |err| switch (err) {

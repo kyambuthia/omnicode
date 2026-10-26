@@ -56,6 +56,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Allocated `Bearer` header copies are cleared after model and voice requests.
 - In-memory audio, base64, request bodies, and raw transcripts are cleared after transcription; transcripts are scrubbed before display or prompt use.
 - HTTP response staging bytes are securely cleared after parsing or transport failure.
+- Decompression and transfer scratch buffers are securely cleared after HTTP response reads.
 - Serialized `/setup` config buffers are securely cleared after writes.
 - Parsed `/setup` values and temporary environment copies are securely cleared after use.
 - Captured shell output buffers are securely cleared after scrubbed results are prepared.
