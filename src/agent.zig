@@ -246,6 +246,8 @@ pub const Agent = struct {
             }
             try self.history.append(a, .{ .role = "assistant", .content = content });
             var results: std.ArrayList(j.Value) = .empty;
+            var results_transferred = false;
+            defer if (!results_transferred) secureClearValues(a, &results);
             for (content.array.items) |block| {
                 const kind = try j.str(block, "type");
                 if (std.mem.eql(u8, kind, "text")) {
@@ -320,6 +322,7 @@ pub const Agent = struct {
                 return out.flush();
             }
             try self.history.append(a, .{ .role = "user", .content = .{ .array = results.toManaged(a) } });
+            results_transferred = true;
             try self.checkpoint();
             if (budget.denied) return error.ToolLimit;
         }
@@ -1050,6 +1053,8 @@ pub const Agent = struct {
             continuations = 0;
             try child.history.append(ca, .{ .role = "assistant", .content = content });
             var results: std.ArrayList(j.Value) = .empty;
+            var results_transferred = false;
+            defer if (!results_transferred) secureClearValues(ca, &results);
             var turn_text: std.ArrayList(u8) = .empty;
             defer {
                 std.crypto.secureZero(u8, turn_text.items);
@@ -1098,6 +1103,7 @@ pub const Agent = struct {
             }
             if (results.items.len == 0) return self.finishReport(if (last_text.len > 0) last_text else "(subagent completed without text report)", true);
             try child.history.append(ca, .{ .role = "user", .content = .{ .array = results.toManaged(ca) } });
+            results_transferred = true;
             if (child.tool_budget) |budget| if (budget.denied) break;
         }
         _ = child.retainCompletedWork(ca) catch false;
@@ -1124,6 +1130,11 @@ fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
     var end = @min(text.len, limit);
     while (end > 0 and !std.unicode.utf8ValidateSlice(text[0..end])) end -= 1;
     return text[0..end];
+}
+
+fn secureClearValues(a: std.mem.Allocator, values: *std.ArrayList(j.Value)) void {
+    for (values.items) |*value| j.secureClear(std.heap.page_allocator, value) catch {};
+    values.deinit(a);
 }
 
 fn markdownBlock(out: *Io.Writer, value: []const u8) !void {
