@@ -126,6 +126,15 @@ pub const Context = struct {
         // Commands redact before applying their output cap.
         if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep"))
             return c.runCommandTool(name, args);
+        if (std.mem.eql(u8, name, "skill")) {
+            const raw = try c.loadSkill(try j.str(args, "name"));
+            defer std.crypto.secureZero(u8, @constCast(raw));
+            const scrubbed = try c.scrub(raw);
+            defer {
+                if (scrubbed.ptr != raw.ptr) std.crypto.secureZero(u8, @constCast(scrubbed));
+            }
+            return .{ .text = try c.a.dupe(u8, scrubbed) };
+        }
         return .{ .text = try c.scrub(try c.runRaw(name, args)) };
     }
 
@@ -147,7 +156,6 @@ pub const Context = struct {
             const t = c.todo orelse return "(todo unavailable)";
             return c.a.dupe(u8, try t.update(args));
         }
-        if (std.mem.eql(u8, name, "skill")) return c.loadSkill(try j.str(args, "name"));
         if (std.mem.eql(u8, name, "write")) {
             const content = try j.str(args, "content");
             if (content.len > 1024 * 1024) return error.StreamTooLong;
@@ -293,7 +301,10 @@ pub const Context = struct {
         if (!validName(name)) return error.InvalidSkillName;
         const path = try std.fmt.allocPrint(c.a, "{s}/{s}/SKILL.md", .{ c.skills_path, name });
         const text = try c.readFile(path);
-        if (text.len > limit) return error.StreamTooLong;
+        if (text.len > limit) {
+            std.crypto.secureZero(u8, @constCast(text));
+            return error.StreamTooLong;
+        }
         return text;
     }
 
