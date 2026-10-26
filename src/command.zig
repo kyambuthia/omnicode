@@ -31,7 +31,15 @@ pub fn run(a: std.mem.Allocator, io: Io, options: std.process.RunOptions) !std.p
     var buffer: Io.File.MultiReader.Buffer(2) = undefined;
     var reader: Io.File.MultiReader = undefined;
     reader.init(a, io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
-    defer reader.deinit();
+    defer {
+        // Join pending reads before erasing their destination buffers.
+        reader.batch.cancel(io);
+        for (0..2) |index| {
+            const stream = reader.reader(index);
+            std.crypto.secureZero(u8, stream.buffer[0..stream.end]);
+        }
+        reader.deinit();
+    }
     while (reader.fill(options.reserve_amount, options.timeout)) |_| {
         if (options.stdout_limit.toInt()) |limit| {
             if (reader.reader(0).buffered().len > limit) return error.StreamTooLong;
@@ -47,7 +55,10 @@ pub fn run(a: std.mem.Allocator, io: Io, options: std.process.RunOptions) !std.p
     const term = try child.wait(io);
     waited = true;
     const stdout = try reader.toOwnedSlice(0);
-    errdefer a.free(stdout);
+    errdefer {
+        std.crypto.secureZero(u8, stdout);
+        a.free(stdout);
+    }
     const stderr = try reader.toOwnedSlice(1);
     return .{ .term = term, .stdout = stdout, .stderr = stderr };
 }

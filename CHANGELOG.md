@@ -23,6 +23,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Serialized `/setup` config buffers are securely cleared after writes.
 - Parsed `/setup` values and temporary environment copies are securely cleared after use.
 - Captured shell output buffers are securely cleared after scrubbed results are prepared.
+- Subprocess capture buffers are securely cleared on timeout, output-limit, and allocation errors.
 - Read-tool source and redacted intermediate buffers are securely cleared after formatting.
 - Project instructions and skill descriptions are scrubbed before entering model context.
 - Loaded skill bodies are scrubbed before results are retained, and raw buffers are cleared.
