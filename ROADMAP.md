@@ -520,7 +520,7 @@ flowchart LR
 | **Audio file input** | `/voice <path.wav\|mp3\|ogg>` reads an existing audio file (up to 4 MiB), enabling deterministic testing and pre-recorded voice notes |
 | **Model selection** | `Catalog.selectVoice` picks the lowest-cost model in the OpenRouter catalog with `"audio"` in `architecture.input_modalities` and `"text"` in `architecture.output_modalities` (honoring `--free` when active), or uses `VOICE_MODEL` (default fallback `google/gemini-2.0-flash-lite-001`) |
 | **Key resolution** | Uses `OPENROUTER_API_KEY` (configurable via `/setup openrouter <key>`) or the active route's key when `VOICE_URL` / `API_URL` is used |
-| **Execution** | Sends the `input_audio` payload, parses either OpenRouter Chat Completions (`choices[0].message.content`) or Messages (`content[0].text`), records token/cost usage into `Ui.usage`, displays `🎙  <transcript>`, and runs `agent.respond(transcript, ui)` |
+| **Execution** | Sends the `input_audio` payload, parses either OpenRouter Chat Completions (`choices[0].message.content`) or Messages (`content[0].text`), records token/cost usage into `Ui.usage`, scrubs the transcript before display or prompt use, clears in-memory audio/request buffers, displays `🎙  <transcript>`, and runs `agent.respond(transcript, ui)` |
 
 ### 3. Correctness, latency, and maintainability hardening
 

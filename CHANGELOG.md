@@ -17,6 +17,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
 - Active route credential and endpoint references refresh after `/setup` and `/secrets` changes.
 - Allocated `Bearer` header copies are cleared after model and voice requests.
+- In-memory audio, base64, request bodies, and raw transcripts are cleared after transcription; transcripts are scrubbed before display or prompt use.
 - Serialized `/setup` config buffers are securely cleared after writes.
 - Captured shell output buffers are securely cleared after scrubbed results are prepared.
 - Read-tool source and redacted intermediate buffers are securely cleared after formatting.

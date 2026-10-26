@@ -115,9 +115,11 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
     defer scratch.deinit();
     const sa = scratch.allocator();
     const audio = try @import("storage.zig").readRegular(c.io, c.dir, path, sa, .limited(max_audio_bytes));
+    defer std.crypto.secureZero(u8, @constCast(audio));
     if (audio.len == 0) return error.EmptyAudio;
     const encoded_len = std.base64.standard.Encoder.calcSize(audio.len);
     const encoded = try sa.alloc(u8, encoded_len);
+    defer std.crypto.secureZero(u8, encoded);
     _ = std.base64.standard.Encoder.encode(encoded, audio);
 
     const configured_url = if (env.get("VOICE_URL")) |value|
@@ -165,6 +167,7 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
             },
         }},
     });
+    defer std.crypto.secureZero(u8, @constCast(body));
     const anthropic_auth = !requires_openrouter_key and or_key.len == 0 and route.provider == .anthropic;
     const response = try ui.work("Transcribing voice...", sendVoiceRequest, .{ sa, c.io, url, body, key, anthropic_auth });
     var voice_route = route;
@@ -172,7 +175,13 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
     const delta = Usage.response(response, voice_route);
     if (ui.usage) |total| total.add(delta);
     const transcript = try extractTranscript(response);
-    return c.a.dupe(u8, transcript);
+    defer std.crypto.secureZero(u8, @constCast(transcript));
+    const safe_transcript = try c.scrub(transcript);
+    defer {
+        if (safe_transcript.ptr != transcript.ptr)
+            std.crypto.secureZero(u8, @constCast(safe_transcript));
+    }
+    return c.a.dupe(u8, safe_transcript);
 }
 
 test "voice helper detects audio formats and extracts transcripts from both API shapes" {
