@@ -154,6 +154,7 @@ pub const Agent = struct {
         var continuations: usize = 0;
         var checklist_reviewed = false;
         var last_failed_sig: []const u8 = "";
+        defer if (last_failed_sig.len > 0) std.crypto.secureZero(u8, @constCast(last_failed_sig));
         while (true) {
             if (turns == turn_budget) {
                 if (compactions >= self.compaction_budget) return error.TurnLimit;
@@ -251,13 +252,17 @@ pub const Agent = struct {
                     const is_err = result.is_error or !valid_utf8 or budget.denied;
                     const text = blk_txt: {
                         if (is_err) {
-                            const sig = try std.fmt.allocPrint(a, "{s}:{s}", .{ name, try j.encode(sa, input) });
+                            const encoded_input = try j.encode(sa, input);
+                            defer std.crypto.secureZero(u8, @constCast(encoded_input));
+                            const sig = try std.fmt.allocPrint(a, "{s}:{s}", .{ name, encoded_input });
                             const repeated = std.mem.eql(u8, sig, last_failed_sig);
+                            if (last_failed_sig.len > 0) std.crypto.secureZero(u8, @constCast(last_failed_sig));
                             last_failed_sig = sig;
                             if (repeated) {
                                 break :blk_txt try std.fmt.allocPrint(a, "{s}\n[Note: Identical tool call failed again. Inspect with read/glob or change approach instead of repeating.]", .{raw_text});
                             }
                         } else {
+                            if (last_failed_sig.len > 0) std.crypto.secureZero(u8, @constCast(last_failed_sig));
                             last_failed_sig = "";
                         }
                         break :blk_txt raw_text;

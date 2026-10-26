@@ -32,6 +32,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Sorted custom catalog URL copies are securely cleared after use.
 - Fallback-summary redaction and writer buffers are securely cleared after use.
 - Adversarial-review diff, instruction, focus, and prompt buffers are securely cleared after critic calls.
+- Duplicate-tool failure signatures and serialized arguments are securely cleared after comparison.
 - JSON result formatting securely clears replaced raw assistant-text copies.
 - Partial JSON result-formatting buffers are securely cleared after errors.
 - Prompt serialization clears its raw source and parsed JSON tree after encoding.
