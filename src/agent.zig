@@ -442,6 +442,7 @@ pub const Agent = struct {
             @memcpy(t.text[0..clean_todo.len], clean_todo);
             t.len = clean_todo.len;
         }
+        self.clearHistory();
         self.history.deinit(a);
         self.history = next;
     }
@@ -791,6 +792,7 @@ pub const Agent = struct {
             @memcpy(t.text[0..saved_todo.len], saved_todo);
             t.len = saved_todo.len;
         }
+        self.clearHistory();
         self.history.deinit(a);
         self.history = next;
         self.last_input_tokens = 0;
@@ -814,9 +816,18 @@ pub const Agent = struct {
                 .content = try j.parse(a, encoded_content),
             });
         }
+        var next_schemas = try j.parse(a, if (self.context.read_only) tools.explore_schema else tools.schema);
+        errdefer j.secureClear(std.heap.page_allocator, &next_schemas) catch {};
+        const next_system = try a.dupe(u8, self.system);
+        errdefer std.crypto.secureZero(u8, @constCast(next_system));
+        const old_a = self.context.a;
+        self.clearHistory();
+        self.history.deinit(old_a);
+        j.secureClear(std.heap.page_allocator, &self.schemas) catch {};
+        std.crypto.secureZero(u8, @constCast(self.system));
         self.context.a = a;
-        self.schemas = try j.parse(a, if (self.context.read_only) tools.explore_schema else tools.schema);
-        self.system = try a.dupe(u8, self.system);
+        self.schemas = next_schemas;
+        self.system = next_system;
         self.history = next;
     }
 
