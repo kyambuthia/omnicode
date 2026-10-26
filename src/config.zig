@@ -106,8 +106,12 @@ pub fn loadIntoEnv(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.
 pub fn loadForUpdate(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, repair_key: ?[]const u8) !void {
     const path = try configPath(a, env);
     const entries = try readEntries(a, io, dir, path, repair_key);
+    defer clearEntryValues(entries.items);
     var pending = std.process.Environ.Map.init(env.allocator);
-    defer pending.deinit();
+    defer {
+        for (pending.values()) |value| std.crypto.secureZero(u8, @constCast(value));
+        pending.deinit();
+    }
     for (entries.items) |entry| {
         if (env.get(entry.key) == null and pending.get(entry.key) == null)
             try pending.put(entry.key, entry.val);
@@ -118,12 +122,18 @@ pub fn loadForUpdate(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.proces
 
 const Entry = struct { key: []const u8, val: []const u8 };
 
+fn clearEntryValues(entries: []const Entry) void {
+    for (entries) |entry| std.crypto.secureZero(u8, @constCast(entry.val));
+}
+
 fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, repair_key: ?[]const u8) !std.ArrayList(Entry) {
     var list: std.ArrayList(Entry) = .empty;
+    errdefer clearEntryValues(list.items);
     const text = @import("storage.zig").readRegular(io, dir, path, a, .limited(max_file_bytes + 1)) catch |err| switch (err) {
         error.FileNotFound => return list,
         else => return err,
     };
+    defer std.crypto.secureZero(u8, @constCast(text));
     var json_values = false;
     var headers = std.mem.splitScalar(u8, text, '\n');
     while (headers.next()) |raw| {
@@ -135,6 +145,10 @@ fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, repa
     }
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
+        var parsed_value: ?[]const u8 = null;
+        defer {
+            if (parsed_value) |value| std.crypto.secureZero(u8, @constCast(value));
+        }
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse return error.InvalidConfigFile;
@@ -146,6 +160,7 @@ fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, repa
                 error.OutOfMemory => return err,
                 else => return error.InvalidConfigFile,
             };
+            parsed_value = val;
         } else if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
             val = val[1 .. val.len - 1];
         }
@@ -161,7 +176,12 @@ fn readEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, repa
         for (list.items) |entry| {
             if (std.mem.eql(u8, entry.key, key)) duplicate = true;
         }
-        if (!duplicate) try list.append(a, .{ .key = key, .val = val });
+        if (!duplicate) {
+            const owned_key = try a.dupe(u8, key);
+            const owned_val = try a.dupe(u8, val);
+            errdefer std.crypto.secureZero(u8, owned_val);
+            try list.append(a, .{ .key = owned_key, .val = owned_val });
+        }
     }
     return list;
 }
@@ -193,17 +213,29 @@ pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.
     if (std.mem.eql(u8, key, "MAX_REQUESTS_PER_MINUTE")) _ = try parseMaxRequestsPerMinute(value);
     const path = try configPath(a, env);
     var entries = try readEntries(a, io, dir, path, key);
+    defer {
+        clearEntryValues(entries.items);
+    }
     var replaced = false;
     for (entries.items) |*e| {
         if (std.mem.eql(u8, e.key, key)) {
-            e.val = value;
+            const owned_value = try a.dupe(u8, value);
+            std.crypto.secureZero(u8, @constCast(e.val));
+            e.val = owned_value;
             replaced = true;
             break;
         }
     }
-    if (!replaced) try entries.append(a, .{ .key = key, .val = value });
+    if (!replaced) {
+        const owned_value = try a.dupe(u8, value);
+        errdefer std.crypto.secureZero(u8, owned_value);
+        try entries.append(a, .{ .key = key, .val = owned_value });
+    }
     var pending = std.process.Environ.Map.init(env.allocator);
-    defer pending.deinit();
+    defer {
+        for (pending.values()) |pending_value| std.crypto.secureZero(u8, @constCast(pending_value));
+        pending.deinit();
+    }
     try pending.put(key, value);
     try env.array_hash_map.ensureUnusedCapacity(env.allocator, pending.count());
     try writeEntries(a, io, dir, path, entries.items);
@@ -230,6 +262,7 @@ pub fn unset(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Enviro
     if (!isAllowedKey(key)) return error.InvalidConfigKey;
     const path = try configPath(a, env);
     const entries = try readEntries(a, io, dir, path, key);
+    defer clearEntryValues(entries.items);
     var kept: std.ArrayList(Entry) = .empty;
     for (entries.items) |e| {
         if (!std.mem.eql(u8, e.key, key)) try kept.append(a, e);
