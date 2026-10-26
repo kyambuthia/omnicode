@@ -45,6 +45,7 @@ fn fetchAttempts(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]
     var attempt: usize = 0;
     while (true) : (attempt += 1) {
         var writer = std.Io.Writer.fixed(buffer);
+        defer std.crypto.secureZero(u8, writer.buffered());
         const response = try exchange(io, url, payload, headers, &writer);
         checkStatus(response.status) catch |err| {
             const code = @backingInt(response.status);
