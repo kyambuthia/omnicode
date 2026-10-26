@@ -1172,6 +1172,7 @@ fn synthesizeReviewVerdict(a: std.mem.Allocator, correctness: []const u8, anti_s
         "=== Correctness & Security Critic ===\n{s}\n\n=== Anti-Slop & Simplicity Critic ===\n{s}\n\nOVERALL VERDICT: {s}",
         .{ correctness, anti_slop, if (pass) "PASS" else "FAIL" },
     );
+    defer std.crypto.secureZero(u8, @constCast(full));
     return capReport(a, full);
 }
 
