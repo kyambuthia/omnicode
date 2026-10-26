@@ -6,6 +6,10 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ## Unreleased
 
+### Fixed
+
+- The interactive model picker sanitizes catalog model IDs before displaying them in the terminal.
+
 ### Breaking changes
 
 - Tool calls now reject unrecognized input fields instead of silently ignoring

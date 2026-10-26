@@ -53,7 +53,7 @@ pub const Ui = struct {
     }
 
     // Never let model/file/command text emit terminal controls; truncate on UTF-8 boundaries.
-    fn safe(ui: Ui, value: []const u8, max: usize) !void {
+    pub fn safe(ui: Ui, value: []const u8, max: usize) !void {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), value, ui.env) else value;

@@ -63,9 +63,10 @@ pub fn pickModel(io: Io, ui: Ui, menu: *const ModelMenu, current: usize) !?usize
 
 fn drawModelChoice(ui: Ui, menu: *const ModelMenu, selected: usize) !void {
     const choice = menu.get(selected).?;
-    try ui.out.print("\r\x1b[2K↑/↓ choose · Enter select · Esc cancel: {d}/{d} {s}/{s}", .{
-        selected, menu.count, @tagName(choice.provider), choice.model,
+    try ui.out.print("\r\x1b[2K↑/↓ choose · Enter select · Esc cancel: {d}/{d} {s}/", .{
+        selected, menu.count, @tagName(choice.provider),
     });
+    try ui.safe(choice.model, 120);
     try ui.out.flush();
 }
 
