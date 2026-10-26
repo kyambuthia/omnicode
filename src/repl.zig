@@ -480,10 +480,9 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 if (agent.retainCompletedWork(arena.allocator()) catch false) {
-                    if (agent.resetArena(&arena)) |_| {
-                        try out.writeAll("  completed work retained in summary. Inspect tool effects, then enter continue to resume.\n");
-                        continue;
-                    } else |_| {}
+                    try agent.resetArena(&arena);
+                    try out.writeAll("  completed work retained in summary. Inspect tool effects, then enter continue to resume.\n");
+                    continue;
                 }
                 try out.writeAll("  conversation cleared. Inspect completed tool effects before retrying.\n");
                 agent.clearHistory();
