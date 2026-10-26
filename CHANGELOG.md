@@ -34,6 +34,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Adversarial-review diff, instruction, focus, and prompt buffers are securely cleared after critic calls.
 - Duplicate-tool failure signatures and serialized arguments are securely cleared after comparison.
 - Tool-result serialization copies are securely cleared after parsing.
+- Tool-schema and session-validation JSON encodings and parsed validation copies are securely cleared after use.
 - JSON result formatting securely clears replaced raw assistant-text copies.
 - Partial JSON result-formatting buffers are securely cleared after errors.
 - Prompt serialization clears its raw source and parsed JSON tree after encoding.

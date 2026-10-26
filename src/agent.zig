@@ -330,7 +330,9 @@ pub const Agent = struct {
         defer j.secureClear(std.heap.page_allocator, &payload) catch {};
         try self.scrubConversation(a, &payload);
         if (with_tools) {
-            var tools_copy = try j.parse(a, try j.encode(a, self.schemas));
+            const encoded_tools = try j.encode(a, self.schemas);
+            defer std.crypto.secureZero(u8, @constCast(encoded_tools));
+            var tools_copy = try j.parse(a, encoded_tools);
             if (tools_copy == .array and tools_copy.array.items.len > 0) {
                 const last_idx = tools_copy.array.items.len - 1;
                 if (tools_copy.array.items[last_idx] == .object) {
@@ -1209,7 +1211,10 @@ fn validateStoredMessage(a: std.mem.Allocator, item: j.Value) !void {
     if (content == .string) return;
     if (content != .array or content.array.items.len == 0 or content.array.items.len > 64) return error.InvalidSession;
     if (assistant) {
-        const response = try j.parse(a, try j.encode(a, .{ .content = content, .stop_reason = if (hasToolUse(content)) "tool_use" else "end_turn" }));
+        const encoded = try j.encode(a, .{ .content = content, .stop_reason = if (hasToolUse(content)) "tool_use" else "end_turn" });
+        defer std.crypto.secureZero(u8, @constCast(encoded));
+        var response = try j.parse(a, encoded);
+        defer j.secureClear(std.heap.page_allocator, &response) catch {};
         _ = validate(response) catch return error.InvalidSession;
         return;
     }
