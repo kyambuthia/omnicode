@@ -19,7 +19,7 @@ fn run(init: std.process.Init) !void {
         return err;
     };
     return runParsed(init, a, args, options) catch |err| {
-        if (options.json_output and err != error.Canceled) try emitJsonError(init, a, err);
+        if (options.json_output and !isOfflineCommand(args, options) and err != error.Canceled) try emitJsonError(init, a, err);
         return err;
     };
 }
@@ -47,7 +47,8 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     const prompt_only = options.prompt_only;
     const read_only = options.read_only;
     const dry_run = options.dry_run;
-    const json_output = options.json_output;
+    const offline_command = isOfflineCommand(args, options);
+    const json_output = options.json_output and !offline_command;
     const session_name = options.session_name;
     if (!prompt_only and args.len > first and (std.mem.eql(u8, args[first], "--version") or std.mem.eql(u8, args[first], "-V"))) {
         try out.writeAll("omnicode " ++ core.version ++ "\n");
@@ -62,7 +63,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         if (first == args.len or (!prompt_only and std.mem.startsWith(u8, args[first], "-")))
             return error.SessionRequiresPrompt;
     }
-    if (json_output and (first == args.len or (!prompt_only and std.mem.startsWith(u8, args[first], "--")))) {
+    if (options.json_output and !offline_command and (first == args.len or (!prompt_only and std.mem.startsWith(u8, args[first], "--")))) {
         return error.JsonRequiresPrompt;
     }
     const setup_command = if (!prompt_only and args.len > first and std.mem.eql(u8, args[first], "--setup"))
@@ -146,6 +147,16 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         return;
     }
     try @import("repl.zig").run(init, a, ui, &secrets, mode, read_only, dry_run, route);
+}
+
+fn isOfflineCommand(args: []const []const u8, options: cli.Options) bool {
+    if (options.prompt_only or options.first >= args.len) return false;
+    const command = args[options.first];
+    return std.mem.eql(u8, command, "--version") or std.mem.eql(u8, command, "-V") or
+        std.mem.eql(u8, command, "--help") or std.mem.eql(u8, command, "-h") or
+        std.mem.eql(u8, command, "--skills") or std.mem.eql(u8, command, "--init") or
+        std.mem.eql(u8, command, "--providers") or std.mem.eql(u8, command, "--setup") or
+        std.mem.eql(u8, command, "--secrets");
 }
 
 fn jsonRequested(args: []const []const u8) bool {

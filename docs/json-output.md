@@ -28,4 +28,6 @@ Registered secrets are redacted in `text` and `proposed_tools`.
 If the task fails, the process exits nonzero and stdout contains a JSON object
 such as `{"ok":false,"error":"ApiRateLimited"}`. `--json` requires a prompt;
 the REPL and offline setup commands use their normal text interface. `--help`
-and `--version` also retain their normal text output.
+and `--version` also retain their normal text output. If `--json` appears with
+an offline command such as `--setup`, that command still uses its normal text
+interface.
