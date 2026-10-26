@@ -837,6 +837,7 @@ pub const Agent = struct {
             return error.InvalidTaskTier;
         const cwd = try std.process.currentPathAlloc(self.context.io, self.context.a);
         const system = try buildSystem(self.context, cwd, mode);
+        defer std.crypto.secureZero(u8, @constCast(system));
         return (try self.runChild(system, prompt, read_only, strong, "Subagent", ui, parent_usage)).text;
     }
 
@@ -907,6 +908,10 @@ pub const Agent = struct {
         var child_ctx = self.context;
         child_ctx.a = ca;
         child_ctx.read_only = read_only;
+        const child_system = try self.systemWithBudget(ca, system);
+        defer std.crypto.secureZero(u8, @constCast(child_system));
+        const child_prompt = try ca.dupe(u8, prompt);
+        defer std.crypto.secureZero(u8, @constCast(child_prompt));
         var child: Agent = .{
             .context = child_ctx,
             .env = self.env,
@@ -919,9 +924,9 @@ pub const Agent = struct {
             .compaction_budget = 1,
             .cached_catalog = self.cached_catalog,
             .schemas = try j.parse(ca, if (read_only) tools.explore_schema else tools.edit_schema),
-            .system = try self.systemWithBudget(ca, system),
+            .system = child_system,
         };
-        try child.history.append(ca, .{ .role = "user", .content = .{ .string = prompt } });
+        try child.history.append(ca, .{ .role = "user", .content = .{ .string = child_prompt } });
         var child_ui = ui;
         child_ui.indent = "  ";
         child_ui.details = null;
