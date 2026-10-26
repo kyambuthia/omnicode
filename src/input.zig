@@ -169,6 +169,13 @@ pub const Input = struct {
         var pending: usize = 0;
         var cursor = self.count;
         while (true) {
+            if (pending != 0) {
+                var fds = [_]std.posix.pollfd{.{ .fd = 0, .events = std.posix.POLL.IN }};
+                if (try std.posix.poll(&fds, 100) == 0) {
+                    pending = 0;
+                    continue;
+                }
+            }
             var byte: [1]u8 = undefined;
             const count = Io.File.stdin().readStreaming(io, &.{&byte}) catch |err| switch (err) {
                 error.EndOfStream => return null,
