@@ -15,6 +15,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Imported and serialized vault buffers are securely cleared after use.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
+- Active route credential and endpoint references refresh after `/setup` and `/secrets` changes.
 - Serialized `/setup` config buffers are securely cleared after writes.
 - Captured shell output buffers are securely cleared after scrubbed results are prepared.
 - Read-tool source and redacted intermediate buffers are securely cleared after formatting.

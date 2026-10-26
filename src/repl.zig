@@ -185,7 +185,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                     agent.route = route;
                 } else |_| {}
             } else {
-                route.key = init.environ_map.get(route.provider.envKey()) orelse route.key;
+                refreshRouteEnvironment(&route, init.environ_map);
                 agent.route = route;
             }
             var full = ui;
@@ -202,6 +202,17 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 continue;
             };
             try agent.refreshSystem();
+            if (automatic) {
+                if (core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null)) |updated| {
+                    route = updated;
+                    route.mode = mode;
+                } else |_| {
+                    refreshRouteEnvironment(&route, init.environ_map);
+                }
+            } else {
+                refreshRouteEnvironment(&route, init.environ_map);
+            }
+            agent.route = route;
             var full = ui;
             full.verbose = true;
             try full.preview(msg, "");
@@ -475,6 +486,11 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         agent.rate_limiter = &limiter;
         try out.writeAll("Conversation cleared.\n");
     }
+}
+
+fn refreshRouteEnvironment(route: *core.Route, env: *const std.process.Environ.Map) void {
+    route.key = env.get(route.provider.envKey()) orelse "";
+    route.url = env.get("API_URL") orelse route.provider.defaultUrl();
 }
 
 // Run before any command that can replace or remove credentials.
