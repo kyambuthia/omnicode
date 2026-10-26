@@ -486,7 +486,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                     } else |_| {}
                 }
                 try out.writeAll("  conversation cleared. Inspect completed tool effects before retrying.\n");
-                agent.history.clearRetainingCapacity();
+                agent.clearHistory();
                 // Reinitialize below so failed tool turns cannot poison later messages.
             };
             // Keep complete history after successful turns; reset after errors.
@@ -495,6 +495,8 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         if (std.mem.eql(u8, line, "/c")) {
             if (ui.details) |details| details.clear();
         }
+        agent.clearHistory();
+        agent.clearPreviewedContent();
         _ = arena.reset(.free_all);
         todo.clear();
         route.mode = mode;

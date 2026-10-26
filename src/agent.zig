@@ -739,6 +739,15 @@ pub const Agent = struct {
         }
     }
 
+    /// Clear parsed provider/tool payloads and detach stale history slots.
+    pub fn clearHistory(self: *Agent) void {
+        for (self.history.items) |*message| {
+            if (message.content == .array) j.secureClear(std.heap.page_allocator, &message.content) catch {};
+            message.* = .{ .role = "", .content = .null };
+        }
+        self.history.clearRetainingCapacity();
+    }
+
     /// Resume a saved session from `.omnicode/sessions/<name>.json`.
     pub fn loadSession(self: *Agent, name: []const u8) !void {
         if (!tools.validName(name)) return error.InvalidSessionName;
