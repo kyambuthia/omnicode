@@ -518,9 +518,12 @@ pub const Agent = struct {
         try self.context.dir.createDirPath(self.context.io, ".omnicode/sessions");
         const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
         const todo_text = if (self.context.todo) |t| t.slice() else "";
-        var snapshot = try j.parse(sa, try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text }));
+        const source = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
+        defer std.crypto.secureZero(u8, @constCast(source));
+        var snapshot = try j.parse(sa, source);
         try self.scrubConversation(sa, &snapshot);
         const data = try j.encode(sa, snapshot);
+        defer std.crypto.secureZero(u8, @constCast(data));
         if (data.len > max_bytes) return error.HistoryLimit;
         try @import("storage.zig").writePrivate(self.context.io, self.context.dir, path, data);
     }
@@ -532,10 +535,12 @@ pub const Agent = struct {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const sa = scratch.allocator();
-        var snapshot = try j.parse(sa, try j.encode(sa, .{
+        const source = try j.encode(sa, .{
             .messages = self.history.items,
             .todo = if (self.context.todo) |todo| todo.slice() else "",
-        }));
+        });
+        defer std.crypto.secureZero(u8, @constCast(source));
+        var snapshot = try j.parse(sa, source);
         try self.scrubConversation(sa, &snapshot);
         var output: Io.Writer.Allocating = .init(sa);
         try output.writer.print("# Omnicode session: {s}\n\n", .{name});
@@ -565,6 +570,7 @@ pub const Agent = struct {
         const checklist = try j.optional(snapshot, "todo", "");
         if (checklist.len > 0) try output.writer.print("## Checklist\n\n{s}\n", .{checklist});
         const data = try output.toOwnedSlice();
+        defer std.crypto.secureZero(u8, data);
         if (data.len > max_export_bytes) return error.HistoryLimit;
         const path = try std.fmt.allocPrint(self.context.a, ".omnicode/exports/{s}.md", .{name});
         try self.context.dir.createDirPath(self.context.io, ".omnicode/exports");
@@ -617,6 +623,7 @@ pub const Agent = struct {
         const sa = scratch.allocator();
         const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
         const text = try @import("storage.zig").readRegular(self.context.io, self.context.dir, path, sa, .limited(max_bytes + 1));
+        defer std.crypto.secureZero(u8, @constCast(text));
         var root = try j.parse(sa, text);
         try self.scrubConversation(sa, &root);
         const msgs = j.get(root, "messages") catch return error.InvalidSession;

@@ -14,6 +14,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Temporary vault copies are securely cleared after a mutation succeeds or fails.
 - Imported and serialized vault buffers are securely cleared after use.
 - JSON-decoded vault values are securely cleared after copying into the live vault.
+- Session-import, save, and Markdown-export serialization buffers are securely cleared after use.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
