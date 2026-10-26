@@ -48,6 +48,7 @@ pub const Secrets = struct {
             return error.InvalidSecretValue;
         for (0..self.count) |i| {
             if (std.mem.eql(u8, self.nameAt(i), name)) {
+                std.crypto.secureZero(u8, self.vals[i][0..]);
                 @memcpy(self.vals[i][0..value.len], value);
                 self.val_lens[i] = value.len;
                 return;
@@ -57,6 +58,7 @@ pub const Secrets = struct {
         const idx = self.count;
         @memcpy(self.names[idx][0..name.len], name);
         self.name_lens[idx] = name.len;
+        std.crypto.secureZero(u8, self.vals[idx][0..]);
         @memcpy(self.vals[idx][0..value.len], value);
         self.val_lens[idx] = value.len;
         self.count += 1;
@@ -72,6 +74,9 @@ pub const Secrets = struct {
                     self.vals[i] = self.vals[last];
                     self.val_lens[i] = self.val_lens[last];
                 }
+                std.crypto.secureZero(u8, self.vals[last][0..]);
+                self.val_lens[last] = 0;
+                self.name_lens[last] = 0;
                 self.count -= 1;
                 return true;
             }
