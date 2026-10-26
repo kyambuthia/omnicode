@@ -108,6 +108,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         const rest = try std.mem.join(a, " ", args[first + 1 ..]);
         defer std.crypto.secureZero(u8, rest);
         const msg = try secrets.execute(a, init.io, .cwd(), init.environ_map, rest);
+        defer std.crypto.secureZero(u8, @constCast(msg));
         var full = ui;
         full.verbose = true;
         try full.preview(msg, "");

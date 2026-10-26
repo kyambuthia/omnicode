@@ -10,6 +10,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 - Provider credential displays now hide the full value instead of showing key fragments.
 - Short vault values and short provider-key overrides are now scrubbed from output.
+- Secret-manager status output copies are securely cleared after display.
 - Replaced and removed vault values are securely cleared from active vault slots.
 - Temporary vault copies are securely cleared after a mutation succeeds or fails.
 - Imported and serialized vault buffers are securely cleared after use.

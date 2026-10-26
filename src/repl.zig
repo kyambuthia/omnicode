@@ -204,6 +204,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.errorMessage(err);
                 continue;
             };
+            defer std.crypto.secureZero(u8, @constCast(msg));
             try agent.refreshSystem();
             if (automatic) {
                 if (core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null)) |updated| {
