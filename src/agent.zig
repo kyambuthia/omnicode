@@ -568,6 +568,10 @@ pub const Agent = struct {
         defer j.secureClear(std.heap.page_allocator, &snapshot) catch {};
         try self.scrubConversation(sa, &snapshot);
         var output: Io.Writer.Allocating = .init(sa);
+        defer {
+            std.crypto.secureZero(u8, output.written());
+            output.deinit();
+        }
         try output.writer.print("# Omnicode session: {s}\n\n", .{name});
         const messages = try j.get(snapshot, "messages");
         for (messages.array.items) |message| {
