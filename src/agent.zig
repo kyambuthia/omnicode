@@ -674,7 +674,12 @@ pub const Agent = struct {
             .{ .name = "x-api-key", .value = route.key }
         else
             .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
-        return @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
+        return @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000, waitBeforeRetry, @ptrCast(self));
+    }
+
+    fn waitBeforeRetry(context: *anyopaque, io: Io) anyerror!void {
+        const self: *Agent = @ptrCast(@alignCast(context));
+        if (self.rate_limiter) |limiter| try limiter.wait(io, self.env);
     }
 
     fn systemWithBudget(self: *const Agent, a: std.mem.Allocator, system: []const u8) ![]const u8 {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const j = @import("json.zig");
+pub const RetryWait = *const fn (context: *anyopaque, io: std.Io) anyerror!void;
 
 /// Require TLS outside literal loopback addresses. Do not trust DNS names to
 /// remain local, and never accept embedded credentials in endpoint URLs.
@@ -27,16 +28,16 @@ pub fn validateEndpoint(url: []const u8) !void {
 
 /// Bounded JSON transport; callers choose deadlines and credentials. Never follow redirects.
 pub fn fetch(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const std.http.Header, limit: usize, timeout: i64) !j.Value {
-    return @import("deadline.zig").run(io, fetchAttempts, .{ a, io, url, payload, headers, limit, false }, timeout);
+    return @import("deadline.zig").run(io, fetchAttempts, .{ a, io, url, payload, headers, limit, false, null, null }, timeout);
 }
 
 /// Retry only explicit server failures, before any assistant response is accepted.
 /// The deadline covers every attempt and every cancellable backoff together.
-pub fn fetchModel(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: []const u8, headers: []const std.http.Header, limit: usize, timeout: i64) !j.Value {
-    return @import("deadline.zig").run(io, fetchAttempts, .{ a, io, url, @as(?[]const u8, payload), headers, limit, true }, timeout);
+pub fn fetchModel(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: []const u8, headers: []const std.http.Header, limit: usize, timeout: i64, retry_wait: RetryWait, retry_context: *anyopaque) !j.Value {
+    return @import("deadline.zig").run(io, fetchAttempts, .{ a, io, url, @as(?[]const u8, payload), headers, limit, true, retry_wait, @as(?*anyopaque, retry_context) }, timeout);
 }
 
-fn fetchAttempts(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const std.http.Header, limit: usize, retry: bool) !j.Value {
+fn fetchAttempts(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]const u8, headers: []const std.http.Header, limit: usize, retry: bool, retry_wait: ?RetryWait, retry_context: ?*anyopaque) !j.Value {
     try validateEndpoint(url);
     try validateHeaders(headers);
     const buffer = try std.heap.page_allocator.alloc(u8, limit);
@@ -53,6 +54,7 @@ fn fetchAttempts(a: std.mem.Allocator, io: std.Io, url: []const u8, payload: ?[]
                 const milliseconds = @max(delay, @as(u64, 1000) << @intCast(attempt));
                 std.debug.print("Retrying model request ({d}/2) after {d} ms\n", .{ attempt + 1, milliseconds });
                 try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(milliseconds)), .awake);
+                if (retry_wait) |wait| try wait(retry_context orelse return error.InvalidRetryContext, io);
                 continue;
             }
             return err;
