@@ -106,6 +106,10 @@ pub const Secrets = struct {
             if (parent.len > 0) try dir.createDirPath(io, parent);
         }
         var out: Io.Writer.Allocating = .init(a);
+        defer {
+            std.crypto.secureZero(u8, out.written());
+            out.deinit();
+        }
         try out.writer.writeAll(vault_header ++ "\n");
         for (0..self.count) |i| {
             try out.writer.print("{s}=", .{self.nameAt(i)});
