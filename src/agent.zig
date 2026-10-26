@@ -308,12 +308,15 @@ pub const Agent = struct {
             if (self.env.get("MAX_TOKENS")) |v| std.fmt.parseInt(usize, v, 10) catch default_max else default_max
         else
             default_max;
-        var payload = try j.parse(a, try j.encode(a, .{
+        const source = try j.encode(a, .{
             .model = route.model,
             .max_tokens = max_tok,
             .system = self.system,
             .messages = messages,
-        }));
+        });
+        defer std.crypto.secureZero(u8, @constCast(source));
+        var payload = try j.parse(a, source);
+        defer j.secureClear(std.heap.page_allocator, &payload) catch {};
         try self.scrubConversation(a, &payload);
         if (with_tools) {
             var tools_copy = try j.parse(a, try j.encode(a, self.schemas));
