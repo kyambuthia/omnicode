@@ -1015,6 +1015,7 @@ pub const Agent = struct {
         var compactions: usize = 0;
         var continuations: usize = 0;
         var last_text: []const u8 = "";
+        defer if (last_text.len > 0) std.crypto.secureZero(u8, @constCast(last_text));
         while (true) {
             if (turns == child.turn_budget) {
                 if (compactions >= child.compaction_budget) break;
@@ -1050,6 +1051,10 @@ pub const Agent = struct {
             try child.history.append(ca, .{ .role = "assistant", .content = content });
             var results: std.ArrayList(j.Value) = .empty;
             var turn_text: std.ArrayList(u8) = .empty;
+            defer {
+                std.crypto.secureZero(u8, turn_text.items);
+                turn_text.deinit(ca);
+            }
             for (content.array.items) |block| {
                 const kind = try j.str(block, "type");
                 if (std.mem.eql(u8, kind, "text")) {
@@ -1087,7 +1092,10 @@ pub const Agent = struct {
                     try results.append(ca, parsed_result);
                 }
             }
-            if (turn_text.items.len > 0) last_text = turn_text.items;
+            if (turn_text.items.len > 0) {
+                if (last_text.len > 0) std.crypto.secureZero(u8, @constCast(last_text));
+                last_text = try ca.dupe(u8, turn_text.items);
+            }
             if (results.items.len == 0) return self.finishReport(if (last_text.len > 0) last_text else "(subagent completed without text report)", true);
             try child.history.append(ca, .{ .role = "user", .content = .{ .array = results.toManaged(ca) } });
             if (child.tool_budget) |budget| if (budget.denied) break;
@@ -1100,6 +1108,7 @@ pub const Agent = struct {
             try std.fmt.allocPrint(ca, "[subagent reached {s}; partial report]\n{s}", .{ reason, last_text })
         else
             try std.fmt.allocPrint(ca, "[subagent reached {s}]", .{reason});
+        defer std.crypto.secureZero(u8, @constCast(fallback));
         return self.finishReport(fallback, false);
     }
 
