@@ -19,6 +19,7 @@ pub const Catalog = struct {
     pub fn loadByThroughput(a: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !Catalog {
         const base = env.get("MODELS_URL") orelse "https://openrouter.ai/api/v1/models?supported_parameters=tools";
         const url = try withSort(a, base, "throughput-high-to-low");
+        defer std.crypto.secureZero(u8, @constCast(url));
         const value = try @import("http.zig").fetch(a, io, url, null, &.{}, 8 * 1024 * 1024, 15_000);
         return parse(value);
     }
@@ -239,6 +240,10 @@ fn menuCandidate(model: j.Value, mode: @FieldType(Route, "mode")) ?MenuCandidate
 fn withSort(a: std.mem.Allocator, url: []const u8, order: []const u8) ![]const u8 {
     const question = std.mem.indexOfScalar(u8, url, '?') orelse return std.fmt.allocPrint(a, "{s}?sort={s}", .{ url, order });
     var out: std.Io.Writer.Allocating = .init(a);
+    defer {
+        std.crypto.secureZero(u8, out.written());
+        out.deinit();
+    }
     try out.writer.writeAll(url[0..question]);
     var query = std.mem.splitScalar(u8, url[question + 1 ..], '&');
     var separator: u8 = '?';

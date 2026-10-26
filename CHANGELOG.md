@@ -28,6 +28,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Partially serialized `/setup` config data is securely cleared after write errors.
 - Partially formatted session exports are securely cleared after formatting errors.
 - Partially formatted read and skill listings are securely cleared after formatting errors.
+- Sorted custom catalog URL copies are securely cleared after use.
 - Fallback-summary redaction and writer buffers are securely cleared after use.
 - JSON result formatting securely clears replaced raw assistant-text copies.
 - Partial JSON result-formatting buffers are securely cleared after errors.
