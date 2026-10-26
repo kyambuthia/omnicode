@@ -72,6 +72,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Arena reallocation clears dry-run proposal content before its source arena is reset.
 - History-redaction snapshots and serialization buffers use a cleared scratch arena.
 - Old parsed history trees are cleared when sessions load, credentials redact history, or history reallocates.
+- Owned history strings are cleared during replacement while borrowed prompt literals remain untouched.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
 - Pending vault environment copies are securely cleared if persistence fails.

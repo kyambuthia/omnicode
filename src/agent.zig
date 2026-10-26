@@ -7,7 +7,21 @@ const Usage = @import("usage.zig").Usage;
 const RequestLimiter = @import("rate_limit.zig").RequestLimiter;
 const Catalog = @import("catalog.zig").Catalog;
 const Ui = @import("ui.zig").Ui;
-pub const Message = struct { role: []const u8, content: j.Value };
+pub const Message = struct {
+    role: []const u8,
+    content: j.Value,
+    /// True when a string content slice is owned by the message allocator.
+    owns_text: bool = false,
+};
+const EncodedMessage = struct { role: []const u8, content: j.Value };
+
+fn messageViews(a: std.mem.Allocator, messages: []const Message) ![]EncodedMessage {
+    const views = try a.alloc(EncodedMessage, messages.len);
+    for (messages, 0..) |message, index| {
+        views[index] = .{ .role = message.role, .content = message.content };
+    }
+    return views;
+}
 const ChildReport = struct { text: []const u8, passed: bool };
 
 const ToolBudget = struct {
@@ -161,7 +175,7 @@ pub const Agent = struct {
         const scrubbed_prompt = if (self.context.secrets) |s| try s.scrub(a, prompt, self.env) else prompt;
         // Input buffers are reused on the next REPL read; history owns its text.
         const safe_prompt = if (scrubbed_prompt.ptr == prompt.ptr) try a.dupe(u8, scrubbed_prompt) else scrubbed_prompt;
-        try self.history.append(a, .{ .role = "user", .content = .{ .string = safe_prompt } });
+        try self.history.append(a, .{ .role = "user", .content = .{ .string = safe_prompt }, .owns_text = true });
         var turns: usize = 0;
         var compactions: usize = 0;
         var continuations: usize = 0;
@@ -240,7 +254,7 @@ pub const Agent = struct {
                 }
                 const summary = try std.fmt.allocPrint(a, "Dry run: previewed {d} tool call(s); none executed.", .{planned});
                 try ui.note(summary);
-                try self.history.append(a, .{ .role = "assistant", .content = .{ .string = summary } });
+                try self.history.append(a, .{ .role = "assistant", .content = .{ .string = summary }, .owns_text = true });
                 try self.checkpoint();
                 return out.flush();
             }
@@ -307,7 +321,7 @@ pub const Agent = struct {
                                 "Use todo to read the current list if needed and mark only completed steps done; " ++
                                 "keep unfinished or blocked steps pending and report them. Do not claim checks or changes that did not occur. " ++
                                 "This is a single completion review, not an instruction to start unrelated work.",
-                        } });
+                        }, .owns_text = false });
                         try self.checkpoint();
                         try ui.note("Checklist has pending steps; reviewing completion once...");
                         try out.flush();
@@ -338,11 +352,12 @@ pub const Agent = struct {
             if (self.env.get("MAX_TOKENS")) |v| std.fmt.parseInt(usize, v, 10) catch default_max else default_max
         else
             default_max;
+        const encoded_messages = try messageViews(a, messages);
         const source = try j.encode(a, .{
             .model = route.model,
             .max_tokens = max_tok,
             .system = self.system,
-            .messages = messages,
+            .messages = encoded_messages,
         });
         defer std.crypto.secureZero(u8, @constCast(source));
         var payload = try j.parse(a, source);
@@ -417,7 +432,8 @@ pub const Agent = struct {
         defer scratch.deinit();
         const sa = scratch.allocator();
         const todo_text = if (self.context.todo) |t| t.slice() else "";
-        const source = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
+        const encoded_messages = try messageViews(sa, self.history.items);
+        const source = try j.encode(sa, .{ .messages = encoded_messages, .todo = todo_text });
         defer std.crypto.secureZero(u8, @constCast(source));
         var root = try j.parse(sa, source);
         defer j.secureClear(std.heap.page_allocator, &root) catch {};
@@ -435,9 +451,11 @@ pub const Agent = struct {
         for (root.object.get("messages").?.array.items) |item| {
             const encoded_content = try j.encode(sa, try j.get(item, "content"));
             defer std.crypto.secureZero(u8, @constCast(encoded_content));
+            const content = try j.parse(a, encoded_content);
             try next.append(a, .{
                 .role = try a.dupe(u8, try j.str(item, "role")),
-                .content = try j.parse(a, encoded_content),
+                .content = content,
+                .owns_text = content == .string,
             });
         }
         if (self.context.todo) |t| {
@@ -453,7 +471,9 @@ pub const Agent = struct {
     pub fn historyBytes(self: *const Agent) usize {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
-        const encoded = j.encode(scratch.allocator(), self.history.items) catch return 0;
+        const sa = scratch.allocator();
+        const encoded_messages = messageViews(sa, self.history.items) catch return 0;
+        const encoded = j.encode(sa, encoded_messages) catch return 0;
         defer std.crypto.secureZero(u8, @constCast(encoded));
         return encoded.len;
     }
@@ -533,10 +553,10 @@ pub const Agent = struct {
         const todo_block = if (self.context.todo) |t| if (t.len > 0) try std.fmt.allocPrint(sa, "\n\n<todo>\n{s}</todo>", .{t.slice()}) else "" else "";
         const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\n{s}\n</summary>{s}", .{ goal, summary.items, todo_block });
         var next: std.ArrayList(Message) = .empty;
-        try next.append(a, .{ .role = "user", .content = .{ .string = head } });
+        try next.append(a, .{ .role = "user", .content = .{ .string = head }, .owns_text = true });
         for (self.history.items[split..]) |m| try next.append(a, m);
         for (self.history.items[0..split]) |*message| {
-            if (message.content == .array) j.secureClear(std.heap.page_allocator, &message.content) catch {};
+            secureClearHistoryContent(message);
         }
         self.history.deinit(a);
         self.history = next;
@@ -591,9 +611,9 @@ pub const Agent = struct {
         const todo_block = if (self.context.todo) |t| if (t.len > 0) try std.fmt.allocPrint(a, "\n\n<todo>\n{s}</todo>", .{t.slice()}) else "" else "";
         const head = try std.fmt.allocPrint(a, "{s}\n\n<summary>\nCompleted before failure:\n{s}</summary>{s}", .{ goal, summary, todo_block });
         var next: std.ArrayList(Message) = .empty;
-        try next.append(a, .{ .role = "user", .content = .{ .string = head } });
+        try next.append(a, .{ .role = "user", .content = .{ .string = head }, .owns_text = true });
         for (self.history.items) |*message| {
-            if (message.content == .array) j.secureClear(std.heap.page_allocator, &message.content) catch {};
+            secureClearHistoryContent(message);
         }
         self.history.deinit(a);
         self.history = next;
@@ -610,7 +630,8 @@ pub const Agent = struct {
         try self.context.dir.createDirPath(self.context.io, ".omnicode/sessions");
         const path = try std.fmt.allocPrint(sa, ".omnicode/sessions/{s}.json", .{name});
         const todo_text = if (self.context.todo) |t| t.slice() else "";
-        const source = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
+        const encoded_messages = try messageViews(sa, self.history.items);
+        const source = try j.encode(sa, .{ .messages = encoded_messages, .todo = todo_text });
         defer std.crypto.secureZero(u8, @constCast(source));
         var snapshot = try j.parse(sa, source);
         defer j.secureClear(std.heap.page_allocator, &snapshot) catch {};
@@ -628,8 +649,9 @@ pub const Agent = struct {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const sa = scratch.allocator();
+        const encoded_messages = try messageViews(sa, self.history.items);
         const source = try j.encode(sa, .{
-            .messages = self.history.items,
+            .messages = encoded_messages,
             .todo = if (self.context.todo) |todo| todo.slice() else "",
         });
         defer std.crypto.secureZero(u8, @constCast(source));
@@ -746,7 +768,7 @@ pub const Agent = struct {
     /// Clear parsed provider/tool payloads and detach stale history slots.
     pub fn clearHistory(self: *Agent) void {
         for (self.history.items) |*message| {
-            if (message.content == .array) j.secureClear(std.heap.page_allocator, &message.content) catch {};
+            secureClearHistoryContent(message);
             message.* = .{ .role = "", .content = .null };
         }
         self.history.clearRetainingCapacity();
@@ -785,9 +807,11 @@ pub const Agent = struct {
         for (msgs.array.items) |item| {
             const encoded_content = try j.encode(sa, try j.get(item, "content"));
             defer std.crypto.secureZero(u8, @constCast(encoded_content));
+            const content = try j.parse(a, encoded_content);
             try next.append(a, .{
                 .role = try a.dupe(u8, try j.str(item, "role")),
-                .content = try j.parse(a, encoded_content),
+                .content = content,
+                .owns_text = content == .string,
             });
         }
         if (self.context.todo) |t| {
@@ -814,9 +838,11 @@ pub const Agent = struct {
         for (self.history.items) |m| {
             const encoded_content = try j.encode(a, m.content);
             defer std.crypto.secureZero(u8, @constCast(encoded_content));
+            const content = try j.parse(a, encoded_content);
             try next.append(a, .{
                 .role = try a.dupe(u8, m.role),
-                .content = try j.parse(a, encoded_content),
+                .content = content,
+                .owns_text = content == .string,
             });
         }
         var next_schemas = try j.parse(a, if (self.context.read_only) tools.explore_schema else tools.schema);
@@ -1004,7 +1030,7 @@ pub const Agent = struct {
             j.secureClear(std.heap.page_allocator, &child.schemas) catch {};
             std.crypto.secureZero(u8, @constCast(child.system));
         }
-        try child.history.append(ca, .{ .role = "user", .content = .{ .string = child_prompt } });
+        try child.history.append(ca, .{ .role = "user", .content = .{ .string = child_prompt }, .owns_text = true });
         var child_ui = ui;
         child_ui.indent = "  ";
         child_ui.details = null;
@@ -1136,6 +1162,16 @@ fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
 fn secureClearValues(a: std.mem.Allocator, values: *std.ArrayList(j.Value)) void {
     for (values.items) |*value| j.secureClear(std.heap.page_allocator, value) catch {};
     values.deinit(a);
+}
+
+fn secureClearHistoryContent(message: *Message) void {
+    if (message.content == .array) {
+        j.secureClear(std.heap.page_allocator, &message.content) catch {};
+    } else if (message.content == .string and message.owns_text) {
+        std.crypto.secureZero(u8, @constCast(message.content.string));
+    }
+    message.content = .null;
+    message.owns_text = false;
 }
 
 fn markdownBlock(out: *Io.Writer, value: []const u8) !void {

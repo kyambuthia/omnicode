@@ -253,6 +253,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             try agent.history.append(arena.allocator(), .{
                 .role = "user",
                 .content = .{ .string = try std.fmt.allocPrint(arena.allocator(), "[Adversarial Review]\n{s}", .{report}) },
+                .owns_text = true,
             });
             continue;
         }
@@ -415,7 +416,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             defer if (safe_body.ptr != body.ptr) std.crypto.secureZero(u8, @constCast(safe_body));
             const retained_body = try arena.allocator().dupe(u8, safe_body);
             errdefer std.crypto.secureZero(u8, @constCast(retained_body));
-            try agent.history.append(arena.allocator(), .{ .role = "user", .content = .{ .string = retained_body } });
+            try agent.history.append(arena.allocator(), .{ .role = "user", .content = .{ .string = retained_body }, .owns_text = true });
             try out.writeAll("Skill loaded for this conversation.\n");
             continue;
         } else if (!std.mem.eql(u8, line, "/c")) {
