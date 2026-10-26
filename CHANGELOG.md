@@ -21,6 +21,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Serialized model request bodies are securely cleared after each turn.
 - Temporary redacted terminal-display copies are securely cleared after rendering.
 - Raw retained-detail snapshots are securely cleared after credential-driven redaction.
+- JSON credential redaction securely clears replaced source strings.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.

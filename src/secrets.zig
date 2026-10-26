@@ -254,7 +254,13 @@ pub const Secrets = struct {
         try pending.append(a, root);
         while (pending.pop()) |value| {
             switch (value.*) {
-                .string => |text| value.* = .{ .string = try self.scrub(a, text, env) },
+                .string => |text| {
+                    const scrubbed = try self.scrub(a, text, env);
+                    if (scrubbed.ptr != text.ptr) {
+                        std.crypto.secureZero(u8, @constCast(text));
+                        value.* = .{ .string = scrubbed };
+                    }
+                },
                 .array => |*array| for (array.items) |*item| {
                     try pending.append(a, item);
                 },
