@@ -92,7 +92,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.errorMessage(err);
                 continue;
             };
-            agent.resetArena(&arena) catch {};
+            try agent.resetArena(&arena);
             continue;
         }
         if (std.mem.eql(u8, line, "/details")) {
@@ -133,7 +133,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.errorMessage(err);
                 continue;
             };
-            agent.resetArena(&arena) catch {};
+            try agent.resetArena(&arena);
             try agent.refreshSystem();
             try ui.note("Session resumed.");
             continue;

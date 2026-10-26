@@ -24,6 +24,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Replaced `/details` output is securely cleared before the next result is retained.
 - The retained `/details` output buffer is securely cleared when the CLI or REPL exits.
 - The REPL `/c` command now resets conversation state and clears retained tool details.
+- The REPL now exits on history-arena reset failures instead of continuing with potentially stale history pointers.
 - Voice recorder command and captured-output copies are securely cleared after use.
 - Serialized model request bodies, including replaced compact-retry bodies, are securely cleared after use.
 - Subagent request bodies are securely cleared after each turn.
