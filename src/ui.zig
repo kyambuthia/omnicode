@@ -12,6 +12,7 @@ pub const Details = struct {
     truncated: bool = false,
 
     pub fn save(self: *Details, text: []const u8) void {
+        std.crypto.secureZero(u8, self.bytes[0..]);
         self.len = @min(text.len, self.bytes.len);
         while (self.len > 0 and !std.unicode.utf8ValidateSlice(text[0..self.len])) self.len -= 1;
         @memcpy(self.bytes[0..self.len], text[0..self.len]);

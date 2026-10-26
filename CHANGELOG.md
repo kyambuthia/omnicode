@@ -16,6 +16,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - JSON-decoded vault values are securely cleared after copying into the live vault.
 - Parsed session and voice-response values, validation copies, and save/export buffers are securely cleared after use.
 - Temporary checklist formatting buffers are securely cleared after successful and failed updates.
+- Replaced `/details` output is securely cleared before the next result is retained.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Startup vault injection clears any replaced environment values before swapping them.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
