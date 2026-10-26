@@ -289,7 +289,9 @@ pub const Agent = struct {
                         .is_error = is_err,
                     });
                     defer std.crypto.secureZero(u8, @constCast(encoded_result));
-                    try results.append(a, try j.parse(a, encoded_result));
+                    var parsed_result = try j.parse(a, encoded_result);
+                    errdefer j.secureClear(std.heap.page_allocator, &parsed_result) catch {};
+                    try results.append(a, parsed_result);
                 }
             }
             try out.flush();
@@ -1034,7 +1036,9 @@ pub const Agent = struct {
                         .is_error = is_error,
                     });
                     defer std.crypto.secureZero(u8, @constCast(encoded_result));
-                    try results.append(ca, try j.parse(ca, encoded_result));
+                    var parsed_result = try j.parse(ca, encoded_result);
+                    errdefer j.secureClear(std.heap.page_allocator, &parsed_result) catch {};
+                    try results.append(ca, parsed_result);
                 }
             }
             if (turn_text.items.len > 0) last_text = turn_text.items;

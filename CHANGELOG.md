@@ -44,6 +44,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Full adversarial-review assembly buffers are securely cleared after report capping.
 - Temporary redacted subagent-report copies are securely cleared after output is capped.
 - Owned tool outputs, subagent results, and formatted tool errors are securely cleared after parsing into conversation history.
+- Parsed tool-result trees are securely cleared if retaining them in the result list fails.
 - Capped command-output intermediates are securely cleared after copying the retained result.
 - Static search and no-todo markers are scrubbed against configured secrets before display.
 - Duplicate-tool failure signatures and serialized arguments are securely cleared after comparison.
