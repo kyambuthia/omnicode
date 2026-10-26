@@ -132,6 +132,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
             };
             agent.checkpoint_name = name;
         }
+        defer agent.clearPreviewedContent();
         const prompt = try std.mem.join(a, " ", args[first..]);
         defer std.crypto.secureZero(u8, prompt);
         agent.respond(prompt, ui) catch |err| {
@@ -141,7 +142,6 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
             return err;
         };
         if (json_output) {
-            defer agent.clearPreviewedContent();
             const result_text = try agent.resultText(a);
             defer std.crypto.secureZero(u8, @constCast(result_text));
             var proposed_tools: core.JsonValue = try agent.proposedTools(a);
