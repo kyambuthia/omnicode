@@ -913,6 +913,7 @@ pub const Agent = struct {
             }
             if (child.history.items.len > max_messages) break;
             const body = child.encodePayload(ca, route, child.history.items, true) catch break;
+            defer std.crypto.secureZero(u8, @constCast(body));
             if (body.len > max_bytes) break;
             turns += 1;
             const response = try ui.work(work_label, Agent.request, .{ &child, route, body });

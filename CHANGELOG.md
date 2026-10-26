@@ -20,6 +20,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Replaced `/details` output is securely cleared before the next result is retained.
 - Voice recorder command and captured-output copies are securely cleared after use.
 - Serialized model request bodies, including replaced compact-retry bodies, are securely cleared after use.
+- Subagent request bodies are securely cleared after each turn.
 - Temporary redacted terminal-display copies are securely cleared after rendering.
 - Raw retained-detail snapshots are securely cleared after credential-driven redaction.
 - JSON credential redaction securely clears replaced source strings.
