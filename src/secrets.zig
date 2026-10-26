@@ -217,7 +217,10 @@ pub const Secrets = struct {
         }
         if (count == 0) return text;
         var out: Io.Writer.Allocating = .init(a);
-        defer out.deinit();
+        defer {
+            std.crypto.secureZero(u8, out.written());
+            out.deinit();
+        }
         var pos: usize = 0;
         while (pos < text.len) {
             var match_len: usize = 0;
