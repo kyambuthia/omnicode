@@ -490,7 +490,7 @@ OpenAI, Gemini, Groq, xAI, and DeepSeek endpoints).
 
 | Aspect | Specification |
 |---|---|
-| **Storage location** | `$OMNICODE_CONFIG` if set, else `$XDG_CONFIG_HOME/omnicode/config.env`, else `$HOME/.config/omnicode/config.env` (fallback `.omnicode/config.env`). Written with `0o600` owner-only permissions |
+| **Storage location** | `$OMNICODE_CONFIG` if set, else `$XDG_CONFIG_HOME/omnicode/config.env`, else `$HOME/.config/omnicode/config.env` (fallback `.omnicode/config.env`). Written with `0o600` owner-only permissions; serialized config buffers are securely cleared after use |
 | **Precedence** | Explicit CLI flags / `/model` pin > process environment variables > persisted `config.env` > built-in defaults. `/setup` updates both the live in-memory `std.process.Environ.Map` and `config.env` so changes apply immediately without restarting |
 | **Supported providers** | `openrouter` (`OPENROUTER_API_KEY`), `anthropic` (`ANTHROPIC_API_KEY`), `deepseek` (`DEEPSEEK_API_KEY`), `xai` (`XAI_API_KEY`), `openai` (`OPENAI_API_KEY`), `gemini` (`GEMINI_API_KEY`), `groq` (`GROQ_API_KEY`) |
 | **Secret masking** | `/setup` status output masks every stored key (e.g. `sk-or-…9f2a` or `***` for short keys) and never prints raw secrets to the transcript |

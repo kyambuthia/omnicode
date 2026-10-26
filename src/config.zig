@@ -178,6 +178,7 @@ fn writeEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, ent
         try out.writer.writeByte('\n');
     }
     const data = try out.toOwnedSlice();
+    defer std.crypto.secureZero(u8, @constCast(data));
     if (data.len > max_file_bytes) return error.InvalidConfigValue;
     try @import("storage.zig").writePrivate(io, dir, path, data);
 }

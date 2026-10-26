@@ -15,6 +15,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Imported and serialized vault buffers are securely cleared after use.
 - Replaced and removed vault environment copies are securely cleared before release.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
+- Serialized `/setup` config buffers are securely cleared after writes.
 - REPL history slots are securely cleared when overwritten or replaced by redaction.
 - New REPL history entries are scrubbed before they are retained.
 - The current REPL input buffer is securely cleared after processing or cancellation.
