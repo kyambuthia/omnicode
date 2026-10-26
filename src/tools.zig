@@ -129,10 +129,21 @@ pub const Context = struct {
         try c.checkToolAllowed(name);
         try validateToolFields(name, args);
         // Reads redact the complete file before formatting or slicing.
-        if (std.mem.eql(u8, name, "read")) return .{ .text = try c.readTool(args) };
+        if (std.mem.eql(u8, name, "read")) return .{ .text = try c.readTool(args), .owned_text = true };
         // Commands redact before applying their output cap.
         if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep"))
             return c.runCommandTool(name, args);
+        if (std.mem.eql(u8, name, "todo")) {
+            const todo = c.todo orelse return .{ .text = "(todo unavailable)" };
+            const raw = try c.a.dupe(u8, try todo.update(args));
+            errdefer std.crypto.secureZero(u8, @constCast(raw));
+            const scrubbed = try c.scrub(raw);
+            if (scrubbed.ptr != raw.ptr) {
+                std.crypto.secureZero(u8, @constCast(raw));
+                return .{ .text = scrubbed, .owned_text = true };
+            }
+            return .{ .text = raw, .owned_text = true };
+        }
         if (std.mem.eql(u8, name, "skill")) {
             const raw = try c.loadSkill(try j.str(args, "name"));
             defer std.crypto.secureZero(u8, @constCast(raw));
@@ -140,9 +151,11 @@ pub const Context = struct {
             defer {
                 if (scrubbed.ptr != raw.ptr) std.crypto.secureZero(u8, @constCast(scrubbed));
             }
-            return .{ .text = try c.a.dupe(u8, scrubbed) };
+            return .{ .text = try c.a.dupe(u8, scrubbed), .owned_text = true };
         }
-        return .{ .text = try c.scrub(try c.runRaw(name, args)) };
+        const raw = try c.runRaw(name, args);
+        const scrubbed = try c.scrub(raw);
+        return .{ .text = scrubbed, .owned_text = scrubbed.ptr != raw.ptr };
     }
 
     pub fn scrub(c: Context, text: []const u8) ![]const u8 {
@@ -307,7 +320,8 @@ pub const Context = struct {
             if (scrubbed.ptr != full.ptr) std.crypto.secureZero(u8, @constCast(scrubbed));
         }
         const capped = try capCommandOutput(c.a, scrubbed);
-        return .{ .text = try c.a.dupe(u8, capped), .is_error = !result.term.success() };
+        defer if (scrubbed.len > limit and std.unicode.utf8ValidateSlice(scrubbed)) std.crypto.secureZero(u8, @constCast(capped));
+        return .{ .text = try c.a.dupe(u8, capped), .is_error = !result.term.success(), .owned_text = true };
     }
 
     pub fn loadSkill(c: Context, name: []const u8) ![]const u8 {

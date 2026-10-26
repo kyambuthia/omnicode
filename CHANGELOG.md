@@ -43,7 +43,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Intermediate adversarial-review reports are securely cleared after synthesis.
 - Full adversarial-review assembly buffers are securely cleared after report capping.
 - Temporary redacted subagent-report copies are securely cleared after output is capped.
-- Owned subagent results and formatted tool errors are securely cleared after parsing into conversation history.
+- Owned tool outputs, subagent results, and formatted tool errors are securely cleared after parsing into conversation history.
+- Capped command-output intermediates are securely cleared after copying the retained result.
 - Duplicate-tool failure signatures and serialized arguments are securely cleared after comparison.
 - Tool-result serialization copies are securely cleared after parsing.
 - Tool-schema and session-validation JSON encodings and parsed validation copies are securely cleared after use.
