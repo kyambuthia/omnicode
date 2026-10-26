@@ -389,6 +389,7 @@ pub const Agent = struct {
             });
         }
         if (self.context.todo) |t| {
+            t.clear();
             @memcpy(t.text[0..clean_todo.len], clean_todo);
             t.len = clean_todo.len;
         }
@@ -673,6 +674,7 @@ pub const Agent = struct {
             });
         }
         if (self.context.todo) |t| {
+            t.clear();
             @memcpy(t.text[0..saved_todo.len], saved_todo);
             t.len = saved_todo.len;
         }

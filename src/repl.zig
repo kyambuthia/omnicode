@@ -478,7 +478,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             if (agent.history.items.len != 0 and agent.history.items.len <= core.Agent.max_messages) continue;
         }
         _ = arena.reset(.free_all);
-        todo.len = 0;
+        todo.clear();
         route.mode = mode;
         agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
         agent.automatic = automatic;

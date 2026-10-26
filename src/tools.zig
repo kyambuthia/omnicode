@@ -67,6 +67,11 @@ pub const Todo = struct {
         return self.text[0..self.len];
     }
 
+    pub fn clear(self: *Todo) void {
+        std.crypto.secureZero(u8, self.text[0..]);
+        self.len = 0;
+    }
+
     pub fn pending(self: *const Todo) usize {
         var count: usize = 0;
         var lines = std.mem.splitScalar(u8, self.slice(), '\n');
@@ -93,6 +98,7 @@ pub const Todo = struct {
             if (done_val != .bool) return error.ExpectedBoolean;
             w.print("{d}. [{s}] {s}\n", .{ idx + 1, if (done_val.bool) "x" else " ", task }) catch return error.StreamTooLong;
         }
+        self.clear();
         @memcpy(self.text[0..w.end], next[0..w.end]);
         self.len = w.end;
         return if (self.len == 0) "(empty todo list)" else self.slice();
