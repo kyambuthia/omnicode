@@ -213,9 +213,13 @@ pub const Agent = struct {
                     const name = try j.str(block, "name");
                     const input = try j.get(block, "input");
                     try ui.toolStart(name, input);
-                    var safe_input = try j.parse(a, try j.encode(a, input));
+                    const source = try j.encode(a, input);
+                    defer std.crypto.secureZero(u8, @constCast(source));
+                    var safe_input = try j.parse(a, source);
+                    defer j.secureClear(std.heap.page_allocator, &safe_input) catch {};
                     if (self.context.secrets) |secrets| try secrets.scrubJson(a, &safe_input, self.env);
                     const encoded = try j.encode(a, safe_input);
+                    defer std.crypto.secureZero(u8, @constCast(encoded));
                     try full.preview(utf8Prefix(encoded, 64 * 1024), "");
                     if (encoded.len > 64 * 1024) try ui.note("Tool input preview truncated at 64 KiB.");
                     planned += 1;
