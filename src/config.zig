@@ -228,10 +228,9 @@ pub fn unset(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Enviro
     _ = env.swapRemove(key);
 }
 
-pub fn maskSecret(val: []const u8, buf: *[32]u8) []const u8 {
+pub fn maskSecret(val: []const u8) []const u8 {
     if (val.len == 0) return "(not set)";
-    if (val.len <= 8) return "configured (***)";
-    return std.fmt.bufPrint(buf, "{s}...{s}", .{ val[0..4], val[val.len - 4 ..] }) catch "configured";
+    return "configured (***)";
 }
 
 pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) ![]const u8 {
@@ -249,9 +248,8 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
         router.Provider.gemini,
         router.Provider.groq,
     }) |p| {
-        var mask_buf: [32]u8 = undefined;
         const val = env.get(p.envKey()) orelse "";
-        try out.writer.print("  {s:<11} ({s}): {s}\n", .{ @tagName(p), p.envKey(), maskSecret(val, &mask_buf) });
+        try out.writer.print("  {s:<11} ({s}): {s}\n", .{ @tagName(p), p.envKey(), maskSecret(val) });
     }
     const route = router.Route.init(env, null, null) catch null;
     const active_provider = if (route) |r| @tagName(r.provider) else (env.get("PROVIDER") orelse "auto");
@@ -311,8 +309,7 @@ pub fn execute(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Envi
         const key = resolveKeyName(raw_key) orelse return error.InvalidConfigKey;
         if (std.mem.eql(u8, key, "PROVIDER") and std.meta.stringToEnum(router.Provider, val) == null) return error.UnknownProvider;
         try set(a, io, dir, env, key, val);
-        var mask_buf: [32]u8 = undefined;
-        const shown = if (std.mem.endsWith(u8, key, "_KEY")) maskSecret(val, &mask_buf) else val;
+        const shown = if (std.mem.endsWith(u8, key, "_KEY")) maskSecret(val) else val;
         return std.fmt.allocPrint(a, "Saved {s} = {s}", .{ key, shown });
     }
     // `/setup <provider_or_key> <value>`
@@ -323,8 +320,7 @@ pub fn execute(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Envi
     if (std.meta.stringToEnum(router.Provider, first)) |p| {
         if (env.get("PROVIDER") == null) try set(a, io, dir, env, "PROVIDER", @tagName(p));
     }
-    var mask_buf: [32]u8 = undefined;
-    const shown = if (std.mem.endsWith(u8, key, "_KEY")) maskSecret(val, &mask_buf) else val;
+    const shown = if (std.mem.endsWith(u8, key, "_KEY")) maskSecret(val) else val;
     return std.fmt.allocPrint(a, "Saved {s} ({s}).", .{ key, shown });
 }
 
@@ -337,7 +333,6 @@ pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map
     var out: Io.Writer.Allocating = .init(a);
     try out.writer.print("Config file: {s}\nProviders (* = active):\n", .{path});
     for (all_providers, 1..) |p, idx| {
-        var mask_buf: [32]u8 = undefined;
         const val = env.get(p.envKey()) orelse "";
         const mark: u8 = if (active != null and active.? == p) '*' else ' ';
         const strong = p.defaultModel(true);
@@ -348,7 +343,7 @@ pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map
             try std.fmt.allocPrint(a, "{s} / {s}", .{ strong, fast });
         const url = if (custom_url.len > 0 and active != null and active.? == p) custom_url else p.defaultUrl();
         try out.writer.print("  {c} {d:>2}. {s:<12} key: {s:<14} [{s}]  models: {s}  url: {s}\n", .{
-            mark, idx, @tagName(p), maskSecret(val, &mask_buf), p.envKey(), models_buf, url,
+            mark, idx, @tagName(p), maskSecret(val), p.envKey(), models_buf, url,
         });
     }
     if (custom_url.len > 0) {
@@ -407,8 +402,7 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
     }
     try set(a, io, dir, env, p.envKey(), remainder);
     try set(a, io, dir, env, "PROVIDER", @tagName(p));
-    var mask_buf: [32]u8 = undefined;
-    return std.fmt.allocPrint(a, "Configured {s} ({s} = {s}) and set as active provider.", .{ @tagName(p), p.envKey(), maskSecret(remainder, &mask_buf) });
+    return std.fmt.allocPrint(a, "Configured {s} ({s} = {s}) and set as active provider.", .{ @tagName(p), p.envKey(), maskSecret(remainder) });
 }
 
 test "config persists keys, respects environment precedence, and masks secrets" {
@@ -423,7 +417,7 @@ test "config persists keys, respects environment precedence, and masks secrets" 
     try std.testing.expectEqualStrings("sk-or-v1-1234567890abcdef", env.get("OPENROUTER_API_KEY").?);
     try std.testing.expectEqualStrings("openrouter", env.get("PROVIDER").?);
     const report = try execute(a, std.testing.io, tmp.dir, &env, "");
-    try std.testing.expect(std.mem.indexOf(u8, report, "sk-o...cdef") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "configured (***)") != null);
     try std.testing.expect(std.mem.indexOf(u8, report, "1234567890") == null);
     _ = try execute(a, std.testing.io, tmp.dir, &env, "set VOICE_MODEL google/gemini-2.0-flash-lite-001");
     try std.testing.expectEqualStrings("google/gemini-2.0-flash-lite-001", env.get("VOICE_MODEL").?);

@@ -8,6 +8,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Fixed
 
+- Provider credential displays now hide the full value instead of showing key fragments.
 - The interactive model picker sanitizes catalog model IDs before displaying them in the terminal.
 - Credential and vault values entered with `/setup`, `/providers`, or `/secrets`
   are masked while typing; recalled input history is scrubbed before display.
