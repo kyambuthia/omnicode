@@ -374,6 +374,7 @@ pub const Ui = struct {
             error.InvalidConfigKey, error.InvalidSetupCommand => "Usage: /setup <provider> <key> | /setup set <KEY> <VALUE> | /setup unset <KEY>",
             error.InvalidProvidersCommand => "Usage: /providers [list] | /providers <N|provider> [api_key] | /providers url <url|default> | /providers unset <provider>",
             error.VoiceRecordFailed => "Audio recording failed. Install arecord/sox/ffmpeg, set OMNICODE_VOICE_CMD, or pass /voice <file.wav>.",
+            error.UnsupportedAudioFormat => "Use a WAV, MP3, OGG, FLAC, or M4A file, or provide a file without an extension to treat it as WAV.",
             error.EmptyAudio, error.EmptyTranscript => "Voice input produced no transcription.",
             error.InvalidSecretName, error.InvalidSecretValue, error.InvalidSecretsCommand => "Usage: /secrets set <NAME> <VALUE> | /secrets unset <NAME> | /secrets load <file.env>",
             error.SecretNotFound => "Secret not found in vault.",

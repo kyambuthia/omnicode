@@ -15,6 +15,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - The REPL drops incomplete Escape sequences after 100 ms instead of waiting
   indefinitely.
 - Voice input detects supported audio formats without regard to extension case.
+- Voice input rejects unknown filename extensions instead of labeling arbitrary files as WAV.
 - Voice recording clears its previous output before invoking a recorder, avoiding
   stale-clip reuse.
 - Non-UTF-8 shell output is replaced with a bounded diagnostic before entering

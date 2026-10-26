@@ -21,6 +21,17 @@ fn endsWithIgnoreCase(text: []const u8, suffix: []const u8) bool {
     return text.len >= suffix.len and std.ascii.eqlIgnoreCase(text[text.len - suffix.len ..], suffix);
 }
 
+fn hasAudioExtension(path: []const u8) bool {
+    for ([_][]const u8{ ".wav", ".mp3", ".ogg", ".flac", ".m4a" }) |extension|
+        if (endsWithIgnoreCase(path, extension)) return true;
+    return false;
+}
+
+fn hasExtension(path: []const u8) bool {
+    const name = std.fs.path.basename(path);
+    return std.mem.lastIndexOfScalar(u8, name, '.') != null;
+}
+
 /// Record mono 16 kHz WAV audio into `.omnicode/voice.wav` using `$OMNICODE_VOICE_CMD`, `arecord`, `rec`, or `ffmpeg`.
 pub fn recordAudio(c: tools.Context, env: *const std.process.Environ.Map, seconds: usize) ![]const u8 {
     const secs = std.math.clamp(seconds, 1, 30);
@@ -87,6 +98,7 @@ fn sendVoiceRequest(a: std.mem.Allocator, io: std.Io, url: []const u8, body: []c
 /// Read an audio file, base64-encode it, and transcribe via a cheap OpenRouter audio model.
 pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, route: Route, path: []const u8, ui: Ui) ![]const u8 {
     try @import("storage.zig").validatePath(path);
+    if (hasExtension(path) and !hasAudioExtension(path)) return error.UnsupportedAudioFormat;
     var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer scratch.deinit();
     const sa = scratch.allocator();
