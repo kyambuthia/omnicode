@@ -696,6 +696,11 @@ pub const Agent = struct {
     /// Return redacted proposed tool calls from a dry run for structured output.
     pub fn proposedTools(self: *const Agent, a: std.mem.Allocator) !j.Value {
         var calls: std.ArrayList(j.Value) = .empty;
+        var calls_transferred = false;
+        defer if (!calls_transferred) {
+            for (calls.items) |*call| j.secureClear(std.heap.page_allocator, call) catch {};
+            calls.deinit(a);
+        };
         if (self.previewed_content) |content| {
             for (content.array.items) |block| {
                 if (!std.mem.eql(u8, j.str(block, "type") catch "", "tool_use")) continue;
@@ -704,10 +709,14 @@ pub const Agent = struct {
                     .input = try j.get(block, "input"),
                 });
                 defer std.crypto.secureZero(u8, @constCast(encoded));
-                try calls.append(a, try j.parse(a, encoded));
+                var call = try j.parse(a, encoded);
+                errdefer j.secureClear(std.heap.page_allocator, &call) catch {};
+                try calls.append(a, call);
             }
         }
         var result: j.Value = .{ .array = calls.toManaged(a) };
+        calls_transferred = true;
+        errdefer j.secureClear(std.heap.page_allocator, &result) catch {};
         if (self.context.secrets) |secrets| try secrets.scrubJson(a, &result, self.env);
         return result;
     }
@@ -1141,6 +1150,11 @@ fn recoverMaxTokens(a: std.mem.Allocator, response: j.Value, emit_ui: ?Ui) !?j.V
     const content = j.get(response, "content") catch return null;
     if (content != .array or content.array.items.len == 0 or content.array.items.len > 64) return null;
     var kept: std.ArrayList(j.Value) = .empty;
+    var kept_transferred = false;
+    defer if (!kept_transferred) {
+        for (kept.items) |*item| j.secureClear(std.heap.page_allocator, item) catch {};
+        kept.deinit(a);
+    };
     for (content.array.items) |block| {
         const kind = j.str(block, "type") catch return null;
         if (std.mem.eql(u8, kind, "text")) {
@@ -1149,16 +1163,22 @@ fn recoverMaxTokens(a: std.mem.Allocator, response: j.Value, emit_ui: ?Ui) !?j.V
                 if (emit_ui) |u| try u.message(txt);
                 const encoded = try j.encode(a, .{ .type = "text", .text = txt });
                 defer std.crypto.secureZero(u8, @constCast(encoded));
-                try kept.append(a, try j.parse(a, encoded));
+                var item = try j.parse(a, encoded);
+                errdefer j.secureClear(std.heap.page_allocator, &item) catch {};
+                try kept.append(a, item);
             }
         } else if (std.mem.eql(u8, kind, "thinking") or std.mem.eql(u8, kind, "redacted_thinking") or std.mem.eql(u8, kind, "tool_use")) {
             // Do not execute or retain truncated tool_use blocks; keep assistant message valid.
         } else return null;
     }
     if (kept.items.len == 0) {
-        try kept.append(a, try j.parse(a, "{\"type\":\"text\",\"text\":\"[response truncated at max_tokens]\"}"));
+        var item = try j.parse(a, "{\"type\":\"text\",\"text\":\"[response truncated at max_tokens]\"}");
+        errdefer j.secureClear(std.heap.page_allocator, &item) catch {};
+        try kept.append(a, item);
     }
-    return .{ .array = kept.toManaged(a) };
+    const result: j.Value = .{ .array = kept.toManaged(a) };
+    kept_transferred = true;
+    return result;
 }
 
 fn criticPassed(report: []const u8) bool {
