@@ -408,7 +408,13 @@ pub const Agent = struct {
         const clean_todo = try j.str(root, "todo");
         if (self.context.todo) |t| if (clean_todo.len > t.text.len) return error.HistoryLimit;
         var next: std.ArrayList(Message) = .empty;
-        errdefer next.deinit(a);
+        errdefer {
+            for (next.items) |*message| {
+                j.secureClear(std.heap.page_allocator, &message.content) catch {};
+                std.crypto.secureZero(u8, @constCast(message.role));
+            }
+            next.deinit(a);
+        }
         for (root.object.get("messages").?.array.items) |item| {
             const encoded_content = try j.encode(sa, try j.get(item, "content"));
             defer std.crypto.secureZero(u8, @constCast(encoded_content));
