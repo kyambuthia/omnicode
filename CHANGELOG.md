@@ -68,6 +68,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Delegated system-prompt copies and owned child prompt copies are securely cleared after each subagent run.
 - Loaded skill bodies are scrubbed before results are retained, and raw buffers are cleared.
 - REPL history slots are securely cleared when overwritten or replaced by redaction.
+- Temporary REPL history redaction copies are securely cleared after each entry is updated.
 - New REPL history entries are scrubbed before they are retained.
 - The current REPL input buffer is securely cleared after processing or cancellation.
 - Custom endpoint summaries redact query strings that may contain credentials.

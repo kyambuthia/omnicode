@@ -100,13 +100,15 @@ pub const Input = struct {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         for (0..@min(self.count, self.history.len)) |slot| {
-            const clean = try secrets.scrub(scratch.allocator(), self.history[slot][0..self.lengths[slot]], env);
+            const entry = self.history[slot][0..self.lengths[slot]];
+            const clean = try secrets.scrub(scratch.allocator(), entry, env);
+            defer if (clean.ptr != entry.ptr) std.crypto.secureZero(u8, @constCast(clean));
             if (clean.len > self.history[slot].len) {
                 std.crypto.secureZero(u8, self.history[slot][0..]);
                 self.lengths[slot] = 0;
                 continue;
             }
-            if (clean.ptr != self.history[slot][0..].ptr) {
+            if (clean.ptr != entry.ptr) {
                 std.crypto.secureZero(u8, self.history[slot][0..]);
                 @memcpy(self.history[slot][0..clean.len], clean);
             }
