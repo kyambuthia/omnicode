@@ -42,6 +42,12 @@ pub const Secrets = struct {
         return self.vals[idx][0..self.val_lens[idx]];
     }
 
+    fn clearValues(self: *Secrets) void {
+        for (0..max_secrets) |i| std.crypto.secureZero(u8, self.vals[i][0..]);
+        @memset(&self.val_lens, 0);
+        self.count = 0;
+    }
+
     pub fn setMemory(self: *Secrets, name: []const u8, value: []const u8) !void {
         if (!validSecretName(name)) return error.InvalidSecretName;
         if (value.len == 0 or value.len > max_val_len or std.mem.indexOfAny(u8, value, "\x00\r\n") != null)
@@ -111,6 +117,7 @@ pub const Secrets = struct {
 
     pub fn parseLines(self: *Secrets, text: []const u8) !usize {
         var next = self.*;
+        defer next.clearValues();
         const added = try next.parseLinesInto(text);
         self.* = next;
         return added;
@@ -299,6 +306,7 @@ pub const Secrets = struct {
             const name = parts.next() orelse return error.InvalidSecretsCommand;
             if (parts.next() != null) return error.InvalidSecretsCommand;
             var next = self.*;
+            defer next.clearValues();
             if (!next.unsetMemory(name)) return error.SecretNotFound;
             const message = try std.fmt.allocPrint(a, "Removed secret {s}.", .{name});
             try self.commit(&next, a, io, dir, env, name);
@@ -310,6 +318,7 @@ pub const Secrets = struct {
             try @import("storage.zig").validatePath(file_path);
             const text = try @import("storage.zig").readRegular(io, dir, file_path, a, .limited(max_file_bytes + 1));
             var next = self.*;
+            defer next.clearValues();
             const count = try next.parseLines(text);
             const message = try std.fmt.allocPrint(a, "Loaded {d} secret(s) from {s} (values hidden).", .{ count, file_path });
             try self.commit(&next, a, io, dir, env, null);
@@ -322,6 +331,7 @@ pub const Secrets = struct {
         const val = std.mem.trim(u8, parts.rest(), " \t");
         if (val.len == 0) return error.InvalidSecretsCommand;
         var next = self.*;
+        defer next.clearValues();
         try next.setMemory(name, val);
         const message = try std.fmt.allocPrint(a, "Stored secret {s} ([REDACTED · {d} chars]).", .{ name, val.len });
         try self.commit(&next, a, io, dir, env, null);

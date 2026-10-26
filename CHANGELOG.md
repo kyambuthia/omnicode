@@ -11,6 +11,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Provider credential displays now hide the full value instead of showing key fragments.
 - Short vault values and short provider-key overrides are now scrubbed from output.
 - Replaced and removed vault values are securely cleared from active vault slots.
+- Temporary vault copies are securely cleared after a mutation succeeds or fails.
 - Custom endpoint summaries redact query strings that may contain credentials.
 - The interactive model picker sanitizes catalog model IDs before displaying them in the terminal.
 - Credential and vault values entered with `/setup`, `/providers`, or `/secrets`
