@@ -96,6 +96,7 @@ pub const Secrets = struct {
             error.FileNotFound => return,
             else => return err,
         };
+        defer std.crypto.secureZero(u8, @constCast(text));
         _ = try self.parseLines(text);
     }
 
@@ -112,6 +113,7 @@ pub const Secrets = struct {
             try out.writer.writeByte('\n');
         }
         const data = try out.toOwnedSlice();
+        defer std.crypto.secureZero(u8, @constCast(data));
         try @import("storage.zig").writePrivate(io, dir, path, data);
     }
 
@@ -317,6 +319,7 @@ pub const Secrets = struct {
             if (file_path.len == 0) return error.InvalidSecretsCommand;
             try @import("storage.zig").validatePath(file_path);
             const text = try @import("storage.zig").readRegular(io, dir, file_path, a, .limited(max_file_bytes + 1));
+            defer std.crypto.secureZero(u8, @constCast(text));
             var next = self.*;
             defer next.clearValues();
             const count = try next.parseLines(text);

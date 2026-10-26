@@ -570,7 +570,7 @@ flowchart LR
 
 | Component | Design |
 |---|---|
-| **Storage (`secrets.env`)** | Stored at `$OMNICODE_SECRETS`, else `$XDG_CONFIG_HOME/omnicode/secrets.env`, else `$HOME/.config/omnicode/secrets.env` (fallback `.omnicode/secrets.env`) with `0o600` owner-only permissions |
+| **Storage (`secrets.env`)** | Stored at `$OMNICODE_SECRETS`, else `$XDG_CONFIG_HOME/omnicode/secrets.env`, else `$HOME/.config/omnicode/secrets.env` (fallback `.omnicode/secrets.env`) with `0o600` owner-only permissions. Imported and serialized vault buffers are securely cleared after use. |
 | **REPL & CLI commands** | `/secrets` or `/secrets list` (list secret names + masked lengths, never values), `/secrets set <NAME> <VALUE>` (save or replace a secret and securely clear retired values), `/secrets unset <NAME>` (remove secret and securely clear its active vault slot), `/secrets load <file.env>` (import `.env` secrets without printing values); mutation working copies are also securely cleared after success or failure |
 | **Subprocess injection** | `Context.command` (`src/tools.zig`) injects all stored secrets into the child process `environ_map` so `bash` commands can reference `$NAME` directly |
 | **Name-only prompt advertisement** | `Agent.buildSystem` (`src/agent.zig`) appends `Available secret env vars (values hidden; reference as $NAME in bash): NAME1, NAME2` so the model uses secrets without ever seeing their values |
