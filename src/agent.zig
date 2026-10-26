@@ -180,6 +180,7 @@ pub const Agent = struct {
                 }
                 break :blk initial;
             };
+            defer std.crypto.secureZero(u8, @constCast(body));
             if (body.len > max_bytes) return error.HistoryLimit;
             try self.checkpoint();
             turns += 1;
