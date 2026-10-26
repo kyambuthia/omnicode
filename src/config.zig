@@ -211,9 +211,18 @@ pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.
 
 // Capacity and owned strings must be prepared before committing persistent state.
 fn applyPending(env: *std.process.Environ.Map, pending: *std.process.Environ.Map) void {
-    for (pending.keys(), pending.values()) |key, value|
+    for (pending.keys(), pending.values()) |key, value| {
+        clearOwnedSensitiveValue(env, key);
         env.putMove(@constCast(key), @constCast(value)) catch unreachable;
+    }
     pending.array_hash_map.clearRetainingCapacity();
+}
+
+fn clearOwnedSensitiveValue(env: *std.process.Environ.Map, key: []const u8) void {
+    const sensitive = std.mem.endsWith(u8, key, "_KEY") or std.mem.eql(u8, key, "API_URL") or
+        std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL");
+    if (!sensitive) return;
+    if (env.get(key)) |old| std.crypto.secureZero(u8, @constCast(old));
 }
 
 pub fn unset(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8) !void {
@@ -225,6 +234,7 @@ pub fn unset(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Enviro
         if (!std.mem.eql(u8, e.key, key)) try kept.append(a, e);
     }
     try writeEntries(a, io, dir, path, kept.items);
+    clearOwnedSensitiveValue(env, key);
     _ = env.swapRemove(key);
 }
 
