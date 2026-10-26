@@ -83,6 +83,7 @@ pub const Todo = struct {
         const list = args.object.get("items") orelse return if (self.len == 0) "(empty todo list)" else self.slice();
         if (list != .array or list.array.items.len > 64) return error.InvalidTodoList;
         var next: [4096]u8 = undefined;
+        defer std.crypto.secureZero(u8, next[0..]);
         var w = Io.Writer.fixed(&next);
         for (list.array.items, 0..) |item, idx| {
             try validateFields(item, &.{ "task", "done" });
