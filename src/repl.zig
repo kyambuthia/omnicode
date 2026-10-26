@@ -486,6 +486,9 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             // Keep complete history after successful turns; reset after errors.
             if (agent.history.items.len != 0 and agent.history.items.len <= core.Agent.max_messages) continue;
         }
+        if (std.mem.eql(u8, line, "/c")) {
+            if (ui.details) |details| details.clear();
+        }
         _ = arena.reset(.free_all);
         todo.clear();
         route.mode = mode;
