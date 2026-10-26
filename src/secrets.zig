@@ -171,19 +171,19 @@ pub const Secrets = struct {
 
     /// Scrub any occurrence of stored secrets or configured provider API keys from `text`.
     pub fn scrub(self: *const Secrets, a: std.mem.Allocator, text: []const u8, env: ?*const std.process.Environ.Map) ![]const u8 {
-        const Candidate = struct { name: []const u8, value: []const u8 };
+        const Candidate = struct { name: []const u8, value: []const u8, mask: bool };
         var candidates: [max_secrets + 8]Candidate = undefined;
         var count: usize = 0;
         for (0..self.count) |i| {
-            if (self.valAt(i).len < 4 or std.mem.indexOf(u8, text, self.valAt(i)) == null) continue;
-            candidates[count] = .{ .name = self.nameAt(i), .value = self.valAt(i) };
+            if (std.mem.indexOf(u8, text, self.valAt(i)) == null) continue;
+            candidates[count] = .{ .name = self.nameAt(i), .value = self.valAt(i), .mask = self.valAt(i).len < 4 };
             count += 1;
         }
         if (env) |m| {
             inline for (.{ router.Provider.abliteration, router.Provider.openrouter, router.Provider.anthropic, router.Provider.deepseek, router.Provider.xai, router.Provider.openai, router.Provider.gemini, router.Provider.groq }) |p| {
                 if (m.get(p.envKey())) |value| {
-                    if (value.len >= 6 and std.mem.indexOf(u8, text, value) != null) {
-                        candidates[count] = .{ .name = p.envKey(), .value = value };
+                    if (value.len > 0 and std.mem.indexOf(u8, text, value) != null) {
+                        candidates[count] = .{ .name = p.envKey(), .value = value, .mask = value.len < 6 };
                         count += 1;
                     }
                 }
@@ -196,15 +196,21 @@ pub const Secrets = struct {
         while (pos < text.len) {
             var match_len: usize = 0;
             var match_name: []const u8 = "";
+            var mask_match = false;
             for (candidates[0..count]) |candidate| {
                 const val = candidate.value;
                 if (val.len > match_len and val[0] == text[pos] and std.mem.startsWith(u8, text[pos..], val)) {
                     match_len = val.len;
                     match_name = candidate.name;
+                    mask_match = candidate.mask;
                 }
             }
             if (match_len > 0) {
-                try out.writer.print("[REDACTED:{s}]", .{match_name});
+                if (mask_match) {
+                    try out.writer.writeAll("******"[0..match_len]);
+                } else {
+                    try out.writer.print("[REDACTED:{s}]", .{match_name});
+                }
                 pos += match_len;
             } else {
                 try out.writer.writeByte(text[pos]);
