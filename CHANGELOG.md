@@ -13,6 +13,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Replaced and removed vault values are securely cleared from active vault slots.
 - Temporary vault copies are securely cleared after a mutation succeeds or fails.
 - Imported and serialized vault buffers are securely cleared after use.
+- Replaced and removed vault environment copies are securely cleared before release.
 - REPL history slots are securely cleared when overwritten or replaced by redaction.
 - New REPL history entries are scrubbed before they are retained.
 - The current REPL input buffer is securely cleared after processing or cancellation.

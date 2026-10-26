@@ -292,10 +292,16 @@ pub const Secrets = struct {
         try next.save(a, io, dir, env);
         for (pending.keys(), pending.values()) |key, value| {
             // Capacity and owned strings were prepared before the filesystem commit.
+            // Environ.Map frees replaced values, so erase its owned secret first.
+            if (env.get(key)) |old| std.crypto.secureZero(u8, @constCast(old));
             env.putMove(@constCast(key), @constCast(value)) catch unreachable;
         }
         pending.array_hash_map.clearRetainingCapacity();
-        if (removed) |name| _ = env.swapRemove(name);
+        if (removed) |name| {
+            // swapRemove frees the map's owned value.
+            if (env.get(name)) |old| std.crypto.secureZero(u8, @constCast(old));
+            _ = env.swapRemove(name);
+        }
         self.* = next.*;
     }
 
