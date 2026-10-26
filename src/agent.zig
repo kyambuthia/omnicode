@@ -521,7 +521,7 @@ pub const Agent = struct {
         const source = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
         defer std.crypto.secureZero(u8, @constCast(source));
         var snapshot = try j.parse(sa, source);
-        defer j.secureClear(&snapshot);
+        defer j.secureClear(std.heap.page_allocator, &snapshot) catch {};
         try self.scrubConversation(sa, &snapshot);
         const data = try j.encode(sa, snapshot);
         defer std.crypto.secureZero(u8, @constCast(data));
@@ -542,7 +542,7 @@ pub const Agent = struct {
         });
         defer std.crypto.secureZero(u8, @constCast(source));
         var snapshot = try j.parse(sa, source);
-        defer j.secureClear(&snapshot);
+        defer j.secureClear(std.heap.page_allocator, &snapshot) catch {};
         try self.scrubConversation(sa, &snapshot);
         var output: Io.Writer.Allocating = .init(sa);
         try output.writer.print("# Omnicode session: {s}\n\n", .{name});
@@ -629,7 +629,7 @@ pub const Agent = struct {
         const text = try @import("storage.zig").readRegular(self.context.io, self.context.dir, path, sa, .limited(max_bytes + 1));
         defer std.crypto.secureZero(u8, @constCast(text));
         var root = try j.parse(sa, text);
-        defer j.secureClear(&root);
+        defer j.secureClear(std.heap.page_allocator, &root) catch {};
         try self.scrubConversation(sa, &root);
         const msgs = j.get(root, "messages") catch return error.InvalidSession;
         if (msgs != .array or msgs.array.items.len > max_messages) return error.InvalidSession;

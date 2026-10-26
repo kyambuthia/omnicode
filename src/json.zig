@@ -11,18 +11,33 @@ pub fn encode(a: Allocator, value: anytype) ![]const u8 {
 }
 
 /// Clear every parsed JSON string before releasing its owning scratch arena.
-pub fn secureClear(value: *Value) void {
+/// An explicit worklist keeps deeply nested responses off the call stack.
+pub fn secureClear(a: Allocator, value: *Value) !void {
+    var pending: std.ArrayList(*Value) = .empty;
+    defer pending.deinit(a);
+    try pending.append(a, value);
+    while (pending.pop()) |current| {
+        switch (current.*) {
+            .string => |text| std.crypto.secureZero(u8, @constCast(text)),
+            .number_string => |text| std.crypto.secureZero(u8, @constCast(text)),
+            .array => |*array| for (array.items) |*item| try clearOrQueue(a, &pending, item),
+            .object => |*object| {
+                var it = object.iterator();
+                while (it.next()) |entry| {
+                    std.crypto.secureZero(u8, @constCast(entry.key_ptr.*));
+                    try clearOrQueue(a, &pending, entry.value_ptr);
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+fn clearOrQueue(a: Allocator, pending: *std.ArrayList(*Value), value: *Value) !void {
     switch (value.*) {
         .string => |text| std.crypto.secureZero(u8, @constCast(text)),
         .number_string => |text| std.crypto.secureZero(u8, @constCast(text)),
-        .array => |*array| for (array.items) |*item| secureClear(item),
-        .object => |*object| {
-            var it = object.iterator();
-            while (it.next()) |entry| {
-                std.crypto.secureZero(u8, @constCast(entry.key_ptr.*));
-                secureClear(entry.value_ptr);
-            }
-        },
+        .array, .object => try pending.append(a, value),
         else => {},
     }
 }
