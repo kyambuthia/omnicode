@@ -17,6 +17,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Replaced and removed sensitive `/setup` environment values are securely cleared before release.
 - Serialized `/setup` config buffers are securely cleared after writes.
 - Captured shell output buffers are securely cleared after scrubbed results are prepared.
+- Read-tool source and redacted intermediate buffers are securely cleared after formatting.
 - REPL history slots are securely cleared when overwritten or replaced by redaction.
 - New REPL history entries are scrubbed before they are retained.
 - The current REPL input buffer is securely cleared after processing or cancellation.

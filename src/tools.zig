@@ -188,7 +188,12 @@ pub const Context = struct {
         const offset = try j.number(args, if (bytes) "byte_offset" else "offset", 0);
         const count = try j.number(args, if (bytes) "byte_limit" else "limit", if (bytes) 4096 else 200);
         if (bytes and (count == 0 or count > byte_read_limit)) return error.InvalidReadLimit;
-        const text = try c.scrub(try c.readFile(path));
+        const raw = try c.readFile(path);
+        defer std.crypto.secureZero(u8, @constCast(raw));
+        const text = try c.scrub(raw);
+        defer {
+            if (text.ptr != raw.ptr) std.crypto.secureZero(u8, @constCast(text));
+        }
         if (bytes) {
             if (!std.unicode.utf8ValidateSlice(text)) return error.NonUtf8Output;
             if (offset > text.len) return error.InvalidReadOffset;
