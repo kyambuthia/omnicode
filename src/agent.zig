@@ -521,7 +521,7 @@ pub const Agent = struct {
         const source = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
         defer std.crypto.secureZero(u8, @constCast(source));
         var snapshot = try j.parse(sa, source);
-        defer secureClearJson(&snapshot);
+        defer j.secureClear(&snapshot);
         try self.scrubConversation(sa, &snapshot);
         const data = try j.encode(sa, snapshot);
         defer std.crypto.secureZero(u8, @constCast(data));
@@ -542,7 +542,7 @@ pub const Agent = struct {
         });
         defer std.crypto.secureZero(u8, @constCast(source));
         var snapshot = try j.parse(sa, source);
-        defer secureClearJson(&snapshot);
+        defer j.secureClear(&snapshot);
         try self.scrubConversation(sa, &snapshot);
         var output: Io.Writer.Allocating = .init(sa);
         try output.writer.print("# Omnicode session: {s}\n\n", .{name});
@@ -629,7 +629,7 @@ pub const Agent = struct {
         const text = try @import("storage.zig").readRegular(self.context.io, self.context.dir, path, sa, .limited(max_bytes + 1));
         defer std.crypto.secureZero(u8, @constCast(text));
         var root = try j.parse(sa, text);
-        defer secureClearJson(&root);
+        defer j.secureClear(&root);
         try self.scrubConversation(sa, &root);
         const msgs = j.get(root, "messages") catch return error.InvalidSession;
         if (msgs != .array or msgs.array.items.len > max_messages) return error.InvalidSession;
@@ -926,22 +926,6 @@ pub const Agent = struct {
         return .{ .text = try capReport(a, safe_report), .passed = complete and criticPassed(report) };
     }
 };
-
-fn secureClearJson(value: *j.Value) void {
-    switch (value.*) {
-        .string => |text| std.crypto.secureZero(u8, @constCast(text)),
-        .number_string => |text| std.crypto.secureZero(u8, @constCast(text)),
-        .array => |*array| for (array.items) |*item| secureClearJson(item),
-        .object => |*object| {
-            var it = object.iterator();
-            while (it.next()) |entry| {
-                std.crypto.secureZero(u8, @constCast(entry.key_ptr.*));
-                secureClearJson(entry.value_ptr);
-            }
-        },
-        else => {},
-    }
-}
 
 fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
     var end = @min(text.len, limit);

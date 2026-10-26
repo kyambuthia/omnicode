@@ -9,6 +9,24 @@ pub fn parse(a: Allocator, text: []const u8) !Value {
 pub fn encode(a: Allocator, value: anytype) ![]const u8 {
     return std.json.Stringify.valueAlloc(a, value, .{});
 }
+
+/// Clear every parsed JSON string before releasing its owning scratch arena.
+pub fn secureClear(value: *Value) void {
+    switch (value.*) {
+        .string => |text| std.crypto.secureZero(u8, @constCast(text)),
+        .number_string => |text| std.crypto.secureZero(u8, @constCast(text)),
+        .array => |*array| for (array.items) |*item| secureClear(item),
+        .object => |*object| {
+            var it = object.iterator();
+            while (it.next()) |entry| {
+                std.crypto.secureZero(u8, @constCast(entry.key_ptr.*));
+                secureClear(entry.value_ptr);
+            }
+        },
+        else => {},
+    }
+}
+
 pub fn get(v: Value, key: []const u8) !Value {
     if (v != .object) return error.ExpectedObject;
     return v.object.get(key) orelse error.MissingField;

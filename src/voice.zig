@@ -169,7 +169,8 @@ pub fn transcribeFile(c: tools.Context, env: *const std.process.Environ.Map, rou
     });
     defer std.crypto.secureZero(u8, @constCast(body));
     const anthropic_auth = !requires_openrouter_key and or_key.len == 0 and route.provider == .anthropic;
-    const response = try ui.work("Transcribing voice...", sendVoiceRequest, .{ sa, c.io, url, body, key, anthropic_auth });
+    var response = try ui.work("Transcribing voice...", sendVoiceRequest, .{ sa, c.io, url, body, key, anthropic_auth });
+    defer j.secureClear(&response);
     var voice_route = route;
     voice_route.model = voice_model;
     const delta = Usage.response(response, voice_route);
