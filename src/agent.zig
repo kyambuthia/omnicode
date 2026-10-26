@@ -346,14 +346,19 @@ pub const Agent = struct {
         for (messages.array.items) |*message| {
             if (message.* != .object) continue;
             const content = message.object.getPtr("content") orelse continue;
-            if (content.* == .string) {
-                try secrets.scrubJson(a, content, self.env);
-            } else if (content.* == .array) {
-                for (content.array.items) |*block| {
-                    if (block.* != .object) continue;
-                    for ([_][]const u8{ "text", "input", "content" }) |key| {
-                        if (block.object.getPtr(key)) |value| try secrets.scrubJson(a, value, self.env);
-                    }
+            try self.scrubMessageContent(a, content);
+        }
+    }
+
+    fn scrubMessageContent(self: *const Agent, a: std.mem.Allocator, content: *j.Value) !void {
+        const secrets = self.context.secrets orelse return;
+        if (content.* == .string) {
+            try secrets.scrubJson(a, content, self.env);
+        } else if (content.* == .array) {
+            for (content.array.items) |*block| {
+                if (block.* != .object) continue;
+                for ([_][]const u8{ "text", "input", "content" }) |key| {
+                    if (block.object.getPtr(key)) |value| try secrets.scrubJson(a, value, self.env);
                 }
             }
         }
@@ -362,17 +367,25 @@ pub const Agent = struct {
     /// Permanently redact retained messages before credentials can be removed or replaced.
     pub fn redactHistory(self: *Agent) !void {
         const a = self.context.a;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const sa = scratch.allocator();
         const todo_text = if (self.context.todo) |t| t.slice() else "";
-        var root = try j.parse(a, try j.encode(a, .{ .messages = self.history.items, .todo = todo_text }));
-        try self.scrubConversation(a, &root);
+        const source = try j.encode(sa, .{ .messages = self.history.items, .todo = todo_text });
+        defer std.crypto.secureZero(u8, @constCast(source));
+        var root = try j.parse(sa, source);
+        defer j.secureClear(std.heap.page_allocator, &root) catch {};
+        try self.scrubConversation(sa, &root);
         const clean_todo = try j.str(root, "todo");
         if (self.context.todo) |t| if (clean_todo.len > t.text.len) return error.HistoryLimit;
         var next: std.ArrayList(Message) = .empty;
         errdefer next.deinit(a);
         for (root.object.get("messages").?.array.items) |item| {
+            const encoded_content = try j.encode(sa, try j.get(item, "content"));
+            defer std.crypto.secureZero(u8, @constCast(encoded_content));
             try next.append(a, .{
-                .role = try j.str(item, "role"),
-                .content = try j.get(item, "content"),
+                .role = try a.dupe(u8, try j.str(item, "role")),
+                .content = try j.parse(a, encoded_content),
             });
         }
         if (self.context.todo) |t| {
