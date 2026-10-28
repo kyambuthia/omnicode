@@ -8,6 +8,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Fixed
 
+- Bash carriage-return progress is collapsed to the latest state in the feed
+  and model tool results.
 - Provider credential displays now hide the full value instead of showing key fragments.
 - Short vault values and short provider-key overrides are now scrubbed from output.
 - Secret-manager status output copies are securely cleared after display.

@@ -328,15 +328,25 @@ pub const Context = struct {
         }, observer }, milliseconds);
         defer std.crypto.secureZero(u8, @constCast(result.stdout));
         defer std.crypto.secureZero(u8, @constCast(result.stderr));
+        const stdout = try normalizeProgressOutput(c.a, result.stdout);
+        defer if (stdout.ptr != result.stdout.ptr) {
+            std.crypto.secureZero(u8, @constCast(stdout));
+            c.a.free(@constCast(stdout));
+        };
+        const stderr = try normalizeProgressOutput(c.a, result.stderr);
+        defer if (stderr.ptr != result.stderr.ptr) {
+            std.crypto.secureZero(u8, @constCast(stderr));
+            c.a.free(@constCast(stderr));
+        };
         if (search and result.term == .exited and result.term.exited == 1) {
             const raw = "none";
             const scrubbed = try c.scrub(raw);
             return .{ .text = scrubbed, .owned_text = scrubbed.ptr != raw.ptr };
         }
         const full = if (!result.term.success())
-            try std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, result.stdout, result.stderr })
+            try std.fmt.allocPrint(c.a, "error: {f}\n{s}{s}", .{ result.term, stdout, stderr })
         else
-            try std.fmt.allocPrint(c.a, "{s}{s}", .{ result.stdout, result.stderr });
+            try std.fmt.allocPrint(c.a, "{s}{s}", .{ stdout, stderr });
         defer std.crypto.secureZero(u8, @constCast(full));
         const scrubbed = try c.scrub(full);
         defer {
@@ -627,6 +637,35 @@ fn canStreamLiveOutput(context: Context) bool {
     return true;
 }
 
+fn normalizeProgressOutput(a: j.Allocator, text: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, text, '\r') == null) return text;
+    const normalized = try a.alloc(u8, text.len);
+    var len: usize = 0;
+    var line_start: usize = 0;
+    var index: usize = 0;
+    while (index < text.len) {
+        if (text[index] == '\r') {
+            if (index + 1 < text.len and text[index + 1] == '\n') {
+                normalized[len] = '\n';
+                len += 1;
+                line_start = len;
+                index += 2;
+            } else if (index + 1 < text.len) {
+                len = line_start;
+                index += 1;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        normalized[len] = text[index];
+        len += 1;
+        if (text[index] == '\n') line_start = len;
+        index += 1;
+    }
+    return normalized[0..len];
+}
+
 pub fn capCommandOutput(a: j.Allocator, full: []const u8) ![]const u8 {
     if (!std.unicode.utf8ValidateSlice(full))
         return "Command output contained non-UTF-8 bytes and was omitted.";
@@ -768,6 +807,15 @@ test "commands bound runtime/output and report search misses" {
     try std.testing.expect(std.mem.startsWith(u8, capped, "HEAD:"));
     try std.testing.expect(std.mem.endsWith(u8, capped, ":TAIL"));
     try std.testing.expect(std.mem.indexOf(u8, capped, "[truncated middle") != null);
+}
+
+test "Bash carriage-return progress keeps only its final state in tool results" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const c: Context = .{ .a = arena.allocator(), .io = std.testing.io, .dir = .cwd() };
+    const args = try j.parse(c.a, "{\"cmd\":\"printf 'step 10%%\\\\rstep 20%%\\\\rstep 100%%\\\\r\\\\nDone\\\\r\\\\n'\"}");
+    const result = try c.runResult("bash", args);
+    try std.testing.expectEqualStrings("step 100%\nDone\n", result.text);
 }
 
 test "rejected checklist replacements preserve completed and pending items" {
