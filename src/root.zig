@@ -6,6 +6,7 @@ pub const Input = @import("input.zig").Input;
 pub const pickModel = @import("input.zig").pickModel;
 pub const Details = @import("ui.zig").Details;
 pub const Ui = @import("ui.zig").Ui;
+pub const TmuxFeed = @import("tmux.zig").Feed;
 pub const Agent = @import("agent.zig").Agent;
 pub const RequestLimiter = @import("rate_limit.zig").RequestLimiter;
 pub const Context = @import("tools.zig").Context;
@@ -28,6 +29,7 @@ test {
     _ = @import("tools.zig");
     _ = @import("agent.zig");
     _ = @import("ui.zig");
+    _ = @import("tmux.zig");
     _ = @import("usage.zig");
     _ = @import("status.zig");
     _ = @import("input.zig");

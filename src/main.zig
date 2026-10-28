@@ -118,6 +118,24 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     }
     var route = try core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null);
     route.mode = mode;
+    var tmux_feed: core.TmuxFeed = undefined;
+    var tmux_feed_active = false;
+    const tmux_tty = (std.Io.File.stdout().isTty(init.io) catch false) and
+        !std.mem.eql(u8, init.environ_map.get("TERM") orelse "", "dumb");
+    if (tmux_tty and !json_output and init.environ_map.get("TMUX_PANE") != null) {
+        if (core.TmuxFeed.start(init.io, init.environ_map, ui.width)) |maybe_feed| {
+            if (maybe_feed) |feed| {
+                tmux_feed = feed;
+                tmux_feed_active = true;
+                ui.tmux_feed = &tmux_feed;
+                ui.width = core.terminalWidth(init.environ_map);
+            }
+        } else |err| {
+            if (err == error.Canceled) return err;
+            try ui.note("Could not open a tmux Bash pane; Bash output will stay in the feed.");
+        }
+    }
+    defer if (tmux_feed_active) tmux_feed.deinit();
     if (args.len > first) {
         var arena = std.heap.ArenaAllocator.init(init.gpa);
         defer arena.deinit();
@@ -137,6 +155,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         defer agent.clearPreviewedContent();
         const prompt = try std.mem.join(a, " ", args[first..]);
         defer std.crypto.secureZero(u8, prompt);
+        if (tmux_feed_active) try ui.note("Bash output is in the tmux side pane.");
         var task_ui = ui;
         task_ui.details = null;
         agent.respond(prompt, task_ui) catch |err| {

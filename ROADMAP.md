@@ -149,6 +149,15 @@ assistant and Bash output, retains four recent Bash results for `/out`, and
 offers `/diff` for a bounded Git status and tracked-change view; untracked file
 contents are not included. Input and transcript state preserve the project's
 normal scrollback model.
+
+Interactive sessions started inside a tmux pane at 100 columns or wider open a
+temporary right-hand Bash output pane using tmux's `split-window -I`. Bash
+commands and completed results go to that pane; assistant text remains in the
+Omnicode feed, which shows a compact completion line. The pane is removed when
+Omnicode exits. Narrow terminals, non-tmux terminals, and tmux startup failures
+keep the inline Bash renderer. This uses tmux's documented stdin forwarding for
+`split-window -I`, without shell interpolation or a persistent output file.
+See the [tmux manual](https://github.com/tmux/tmux/blob/master/tmux.1).
 Verification includes real PTY cancellation/EOF, paste submission, and termios
 restoration both during API requests and after exit. Terminal sequences follow
 [xterm's bracketed-paste protocol](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).

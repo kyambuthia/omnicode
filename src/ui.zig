@@ -3,6 +3,7 @@ const j = @import("json.zig");
 const Io = std.Io;
 const Usage = @import("usage.zig").Usage;
 const status_line = @import("status.zig");
+const TmuxFeed = @import("tmux.zig").Feed;
 
 /// The latest tool result plus a small recent Bash-output ring, all bounded independently of history.
 pub const Details = struct {
@@ -85,6 +86,7 @@ pub const Ui = struct {
     details: ?*Details = null,
     usage: ?*Usage = null,
     status: ?*status_line.Status = null,
+    tmux_feed: ?*TmuxFeed = null,
     secrets: ?*const @import("secrets.zig").Secrets = null,
     env: ?*const std.process.Environ.Map = null,
 
@@ -105,14 +107,22 @@ pub const Ui = struct {
         if (ui.color) try ui.out.writeAll(code);
     }
 
+    fn styleTo(ui: Ui, out: *Io.Writer, code: []const u8) !void {
+        if (ui.color) try out.writeAll(code);
+    }
+
     // Never let model/file/command text emit terminal controls; truncate on UTF-8 boundaries.
     pub fn safe(ui: Ui, value: []const u8, max: usize) !void {
+        try ui.safeTo(ui.out, value, max);
+    }
+
+    fn safeTo(ui: Ui, out: *Io.Writer, value: []const u8, max: usize) !void {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), value, ui.env) else value;
         defer if (text.ptr != value.ptr) std.crypto.secureZero(u8, @constCast(text));
         const view = std.unicode.Utf8View.init(text) catch {
-            try ui.out.writeAll("[non-UTF-8 text]");
+            try out.writeAll("[non-UTF-8 text]");
             return;
         };
         var it = view.iterator();
@@ -120,12 +130,12 @@ pub const Ui = struct {
         while (it.nextCodepointSlice()) |bytes| {
             const cp = try std.unicode.utf8Decode(bytes);
             if (n >= max) {
-                try ui.out.writeAll("...");
+                try out.writeAll("...");
                 break;
             }
             if (cp < 32 or (cp >= 127 and cp <= 159)) {
-                try ui.out.writeByte(if (cp == '\t' or cp == '\n' or cp == '\r') ' ' else '?');
-            } else try ui.out.writeAll(bytes);
+                try out.writeByte(if (cp == '\t' or cp == '\n' or cp == '\r') ' ' else '?');
+            } else try out.writeAll(bytes);
             n += 1;
         }
     }
@@ -139,6 +149,7 @@ pub const Ui = struct {
         try ui.out.writeAll("\n  ");
         try ui.safe(provider, 30);
         try ui.out.writeAll(" · automatic task routing\n\n  /help commands  /model routing  /skills instructions\n\n");
+        if (ui.tmux_feed != null) try ui.note("Bash output is in the tmux side pane. Use /out <id> to repeat recent output here.");
     }
 
     pub fn prompt(ui: Ui) !void {
@@ -319,10 +330,27 @@ pub const Ui = struct {
         }
         try ui.out.writeAll(ui.indent);
         if (std.mem.eql(u8, name, "bash")) {
+            const command = j.aliasedString(args, "cmd", "command") catch "(invalid arguments)";
+            var in_tmux = false;
+            if (track_output) if (ui.tmux_feed) |feed| {
+                if (feed.active) {
+                    ui.writeTmuxBashStart(feed, call_id, command) catch feed.disable();
+                    in_tmux = feed.active;
+                }
+            };
+            if (in_tmux) {
+                try ui.style("\x1b[1;36m");
+                if (call_id > 0) try ui.out.print("bash #{d} $ ", .{call_id}) else try ui.out.writeAll("bash $ ");
+                try ui.style("\x1b[0m");
+                try ui.safe(command, ui.width -| (16 + ui.indent.len));
+                try ui.out.writeByte('\n');
+                try ui.out.flush();
+                return call_id;
+            }
             try ui.style("\x1b[1;36m");
             if (call_id > 0) try ui.out.print("╭─ BASH #{d}  $ ", .{call_id}) else try ui.out.writeAll("╭─ BASH  $ ");
             try ui.style("\x1b[0m");
-            try ui.safe(j.aliasedString(args, "cmd", "command") catch "(invalid arguments)", ui.width -| (12 + ui.indent.len));
+            try ui.safe(command, ui.width -| (12 + ui.indent.len));
             try ui.out.writeByte('\n');
             try ui.out.flush();
             return call_id;
@@ -358,6 +386,27 @@ pub const Ui = struct {
         try ui.retainDetails(result);
         if (std.mem.eql(u8, name, "bash")) {
             try ui.retainOutput(call_id, result);
+            var in_tmux = false;
+            if (ui.tmux_feed) |feed| {
+                if (feed.active) {
+                    ui.writeTmuxBashResult(feed, call_id, result, failed, start) catch feed.disable();
+                    in_tmux = feed.active;
+                }
+            }
+            if (in_tmux) {
+                try ui.out.writeAll(ui.indent);
+                try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
+                if (call_id > 0) {
+                    try ui.out.print("  Bash #{d} · {s} · output in tmux pane · ", .{ call_id, if (failed) "failed" else "done" });
+                } else {
+                    try ui.out.print("  Bash · {s} · output in tmux pane · ", .{if (failed) "failed" else "done"});
+                }
+                try ui.elapsed(start);
+                try ui.style("\x1b[0m");
+                try ui.out.writeByte('\n');
+                try ui.out.flush();
+                return;
+            }
             var hint_buf: [32]u8 = undefined;
             const hint = if (call_id > 0) std.fmt.bufPrint(&hint_buf, "/out {d} or /verbose on", .{call_id}) catch "/details or /verbose on" else "rerun with --verbose";
             try ui.previewLimit(result, "│ ", 12, hint);
@@ -435,6 +484,45 @@ pub const Ui = struct {
     pub fn elapsed(ui: Ui, start: Io.Timestamp) !void {
         const ms = start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds();
         if (ms < 1000) try ui.out.print("{d}ms", .{ms}) else try ui.out.print("{d}.{d}s", .{ @divTrunc(ms, 1000), @divTrunc(@mod(ms, 1000), 100) });
+    }
+
+    fn writeTmuxBashStart(ui: Ui, feed: *TmuxFeed, id: usize, command: []const u8) !void {
+        var buffer: [4096]u8 = undefined;
+        var stream = feed.writer(&buffer) orelse return error.TmuxPaneClosed;
+        const out = &stream.interface;
+        try ui.styleTo(out, "\x1b[1;36m");
+        if (id > 0) try out.print("$ [{d}] ", .{id}) else try out.writeAll("$ ");
+        try ui.safeTo(out, command, std.math.maxInt(usize));
+        try ui.styleTo(out, "\x1b[0m");
+        try out.writeAll("\r\n");
+        try out.flush();
+    }
+
+    fn writeTmuxBashResult(ui: Ui, feed: *TmuxFeed, id: usize, result: []const u8, failed: bool, start: Io.Timestamp) !void {
+        var buffer: [4096]u8 = undefined;
+        var stream = feed.writer(&buffer) orelse return error.TmuxPaneClosed;
+        const out = &stream.interface;
+        try ui.styleTo(out, "\x1b[2m");
+        if (id > 0) try out.print("  output [{d}]\r\n", .{id}) else try out.writeAll("  output\r\n");
+        try ui.styleTo(out, "\x1b[0m");
+        const trimmed = std.mem.trimEnd(u8, result, "\n");
+        if (trimmed.len == 0) {
+            try out.writeAll("  (empty)\r\n");
+        } else {
+            var lines = std.mem.splitScalar(u8, trimmed, '\n');
+            while (lines.next()) |line| {
+                try out.writeAll("  │ ");
+                try ui.safeTo(out, line, std.math.maxInt(usize));
+                try out.writeAll("\r\n");
+            }
+        }
+        try ui.styleTo(out, if (failed) "\x1b[31m" else "\x1b[2m");
+        try out.writeAll(if (failed) "  ✗ failed · " else "  ✓ done · ");
+        const ms = start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds();
+        if (ms < 1000) try out.print("{d}ms", .{ms}) else try out.print("{d}.{d}s", .{ @divTrunc(ms, 1000), @divTrunc(@mod(ms, 1000), 100) });
+        try ui.styleTo(out, "\x1b[0m");
+        try out.writeAll("\r\n\r\n");
+        try out.flush();
     }
 
     pub fn usageSummary(ui: Ui, usage: Usage, label: []const u8) !void {
