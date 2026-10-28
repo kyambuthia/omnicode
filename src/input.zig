@@ -250,6 +250,12 @@ pub const Input = struct {
                 pending = 0;
                 continue;
             }
+            if (!paste and c == 15) {
+                try ui.out.writeByte('\n');
+                try ui.showLatestOutput();
+                try redrawComposer(ui, self.bytes[0..n]);
+                continue;
+            }
             if (!paste and c == 4 and n == 0) return null;
             if (!paste and (c == '\r' or c == '\n')) {
                 try ui.out.writeByte('\n');
@@ -290,6 +296,25 @@ pub const Input = struct {
         }
     }
 };
+
+fn redrawComposer(ui: Ui, line: []const u8) !void {
+    try ui.prompt();
+    const masked = masksCurrentArgument(line);
+    var lines = std.mem.splitScalar(u8, line, '\n');
+    var first = true;
+    while (lines.next()) |part| {
+        if (!first) try ui.out.writeByte('\n');
+        if (masked) {
+            for (part) |byte| if (byte & 0xc0 != 0x80) {
+                try ui.out.writeByte('*');
+            };
+        } else {
+            try ui.safe(part, std.math.maxInt(usize));
+        }
+        first = false;
+    }
+    try ui.out.flush();
+}
 
 const Token = struct { start: usize, end: usize };
 
@@ -354,7 +379,8 @@ fn masksCurrentArgument(line: []const u8) bool {
     }
 
     if (is_providers and config.resolveProvider(line[action.start..action.end]) == null) return false;
-    if (is_setup and !isSensitiveSetting(line, action)) return false;
+    if (is_setup and !isSensitiveSetting(line, action) and
+        config.resolveProvider(line[action.start..action.end]) == null) return false;
     const value_start = afterToken(line, action.end) orelse return false;
     return line.len > value_start;
 }
@@ -363,6 +389,15 @@ fn isSensitiveSetting(line: []const u8, token: Token) bool {
     const name = config.resolveKeyName(line[token.start..token.end]) orelse return false;
     return std.mem.endsWith(u8, name, "_KEY") or std.mem.eql(u8, name, "API_URL") or
         std.mem.eql(u8, name, "VOICE_URL") or std.mem.eql(u8, name, "MODELS_URL");
+}
+
+test "interactive provider-key arguments are masked without hiding ordinary settings" {
+    try std.testing.expect(masksCurrentArgument("/setup openrouter sk-or-secret"));
+    try std.testing.expect(masksCurrentArgument("/setup anthropic sk-ant-secret"));
+    try std.testing.expect(masksCurrentArgument("/providers deepseek ds-secret"));
+    try std.testing.expect(masksCurrentArgument("/provider xai xai-secret"));
+    try std.testing.expect(!masksCurrentArgument("/setup set PROVIDER openrouter"));
+    try std.testing.expect(!masksCurrentArgument("/providers openrouter"));
 }
 
 test "input history records unique single-line entries and bounds capacity" {

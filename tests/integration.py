@@ -613,9 +613,9 @@ class Integration(unittest.TestCase):
             read_until(b"initial complete")
             wait_for_request_count(2)
             pane_output = capture_pane()
-            self.assertIn("/out repeats latest", pane_output)
-            self.assertIn("/out list indexes", pane_output)
-            self.assertIn("/out #<id> reads full", pane_output)
+            self.assertIn("Ctrl+O latest", pane_output)
+            self.assertIn("/out list", pane_output)
+            self.assertIn("/out #<id> full", pane_output)
             self.assertRegex(pane_output, r"LIVE_MARKER_[0-9]+")
             self.assertRegex(output, rb"LIVE_MARKER_[0-9]+")
             self.assertIn(b"/out #1 full", output)
@@ -655,6 +655,78 @@ class Integration(unittest.TestCase):
                 process.kill()
                 process.wait()
             os.close(master)
+
+    def test_ctrl_o_replays_latest_bash_output_and_restores_prompt_draft(self):
+        self.env.update(TERM="xterm-256color", COLUMNS="80")
+        self.env.pop("NO_COLOR", None)
+        self.reply = lambda _: tools(call("bash", {"cmd": "printf 'shortcut-output\\n'"})) if len(self.requests) == 1 else text("finished response")
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        original = termios.tcgetattr(slave)
+        process = subprocess.Popen([str(BINARY)], stdin=slave, stdout=slave, stderr=slave,
+                                   cwd=self.cwd, env=self.env)
+        output = bytearray()
+
+        def read_until(marker, start=0, timeout=10):
+            deadline = time.monotonic() + timeout
+            while marker not in output[start:]:
+                if process.poll() is not None:
+                    self.fail(f"Omnicode exited before {marker!r}: {output.decode(errors='replace')}")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.fail(f"Timed out waiting for {marker!r}: {output.decode(errors='replace')}")
+                ready, _, _ = select.select([master], [], [], min(0.05, remaining))
+                if ready:
+                    try:
+                        output.extend(os.read(master, 4096))
+                    except OSError:
+                        self.fail(f"Terminal closed before {marker!r}: {output.decode(errors='replace')}")
+
+        try:
+            read_until(b"\x1b[?2004h")
+            self.assertFalse(termios.tcgetattr(slave)[3] & termios.ICANON)
+            os.write(master, b"run a command\r")
+            read_until(b"finished response")
+            idle_start = len(output)
+            read_until(b"\x1b[?2004h", idle_start)
+
+            output.clear()
+            os.write(master, b"draft")
+            read_until(b"draft")
+            output.clear()
+            os.write(master, b"\x0f")
+            read_until(b"shortcut-output")
+            result_start = output.index(b"shortcut-output")
+            read_until(b"draft", result_start)
+            self.assertIn(b"BASH output #1", output)
+
+            os.write(master, b"\x03")
+            read_until(b"^C")
+            idle_start = len(output)
+            read_until(b"\x1b[?2004h", idle_start)
+            os.write(master, b"/setup openrouter very-secret-marker")
+            read_until(b"***********")
+            output.clear()
+            os.write(master, b"\x0f")
+            read_until(b"shortcut-output")
+            self.assertNotIn(b"very-secret-marker", output)
+            self.assertIn(b"***********", output)
+
+            os.write(master, b"\x03")
+            read_until(b"^C")
+            idle_start = len(output)
+            read_until(b"\x1b[?2004h", idle_start)
+            os.write(master, b"/q\r")
+            process.wait(timeout=10)
+            self.assertEqual(process.returncode, 0, output.decode(errors="replace"))
+            self.assertEqual(termios.tcgetattr(slave), original)
+            self.assertEqual(len(self.requests), 2)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+            os.close(slave)
 
     def run_agent(self, *args, stdin=None):
         return subprocess.run([str(BINARY), *args], input=stdin, text=True,

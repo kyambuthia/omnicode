@@ -8,6 +8,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Fixed
 
+- Interactive `/setup <provider> <key>` input now masks the credential while typing and while restoring a prompt draft.
 - Pinned model overrides continue to work after tool-enabled turns and request cleanup.
 - Bare `/out` repeats the latest Bash command, status, duration, and output; numbered lookup remains available.
 - Voice prompts now remain valid across model turns and are securely cleared after use.
@@ -131,6 +132,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Added
 
+- `Ctrl+O` prints the latest retained Bash result inline and restores the current prompt draft.
 - tmux sessions show a compact Bash-result preview in the main feed while the side pane keeps the live stream; `/out` replays full output.
 - `/out list` indexes recent Bash calls by command, status, and duration for full-output replay.
 - Interactive feed labels model replies and tool output separately, with elapsed time on the output header.

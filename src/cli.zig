@@ -43,7 +43,8 @@ pub const help =
     \\  /resume [name]         Resume saved session (default: latest)
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /out [call-id|list]    Show Bash output or list recent calls
-    \\  tmux Bash pane          Opens beside the feed in interactive sessions ≥100 columns wide
+    \\  Ctrl+O                Show latest Bash output and return to the current prompt
+    \\  tmux Bash pane         Opens beside the feed in interactive sessions ≥100 columns wide
     \\  /diff                  Show bounded, redacted git status and tracked diff
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
