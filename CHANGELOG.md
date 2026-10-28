@@ -132,6 +132,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Added
 
+- Enter `/` or `/commands` to browse the REPL command index without calling a model.
 - `/help <topic>` searches command help case-insensitively instead of printing the full help page.
 - `/tmux on|off` controls the live Bash pane; an explicit off choice stays off across terminal resizes for the session.
 - `Ctrl+O` prints the latest retained Bash result inline and restores the current prompt draft.

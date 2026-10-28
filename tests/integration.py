@@ -2057,6 +2057,16 @@ class Integration(unittest.TestCase):
         self.assertIn("No help entries match that topic.", result.stdout)
         self.assertEqual(self.requests, [])
 
+    def test_slash_browses_only_repl_commands_without_a_model_request(self):
+        result = self.run_agent(stdin="/\n/commands\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("Interactive commands"), 2)
+        self.assertIn("/tmux [status|on|off]", result.stdout)
+        self.assertIn("Ctrl+O", result.stdout)
+        self.assertNotIn("--free", result.stdout)
+        self.assertNotIn("Config:", result.stdout)
+        self.assertEqual(self.requests, [])
+
     def test_retained_details_replace_and_sanitize(self):
         self.reply = lambda _: tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\nlast\\033[2J'"})) if len(self.requests) == 1 else text()
         result = self.run_agent(stdin="/details\nlist files\n/details\n/q\n")

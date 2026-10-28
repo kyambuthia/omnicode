@@ -17,6 +17,7 @@ pub const help =
     \\--json                    Emit one JSON object for a one-shot task; progress goes to stderr
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
+    \\  /, /commands          Browse interactive commands
     \\  /help [topic]          Show all commands or search help by topic
     \\  /providers [...]       List, switch, or configure providers & API keys (/providers <N|name> [key])
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
@@ -53,6 +54,14 @@ pub const help =
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
 ;
+
+/// Return the interactive command section without CLI options and configuration notes.
+pub fn replCommandHelp() []const u8 {
+    const marker = "REPL commands:\n";
+    const start = (std.mem.indexOf(u8, help, marker) orelse return help) + marker.len;
+    const length = std.mem.indexOf(u8, help[start..], "\nConfig:") orelse return help[start..];
+    return help[start .. start + length];
+}
 
 /// Return help lines containing a case-insensitive topic. The caller owns the result.
 pub fn searchHelp(a: std.mem.Allocator, topic: []const u8) ![]const u8 {

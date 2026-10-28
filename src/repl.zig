@@ -371,6 +371,11 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             });
             continue;
         }
+        if (std.mem.eql(u8, line, "/") or std.mem.eql(u8, line, "/commands")) {
+            try out.writeAll("\nInteractive commands\n");
+            try out.writeAll(cli.replCommandHelp());
+            continue;
+        }
         if (std.mem.eql(u8, line, "/help") or std.mem.startsWith(u8, line, "/help ")) {
             const topic = if (line.len > 5) std.mem.trim(u8, line[5..], " \t") else "";
             if (topic.len == 0) {
