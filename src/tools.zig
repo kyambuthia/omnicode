@@ -515,6 +515,7 @@ const LiveBashOutput = struct {
     feed: *TmuxFeed,
     lines: [2][]u8,
     line_lens: [2]usize = .{ 0, 0 },
+    pending_cr: [2]bool = .{ false, false },
     finished: [2]bool = .{ false, false },
     failed: bool = false,
 
@@ -546,17 +547,30 @@ const LiveBashOutput = struct {
 
     fn receive(live: *LiveBashOutput, stream: usize, bytes: []const u8) !void {
         if (live.failed or !live.feed.active or stream >= live.lines.len) return;
-        var offset: usize = 0;
-        while (offset < bytes.len) {
-            const newline = std.mem.indexOfScalar(u8, bytes[offset..], '\n');
-            const count = if (newline) |index| index + 1 else bytes.len - offset;
-            const current_len = live.line_lens[stream];
-            if (count > live.lines[stream].len - current_len) return error.LiveLineTooLong;
-            @memcpy(live.lines[stream][current_len .. current_len + count], bytes[offset .. offset + count]);
-            live.line_lens[stream] += count;
-            offset += count;
-            if (newline != null) try live.emitLine(stream);
+        for (bytes) |byte| {
+            if (live.pending_cr[stream]) {
+                live.pending_cr[stream] = false;
+                if (byte == '\n') {
+                    try live.appendByte(stream, byte);
+                    try live.emitLine(stream);
+                    continue;
+                }
+                std.crypto.secureZero(u8, live.lines[stream][0..live.line_lens[stream]]);
+                live.line_lens[stream] = 0;
+            }
+            if (byte == '\r') {
+                live.pending_cr[stream] = true;
+                continue;
+            }
+            try live.appendByte(stream, byte);
+            if (byte == '\n') try live.emitLine(stream);
         }
+    }
+
+    fn appendByte(live: *LiveBashOutput, stream: usize, byte: u8) !void {
+        if (live.line_lens[stream] == live.lines[stream].len) return error.LiveLineTooLong;
+        live.lines[stream][live.line_lens[stream]] = byte;
+        live.line_lens[stream] += 1;
     }
 
     fn emitLine(live: *LiveBashOutput, stream: usize) !void {
@@ -580,6 +594,7 @@ const LiveBashOutput = struct {
         const live: *LiveBashOutput = @ptrCast(@alignCast(context));
         if (stream >= live.lines.len or live.finished[stream]) return;
         live.finished[stream] = true;
+        live.pending_cr[stream] = false;
         if (complete and live.line_lens[stream] > 0 and !live.failed) {
             live.emitLine(stream) catch {
                 live.failed = true;
