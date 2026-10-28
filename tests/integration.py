@@ -675,10 +675,18 @@ class Integration(unittest.TestCase):
                 process.wait()
             os.close(master)
 
-    def test_ctrl_o_replays_latest_bash_output_and_restores_prompt_draft(self):
+    def test_ctrl_o_replays_latest_tool_output_and_restores_prompt_draft(self):
         self.env.update(TERM="xterm-256color", COLUMNS="80")
         self.env.pop("NO_COLOR", None)
-        self.reply = lambda _: tools(call("bash", {"cmd": "printf 'shortcut-output\\n'"})) if len(self.requests) == 1 else text("finished response")
+        (self.cwd / "shortcut.txt").write_text("shortcut-tool-output\n")
+
+        def reply(_):
+            if len(self.requests) == 1:
+                return tools(call("bash", {"cmd": "printf 'shortcut-bash-output\\n'"}, "bash"),
+                             call("read", {"path": "shortcut.txt"}, "read"))
+            return text("finished response")
+
+        self.reply = reply
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         original = termios.tcgetattr(slave)
@@ -701,40 +709,44 @@ class Integration(unittest.TestCase):
                     except OSError:
                         self.fail(f"Terminal closed before {marker!r}: {output.decode(errors='replace')}")
 
+        def wait_for_prompt_after(marker):
+            start = output.rfind(marker) + len(marker)
+            if b"\x1b[?2004h" not in output[start:]:
+                read_until(b"\x1b[?2004h", start)
+
         try:
             read_until(b"\x1b[?2004h")
             self.assertFalse(termios.tcgetattr(slave)[3] & termios.ICANON)
             os.write(master, b"run a command\r")
             read_until(b"finished response")
-            idle_start = len(output)
-            read_until(b"\x1b[?2004h", idle_start)
+            wait_for_prompt_after(b"finished response")
 
             output.clear()
             os.write(master, b"draft")
             read_until(b"draft")
             output.clear()
             os.write(master, b"\x0f")
-            read_until(b"shortcut-output")
-            result_start = output.index(b"shortcut-output")
+            read_until(b"shortcut-tool-output")
+            result_start = output.index(b"shortcut-tool-output")
             read_until(b"draft", result_start)
-            self.assertIn(b"BASH output #1", output)
+            self.assertIn(b"TOOL #2", output)
+            self.assertIn(b"read", output)
 
             os.write(master, b"\x03")
             read_until(b"^C")
-            idle_start = len(output)
-            read_until(b"\x1b[?2004h", idle_start)
+            wait_for_prompt_after(b"^C")
             os.write(master, b"/setup openrouter very-secret-marker")
             read_until(b"***********")
             output.clear()
             os.write(master, b"\x0f")
-            read_until(b"shortcut-output")
+            read_until(b"shortcut-tool-output")
+            read_until(b"***********", output.index(b"shortcut-tool-output"))
             self.assertNotIn(b"very-secret-marker", output)
             self.assertIn(b"***********", output)
 
             os.write(master, b"\x03")
             read_until(b"^C")
-            idle_start = len(output)
-            read_until(b"\x1b[?2004h", idle_start)
+            wait_for_prompt_after(b"^C")
             os.write(master, b"/q\r")
             process.wait(timeout=10)
             self.assertEqual(process.returncode, 0, output.decode(errors="replace"))
