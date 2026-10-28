@@ -140,9 +140,13 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         }
         if (std.mem.eql(u8, line, "/out") or std.mem.startsWith(u8, line, "/out ")) {
             const raw = if (line.len > 5) std.mem.trim(u8, line[5..], " \t") else "";
+            if (raw.len == 0) {
+                try ui.showLatestOutput();
+                continue;
+            }
             const id_text = if (std.mem.startsWith(u8, raw, "#")) raw[1..] else raw;
             const id = std.fmt.parseInt(usize, id_text, 10) catch {
-                try ui.note("usage: /out <call-id> (for example: /out 3)");
+                try ui.note("usage: /out [call-id] (bare /out repeats the latest result)");
                 continue;
             };
             try ui.showOutput(id);

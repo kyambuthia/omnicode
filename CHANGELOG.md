@@ -8,6 +8,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Fixed
 
+- Bare `/out` now repeats the latest retained Bash result; numbered output lookup remains available.
 - Voice prompts now remain valid across model turns and are securely cleared after use.
 - Commands that produce non-UTF-8 output now return an explicit tool error
   when that output is omitted.

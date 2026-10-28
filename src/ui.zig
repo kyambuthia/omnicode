@@ -23,6 +23,7 @@ pub const Details = struct {
     truncated: bool = false,
     outputs: [output_count]Output = [_]Output{ .{}, .{}, .{}, .{} },
     next_output_id: usize = 1,
+    latest_output_id: usize = 0,
 
     pub fn beginOutput(self: *Details) usize {
         const id = self.next_output_id;
@@ -41,6 +42,7 @@ pub const Details = struct {
         @memcpy(output.bytes[0..output.len], text[0..output.len]);
         output.present = true;
         output.truncated = output.len < text.len;
+        self.latest_output_id = id;
     }
 
     pub fn findOutput(self: *const Details, id: usize) ?*const Output {
@@ -48,6 +50,11 @@ pub const Details = struct {
             if (output.present and output.id == id) return output;
         }
         return null;
+    }
+
+    pub fn latestOutput(self: *const Details) ?*const Output {
+        if (self.latest_output_id == 0) return null;
+        return self.findOutput(self.latest_output_id);
     }
 
     pub fn save(self: *Details, text: []const u8) void {
@@ -64,6 +71,7 @@ pub const Details = struct {
         self.len = 0;
         self.present = false;
         self.truncated = false;
+        self.latest_output_id = 0;
         for (&self.outputs) |*output| {
             std.crypto.secureZero(u8, output.bytes[0..]);
             output.id = 0;
@@ -150,7 +158,7 @@ pub const Ui = struct {
         try ui.safe(provider, 30);
         try ui.out.writeAll(" · automatic task routing\n\n  /help commands  /model routing  /skills instructions\n\n");
         if (ui.tmux_feed) |feed| {
-            if (feed.active) try ui.note("Bash output is in the tmux side pane. Use /out <id> to repeat recent output here.");
+            if (feed.active) try ui.note("Bash output is in the tmux side pane. Use /out to repeat the latest result here.");
         } else if (ui.env) |env| {
             if (env.get("TMUX_PANE") != null and ui.width >= 100) try ui.note("Could not open a tmux Bash pane; Bash output will stay in the feed.");
         }
@@ -411,8 +419,7 @@ pub const Ui = struct {
                 try ui.out.flush();
                 return;
             }
-            var hint_buf: [32]u8 = undefined;
-            const hint = if (call_id > 0) std.fmt.bufPrint(&hint_buf, "/out {d} or /verbose on", .{call_id}) catch "/details or /verbose on" else "rerun with --verbose";
+            const hint = if (call_id > 0) "/out or /verbose on" else "rerun with --verbose";
             try ui.previewLimit(result, "│ ", 12, hint);
             try ui.out.writeAll(ui.indent);
             try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
@@ -483,6 +490,12 @@ pub const Ui = struct {
         try full.preview(output.bytes[0..output.len], "│ ");
         try ui.out.writeAll("╰─ end\n");
         if (output.truncated) try ui.note("Output exceeds the retained 64 KiB limit; showing the prefix.");
+    }
+
+    pub fn showLatestOutput(ui: Ui) !void {
+        const details = ui.details orelse return ui.note("No retained Bash output.");
+        const output = details.latestOutput() orelse return ui.note("No retained Bash output.");
+        try ui.showOutput(output.id);
     }
 
     pub fn elapsed(ui: Ui, start: Io.Timestamp) !void {
@@ -619,6 +632,17 @@ test "details bound memory, truncate UTF-8 safely, and evict the previous result
     details.save("replacement");
     try std.testing.expectEqualStrings("replacement", details.bytes[0..details.len]);
     try std.testing.expect(!details.truncated);
+}
+
+test "latest Bash output follows the newest saved call and clears with details" {
+    var details: Details = .{};
+    details.saveOutput(1, "first");
+    const first = details.latestOutput().?;
+    try std.testing.expectEqualStrings("first", first.bytes[0..first.len]);
+    details.saveOutput(2, "second");
+    try std.testing.expectEqual(2, details.latestOutput().?.id);
+    details.clear();
+    try std.testing.expect(details.latestOutput() == null);
 }
 
 test "Markdown headings respect fences and plain output preserves the source" {
