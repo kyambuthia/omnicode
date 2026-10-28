@@ -211,7 +211,7 @@ class Integration(unittest.TestCase):
         self.reply = reply
         result = self.run_agent(stdin=(
             f"inspect project\n/secrets set TOKEN {secret}\n"
-            "/secrets unset TOKEN\n/save retained\n/details\n/q\n"
+            "/secrets unset TOKEN\n/save retained\n/details\n/out\n/q\n"
         ))
         self.assertEqual(result.returncode, 0, result.stderr)
         snapshot = json.loads((self.cwd / ".omnicode/sessions/retained.json").read_text())
@@ -2079,7 +2079,7 @@ class Integration(unittest.TestCase):
         self.reply = reply
         result = self.run_agent(stdin="read both files\n/details list\n/details 1\n/details #2\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Recent tool outputs", result.stdout)
+        self.assertIn("\nRecent outputs\n", result.stdout)
         self.assertIn("#1 · read", result.stdout)
         self.assertIn("#2 · read", result.stdout)
         self.assertIn("TOOL #1 · read", result.stdout)
@@ -2100,7 +2100,7 @@ class Integration(unittest.TestCase):
         self.reply = reply
         result = self.run_agent(stdin="run both tools\n/details list\n/details 1\n/details #2\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
-        listing = result.stdout.split("Recent tool outputs", 1)[-1].split("Use /details", 1)[0]
+        listing = result.stdout.split("\nRecent outputs\n", 1)[-1].split("Use /details", 1)[0]
         self.assertIn("#2 · read", listing, listing)
         self.assertIn("#1 · BASH", listing, listing)
         self.assertLess(listing.index("#2 · read"), listing.index("#1 · BASH"))
@@ -2128,18 +2128,20 @@ class Integration(unittest.TestCase):
             if len(self.requests) == 1:
                 return tools(call("read", {"path": "secret.txt"}, "read"),
                              call("bash", {"cmd": "printf latest-bash-marker"}, "bash"))
-            return text("finished")
+            return text(secret)
 
         self.reply = reply
         result = self.run_agent(stdin=f"read then run bash\n/secrets set TOKEN {secret}\n/details\n/details list\n/details #1\n/details #2\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         after_secret = result.stdout.split("Stored secret TOKEN", 1)[-1]
-        latest = after_secret.split("Recent tool outputs", 1)[0]
-        self.assertIn("BASH output #2", latest)
-        self.assertIn("latest-bash-marker", latest)
-        listing = after_secret.split("Recent tool outputs", 1)[-1].split("Use /details", 1)[0]
+        latest = after_secret.split("\nRecent outputs\n", 1)[0]
+        self.assertIn("╭─ MODEL #3", latest)
+        self.assertIn("[REDACTED:TOKEN]", latest)
+        listing = after_secret.split("\nRecent outputs\n", 1)[-1].split("Use /details", 1)[0]
         self.assertIn("#2 · BASH", listing)
+        self.assertIn("#3 · MODEL", listing)
         self.assertIn("$ printf latest-bash-marker", listing)
+        self.assertIn("BASH output #2", after_secret)
         self.assertIn("[REDACTED:TOKEN]", after_secret)
         self.assertNotIn(secret, after_secret)
 
@@ -2173,9 +2175,10 @@ class Integration(unittest.TestCase):
 
     def test_latest_output_replay_sanitizes_terminal_controls(self):
         self.reply = lambda _: tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\nlast\\033[2J'"})) if len(self.requests) == 1 else text()
-        result = self.run_agent(stdin="/details\nlist files\n/details\n/q\n")
+        result = self.run_agent(stdin="/details\nlist files\n/details\n/out\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("No retained tool output", result.stdout)
+        self.assertIn("No retained output", result.stdout)
+        self.assertIn("╭─ MODEL #2", result.stdout)
         self.assertIn("BASH output #1", result.stdout)
         self.assertIn("    │ 4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
@@ -2442,7 +2445,7 @@ class Integration(unittest.TestCase):
                     self.assertEqual(len(self.requests), 1)
                     output.clear()
                     os.write(master, b"\x0f")
-                    until(b"No retained tool output.")
+                    until("╭─ MODEL #1".encode())
                     until(b"manual first")
                     until("  … ".encode())
                     os.write(master, b"manual second\r")

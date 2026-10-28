@@ -5,12 +5,14 @@ const Usage = @import("usage.zig").Usage;
 const status_line = @import("status.zig");
 const TmuxFeed = @import("tmux.zig").Feed;
 
-/// The latest tool result plus small recent Bash and tool-output rings, bounded independently of history.
+/// Recent model, Bash, and tool output rings, bounded independently of history.
 pub const Details = struct {
     pub const output_count = 4;
     pub const command_limit = 2048;
     pub const tool_output_count = 4;
     pub const tool_output_limit = 32 * 1024;
+    pub const model_output_count = 4;
+    pub const model_output_limit = 32 * 1024;
     pub const tool_name_limit = 32;
     pub const tool_summary_limit = 512;
 
@@ -43,6 +45,14 @@ pub const Details = struct {
         elapsed_ms: u64 = 0,
     };
 
+    pub const ModelOutput = struct {
+        id: usize = 0,
+        bytes: [model_output_limit]u8 = undefined,
+        len: usize = 0,
+        present: bool = false,
+        truncated: bool = false,
+    };
+
     bytes: [64 * 1024]u8 = undefined,
     len: usize = 0,
     present: bool = false,
@@ -52,6 +62,8 @@ pub const Details = struct {
     latest_output_id: usize = 0,
     tool_outputs: [tool_output_count]ToolOutput = [_]ToolOutput{ .{}, .{}, .{}, .{} },
     latest_tool_output_id: usize = 0,
+    model_outputs: [model_output_count]ModelOutput = [_]ModelOutput{ .{}, .{}, .{}, .{} },
+    latest_model_output_id: usize = 0,
     latest_result_id: usize = 0,
     replay_anchor_id: usize = 0,
     replay_cursor_id: usize = 0,
@@ -124,6 +136,37 @@ pub const Details = struct {
         return self.beginOutput();
     }
 
+    pub fn beginModelOutput(self: *Details) usize {
+        return self.beginOutput();
+    }
+
+    pub fn saveModelOutput(self: *Details, id: usize, text: []const u8) void {
+        if (id == 0) return;
+        const output = &self.model_outputs[id % model_output_count];
+        std.crypto.secureZero(u8, output.bytes[0..]);
+        output.id = id;
+        output.len = @min(text.len, output.bytes.len);
+        while (output.len > 0 and !std.unicode.utf8ValidateSlice(text[0..output.len])) output.len -= 1;
+        @memcpy(output.bytes[0..output.len], text[0..output.len]);
+        output.present = true;
+        output.truncated = output.len < text.len;
+        self.latest_model_output_id = id;
+    }
+
+    pub fn findModelOutput(self: *const Details, id: usize) ?*const ModelOutput {
+        for (&self.model_outputs) |*output| {
+            if (output.present and output.id == id) return output;
+        }
+        return null;
+    }
+
+    pub fn findModelOutputMutable(self: *Details, id: usize) ?*ModelOutput {
+        for (&self.model_outputs) |*output| {
+            if (output.present and output.id == id) return output;
+        }
+        return null;
+    }
+
     pub fn saveToolOutput(self: *Details, id: usize, name: []const u8, summary: []const u8, text: []const u8) void {
         if (id == 0) return;
         const output = &self.tool_outputs[id % tool_output_count];
@@ -183,7 +226,7 @@ pub const Details = struct {
     }
 
     pub fn nextReplayResult(self: *Details) ?usize {
-        const latest = self.latest_result_id;
+        const latest = if (self.latest_result_id > 0) self.latest_result_id else self.latest_model_output_id;
         if (latest == 0) return null;
         if (self.replay_anchor_id != latest or self.replay_cursor_id == 0) {
             self.replay_anchor_id = latest;
@@ -196,6 +239,9 @@ pub const Details = struct {
             if (output.present and output.id < self.replay_cursor_id and (previous == null or output.id > previous.?)) previous = output.id;
         }
         for (&self.tool_outputs) |*output| {
+            if (output.present and output.id < self.replay_cursor_id and (previous == null or output.id > previous.?)) previous = output.id;
+        }
+        for (&self.model_outputs) |*output| {
             if (output.present and output.id < self.replay_cursor_id and (previous == null or output.id > previous.?)) previous = output.id;
         }
         self.replay_cursor_id = previous orelse self.replay_anchor_id;
@@ -218,6 +264,7 @@ pub const Details = struct {
         self.truncated = false;
         self.latest_output_id = 0;
         self.latest_tool_output_id = 0;
+        self.latest_model_output_id = 0;
         self.latest_result_id = 0;
         self.resetReplayCycle();
         for (&self.outputs) |*output| {
@@ -246,6 +293,13 @@ pub const Details = struct {
             output.summary_truncated = false;
             output.failed = false;
             output.elapsed_ms = 0;
+        }
+        for (&self.model_outputs) |*output| {
+            std.crypto.secureZero(u8, output.bytes[0..]);
+            output.id = 0;
+            output.len = 0;
+            output.present = false;
+            output.truncated = false;
         }
     }
 };
@@ -456,9 +510,19 @@ pub const Ui = struct {
     }
 
     pub fn message(ui: Ui, text: []const u8) !void {
+        const id = if (ui.details) |details| details.beginModelOutput() else 0;
+        if (id > 0) try ui.retainModelOutput(id, text);
+        try ui.renderModelMessage(text, id);
+    }
+
+    fn renderModelMessage(ui: Ui, text: []const u8, id: usize) !void {
         try ui.style("\x1b[1;35m");
-        try ui.out.writeAll("\n◆ MODEL\n");
+        if (id > 0) try ui.out.print("\n◆ MODEL #{d}\n", .{id}) else try ui.out.writeAll("\n◆ MODEL\n");
         try ui.style("\x1b[0m");
+        try ui.renderModelBody(text);
+    }
+
+    fn renderModelBody(ui: Ui, text: []const u8) !void {
         var lines = std.mem.splitScalar(u8, text, '\n');
         var fence: usize = 0;
         while (lines.next()) |line| {
@@ -697,6 +761,16 @@ pub const Ui = struct {
         details.saveToolOutput(id, safe_name, safe_summary, safe_text);
     }
 
+    pub fn retainModelOutput(ui: Ui, id: usize, text: []const u8) !void {
+        if (id == 0) return;
+        const details = ui.details orelse return;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const safe_text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), text, ui.env) else text;
+        defer if (safe_text.ptr != text.ptr) std.crypto.secureZero(u8, @constCast(safe_text));
+        details.saveModelOutput(id, safe_text);
+    }
+
     pub fn retainOutput(ui: Ui, id: usize, text: []const u8) !void {
         const details = ui.details orelse return;
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -727,23 +801,40 @@ pub const Ui = struct {
     }
 
     pub fn showLatestResult(ui: Ui) !void {
-        const details = ui.details orelse return ui.note("No retained tool output.");
-        if (details.latest_result_id == 0) return ui.note("No retained tool output.");
-        try ui.showResult(details.latest_result_id);
+        const details = ui.details orelse return ui.note("No retained output.");
+        const latest_id = @max(details.latest_result_id, details.latest_model_output_id);
+        if (latest_id == 0) return ui.note("No retained output.");
+        try ui.showResult(latest_id);
     }
 
     pub fn showNextResult(ui: Ui) !void {
-        const details = ui.details orelse return ui.note("No retained tool output.");
-        const id = details.nextReplayResult() orelse return ui.note("No retained tool output.");
+        const details = ui.details orelse return ui.note("No retained output.");
+        const id = details.nextReplayResult() orelse return ui.note("No retained output.");
         try ui.showResult(id);
     }
 
     pub fn showResult(ui: Ui, id: usize) !void {
-        const details = ui.details orelse return ui.note("No retained tool output.");
+        const details = ui.details orelse return ui.note("No retained output.");
         if (details.findOutput(id) != null) return ui.showOutput(id);
         if (details.findToolOutput(id) != null) return ui.showToolOutput(id);
+        if (details.findModelOutput(id) != null) return ui.showModelOutput(id);
         var note_buf: [128]u8 = undefined;
-        try ui.note(std.fmt.bufPrint(&note_buf, "No retained tool output for #{d}; recent results are kept separately by type.", .{id}) catch "No retained tool output for that call.");
+        try ui.note(std.fmt.bufPrint(&note_buf, "No retained output for #{d}; recent outputs are kept separately by type.", .{id}) catch "No retained output for that call.");
+    }
+
+    pub fn showModelOutput(ui: Ui, id: usize) !void {
+        const details = ui.details orelse return ui.note("No retained model output.");
+        const output = details.findModelOutput(id) orelse {
+            var note_buf: [128]u8 = undefined;
+            try ui.note(std.fmt.bufPrint(&note_buf, "No retained model output for #{d}; the most recent {d} messages are kept.", .{ id, Details.model_output_count }) catch "No retained model output for that message.");
+            return;
+        };
+        try ui.out.print("\n╭─ MODEL #{d}\n", .{output.id});
+        var full = ui;
+        full.verbose = true;
+        try full.renderModelBody(output.bytes[0..output.len]);
+        try ui.out.writeAll("╰─ end\n");
+        if (output.truncated) try ui.note("Model output exceeds the retained 32 KiB limit; showing the prefix.");
     }
 
     pub fn showToolOutput(ui: Ui, id: usize) !void {
@@ -776,8 +867,8 @@ pub const Ui = struct {
     }
 
     pub fn showRecentOutputs(ui: Ui) !void {
-        const details = ui.details orelse return ui.note("No retained tool results.");
-        var ids: [Details.output_count + Details.tool_output_count]usize = undefined;
+        const details = ui.details orelse return ui.note("No retained outputs.");
+        var ids: [Details.output_count + Details.tool_output_count + Details.model_output_count]usize = undefined;
         var count: usize = 0;
         for (&details.outputs) |*output| {
             if (!output.present) continue;
@@ -789,7 +880,12 @@ pub const Ui = struct {
             ids[count] = output.id;
             count += 1;
         }
-        if (count == 0) return ui.note("No retained tool outputs.");
+        for (&details.model_outputs) |*output| {
+            if (!output.present) continue;
+            ids[count] = output.id;
+            count += 1;
+        }
+        if (count == 0) return ui.note("No retained outputs.");
         for (1..count) |index| {
             const value = ids[index];
             var position = index;
@@ -799,7 +895,7 @@ pub const Ui = struct {
             ids[position] = value;
         }
 
-        try ui.out.writeAll("\nRecent tool outputs\n");
+        try ui.out.writeAll("\nRecent outputs\n");
         for (ids[0..count]) |id| {
             if (details.findOutput(id)) |output| {
                 try ui.out.writeAll("  #");
@@ -828,6 +924,22 @@ pub const Ui = struct {
                     try ui.out.writeAll("  ");
                     try ui.safe(output.summary[0..output.summary_len], ui.width -| 48);
                     if (output.summary_truncated) try ui.out.writeAll("...");
+                }
+                try ui.out.writeByte('\n');
+            } else if (details.findModelOutput(id)) |output| {
+                try ui.out.writeAll("  #");
+                try ui.out.print("{d} · ", .{output.id});
+                try ui.style("\x1b[1;35m");
+                try ui.out.writeAll("MODEL");
+                try ui.style("\x1b[0m");
+                const text = output.bytes[0..output.len];
+                const line_count = std.mem.count(u8, text, "\n") + @intFromBool(text.len > 0 and text[text.len - 1] != '\n');
+                try ui.out.print(" · {d} lines", .{line_count});
+                if (output.truncated) try ui.out.writeAll(" · truncated");
+                const first_line = std.mem.trim(u8, if (std.mem.indexOfScalar(u8, text, '\n')) |newline| text[0..newline] else text, " \t\r");
+                if (first_line.len > 0) {
+                    try ui.out.writeAll("  ");
+                    try ui.safe(first_line, ui.width -| 48);
                 }
                 try ui.out.writeByte('\n');
             }
@@ -1114,6 +1226,72 @@ test "recent tool results list in reverse order and replay by id" {
     try std.testing.expect(newest < older);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "TOOL #1 · read · ✓ Done · 125ms") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "alpha contents") != null);
+}
+
+test "model messages join the output timeline and can be replayed by id" {
+    var details: Details = .{};
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details };
+
+    try ui.message("A model answer\nwith a second line");
+    const model_id = details.latest_model_output_id;
+    const bash_id = details.beginOutput();
+    details.saveOutput(bash_id, "shell output");
+    details.finishOutput(bash_id, false, 12);
+    const tool_id = details.beginToolOutput();
+    details.saveToolOutput(tool_id, "read", "main.zig", "tool output");
+    details.finishToolOutput(tool_id, false, 20);
+    try ui.message("A later model answer");
+
+    try ui.showLatestResult();
+    try ui.showRecentOutputs();
+    try ui.showResult(model_id);
+    const rendered = output.written();
+    const latest_model = std.mem.indexOf(u8, rendered, "#4 · MODEL · 1 lines  A later model answer").?;
+    const tool = std.mem.indexOf(u8, rendered, "#3 · read · ✓ Done · 20ms  main.zig").?;
+    const bash = std.mem.indexOf(u8, rendered, "#2 · BASH").?;
+    const first_model = std.mem.indexOf(u8, rendered, "#1 · MODEL · 2 lines  A model answer").?;
+    try std.testing.expect(latest_model < tool);
+    try std.testing.expect(tool < bash);
+    try std.testing.expect(bash < first_model);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "╭─ MODEL #1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "with a second line") != null);
+}
+
+test "retained model output is secret scrubbed" {
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "model-secret-554");
+    var details: Details = .{};
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details, .secrets = &secrets };
+
+    try ui.message("Answer contains model-secret-554");
+    const id = details.latest_model_output_id;
+    try ui.showResult(id);
+
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "[REDACTED:TOKEN]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "model-secret-554") == null);
+    try std.testing.expectEqualStrings("Answer contains [REDACTED:TOKEN]", details.findModelOutput(id).?.bytes[0..details.findModelOutput(id).?.len]);
+}
+
+test "model output retention is bounded, evicts old entries, and clears" {
+    var details: Details = .{};
+    var large: [Details.model_output_limit + 8]u8 = undefined;
+    @memset(&large, 'x');
+    const first = details.beginModelOutput();
+    details.saveModelOutput(first, &large);
+    try std.testing.expect(details.findModelOutput(first).?.truncated);
+    try std.testing.expectEqual(Details.model_output_limit, details.findModelOutput(first).?.len);
+    for (0..Details.model_output_count) |_| {
+        const id = details.beginModelOutput();
+        details.saveModelOutput(id, "recent");
+    }
+    try std.testing.expect(details.findModelOutput(first) == null);
+    details.clear();
+    try std.testing.expectEqual(0, details.latest_model_output_id);
+    try std.testing.expect(details.findModelOutput(first + 1) == null);
 }
 
 test "latest result and shared ids route to the correct output type" {

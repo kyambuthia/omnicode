@@ -147,7 +147,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             }
             const id_text = if (std.mem.startsWith(u8, raw, "#")) raw[1..] else raw;
             const id = std.fmt.parseInt(usize, id_text, 10) catch {
-                try ui.note("usage: /details [call-id|list] (bare /details shows the latest result)");
+                try ui.note("usage: /details [id|list] (bare /details shows the latest retained output)");
                 continue;
             };
             try ui.showResult(id);
@@ -707,6 +707,7 @@ fn redactRetained(agent: *core.Agent, composer: *core.Input, secrets: *const cor
     if (ui.details) |retained| {
         const latest_output_id = retained.latest_output_id;
         const latest_tool_output_id = retained.latest_tool_output_id;
+        const latest_model_output_id = retained.latest_model_output_id;
         const latest_result_id = retained.latest_result_id;
         const replay_anchor_id = retained.replay_anchor_id;
         const replay_cursor_id = retained.replay_cursor_id;
@@ -758,8 +759,19 @@ fn redactRetained(agent: *core.Agent, composer: *core.Input, secrets: *const cor
             updated.failed = failed;
             updated.elapsed_ms = elapsed_ms;
         }
+        for (&retained.model_outputs) |*output| {
+            if (!output.present) continue;
+            const id = output.id;
+            const truncated = output.truncated;
+            const snapshot = try agent.context.a.dupe(u8, output.bytes[0..output.len]);
+            defer std.crypto.secureZero(u8, snapshot);
+            try ui.retainModelOutput(id, snapshot);
+            const updated = retained.findModelOutputMutable(id) orelse continue;
+            updated.truncated = updated.truncated or truncated;
+        }
         retained.latest_output_id = latest_output_id;
         retained.latest_tool_output_id = latest_tool_output_id;
+        retained.latest_model_output_id = latest_model_output_id;
         retained.latest_result_id = latest_result_id;
         retained.replay_anchor_id = replay_anchor_id;
         retained.replay_cursor_id = replay_cursor_id;
