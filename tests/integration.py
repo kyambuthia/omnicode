@@ -787,7 +787,7 @@ class Integration(unittest.TestCase):
         self.assertEqual(payload["usage"]["requests"], 1)
         self.assertEqual(payload["proposed_tools"], [])
         self.assertNotIn(secret, result.stdout)
-        self.assertIn("Assistant", result.stderr)
+        self.assertIn("MODEL", result.stderr)
 
         self.reply = lambda _: tools(call("write", {"path": "blocked.txt", "content": secret}))
         preview = self.run_agent("--json", "--dry-run", "create a file")

@@ -279,8 +279,8 @@ pub const Ui = struct {
     }
 
     pub fn message(ui: Ui, text: []const u8) !void {
-        try ui.style("\x1b[1m");
-        try ui.out.writeAll("\n● Assistant\n");
+        try ui.style("\x1b[1;35m");
+        try ui.out.writeAll("\n◆ MODEL\n");
         try ui.style("\x1b[0m");
         var lines = std.mem.splitScalar(u8, text, '\n');
         var fence: usize = 0;
@@ -431,8 +431,8 @@ pub const Ui = struct {
             return;
         }
         try ui.out.writeAll(ui.indent);
-        try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
-        try ui.out.print("  {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
+        try ui.style(if (failed) "\x1b[31m" else "\x1b[36m");
+        try ui.out.print("  ⎿ {s}{s} · ", .{ name, if (failed) " failed" else " output" });
         try ui.elapsed(start);
         try ui.out.writeByte('\n');
         try ui.style("\x1b[0m");
@@ -444,7 +444,7 @@ pub const Ui = struct {
             try ui.style("\x1b[0m");
         } else if (!failed and std.mem.eql(u8, name, "write")) {
             try ui.out.print("{s}    {d} bytes written\n", .{ ui.indent, (try j.str(args, "content")).len });
-        } else try ui.preview(result, "");
+        } else try ui.preview(result, "│ ");
         try ui.out.flush();
     }
 
@@ -643,6 +643,19 @@ test "latest Bash output follows the newest saved call and clears with details" 
     try std.testing.expectEqual(2, details.latestOutput().?.id);
     details.clear();
     try std.testing.expect(details.latestOutput() == null);
+}
+
+test "model replies and tool output have explicit source labels" {
+    var buffer: [4096]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    const ui: Ui = .{ .out = &writer, .io = std.testing.io };
+    try ui.message("model answer");
+    try ui.toolEnd("read", .null, "file contents", false, Io.Clock.awake.now(std.testing.io), 0);
+    const output = writer.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, output, "◆ MODEL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "⎿ read output") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "│ file contents") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "✓ Done") == null);
 }
 
 test "Markdown headings respect fences and plain output preserves the source" {
