@@ -3,10 +3,12 @@
 import json
 import fcntl
 import os
+import re
 import struct
 import pty
 import select
 import signal
+import shutil
 import termios
 import time
 from pathlib import Path
@@ -500,6 +502,151 @@ class Integration(unittest.TestCase):
         self.assertIn("InputTooLong", result.stdout)
         self.assertIn("omnicode [--free", result.stdout)
         self.assertEqual(self.requests, [])
+
+    def test_tmux_output_pane_tracks_terminal_width(self):
+        tmux = shutil.which("tmux")
+        if tmux is None:
+            self.skipTest("tmux is not installed")
+
+        socket = f"omnicode-test-{os.getpid()}-{id(self)}"
+        session = "resize-test"
+        tmux_env = dict(self.env)
+        tmux_env.update({
+            "TERM": "xterm-256color",
+            "TMUX_TMPDIR": str(self.cwd),
+            "OMNICODE_TEST_SOCKET": socket,
+        })
+        wrapper_dir = self.cwd / "tmux-bin"
+        wrapper_dir.mkdir()
+        wrapper = wrapper_dir / "tmux"
+        wrapper.write_text('#!/bin/sh\nexec "$OMNICODE_REAL_TMUX" -L "$OMNICODE_TEST_SOCKET" "$@"\n')
+        wrapper.chmod(0o755)
+        tmux_env["OMNICODE_REAL_TMUX"] = tmux
+        tmux_env["PATH"] = os.pathsep.join((str(wrapper_dir), self.env["PATH"]))
+
+        def tmux_run(*args, check=True):
+            return subprocess.run(
+                [tmux, "-L", socket, *args], env=tmux_env, capture_output=True,
+                text=True, check=check, timeout=5,
+            )
+
+        tmux_run("-f", "/dev/null", "new-session", "-d", "-x", "120", "-y", "40", "-s", session)
+        self.addCleanup(lambda: tmux_run("kill-server", check=False))
+        pane = tmux_run("display-message", "-p", "-t", f"{session}:0.0", "#{pane_id}").stdout.strip()
+        tmux_env["TMUX_PANE"] = pane
+
+        def reply(_):
+            call_index = len(self.requests)
+            if call_index in (1, 3, 5):
+                marker = {1: "LIVE_MARKER", 3: "FALLBACK_MARKER", 5: "REOPENED_MARKER"}[call_index]
+                if call_index == 1:
+                    cmd = f"printf '{marker}_%s\\n' \"$$\"; sleep 0.1"
+                else:
+                    prefix = marker.split("_")[0]
+                    cmd = f"printf '{prefix}'; printf '_MARKER_%s\\n' \"$$\"; sleep 0.1"
+                return tools(call("bash", {"cmd": cmd}, f"bash-{call_index}"))
+            return text({2: "initial complete", 4: "fallback complete", 6: "reopened complete"}[call_index])
+
+        self.reply = reply
+        master, slave = pty.openpty()
+
+        def set_terminal_width(cols):
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, cols, 0, 0))
+
+        set_terminal_width(120)
+        process = subprocess.Popen(
+            [str(BINARY)], stdin=subprocess.PIPE, stdout=slave, stderr=slave,
+            cwd=self.cwd, env=tmux_env,
+        )
+        os.close(slave)
+        self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+        output = bytearray()
+
+        def read_until(needle, timeout=10):
+            deadline = time.monotonic() + timeout
+            while needle not in output:
+                if process.poll() is not None:
+                    self.fail(f"Omnicode exited before {needle!r}: {output.decode(errors='replace')}")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.fail(f"Timed out waiting for {needle!r}: {output.decode(errors='replace')}")
+                ready, _, _ = select.select([master], [], [], min(0.05, remaining))
+                if ready:
+                    try:
+                        output.extend(os.read(master, 4096))
+                    except OSError:
+                        self.fail(f"Terminal closed before {needle!r}: {output.decode(errors='replace')}")
+
+        def read_until_regex(pattern, timeout=10):
+            deadline = time.monotonic() + timeout
+            matcher = re.compile(pattern)
+            while matcher.search(output) is None:
+                if process.poll() is not None:
+                    self.fail(f"Omnicode exited before {pattern!r}: {output.decode(errors='replace')}")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.fail(f"Timed out waiting for {pattern!r}: {output.decode(errors='replace')}")
+                ready, _, _ = select.select([master], [], [], min(0.05, remaining))
+                if ready:
+                    try:
+                        output.extend(os.read(master, 4096))
+                    except OSError:
+                        self.fail(f"Terminal closed before {pattern!r}: {output.decode(errors='replace')}")
+
+        def send(line):
+            process.stdin.write((line + "\n").encode())
+            process.stdin.flush()
+
+        def capture_pane():
+            pane_ids = tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()
+            output_pane = next(pane_id for pane_id in pane_ids if pane_id != pane)
+            return tmux_run("capture-pane", "-p", "-S", "-", "-t", output_pane).stdout
+
+        def wait_for_request_count(count):
+            deadline = time.monotonic() + 10
+            while len(self.requests) < count and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertGreaterEqual(len(self.requests), count, f"only {len(self.requests)} model requests arrived")
+
+        try:
+            send("run initial command")
+            read_until(b"initial complete")
+            wait_for_request_count(2)
+            self.assertRegex(capture_pane(), r"LIVE_MARKER_[0-9]+")
+            self.assertIsNone(re.search(rb"LIVE_MARKER_[0-9]+", output))
+            self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
+
+            set_terminal_width(80)
+            tmux_run("resize-window", "-t", f"{session}:0", "-x", "80", "-y", "40")
+            send("/usage")
+            read_until(b"Terminal narrowed below 100 columns; Bash output now stays in the feed.")
+            self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 1)
+
+            send("run narrow command")
+            read_until_regex(rb"FALLBACK_MARKER_[0-9]+")
+            wait_for_request_count(4)
+            self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 1)
+
+            set_terminal_width(120)
+            tmux_run("resize-window", "-t", f"{session}:0", "-x", "120", "-y", "40")
+            send("/usage")
+            read_until(b"Terminal widened; Bash output is back in the tmux side pane.")
+            self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
+
+            send("run reopened command")
+            read_until(b"reopened complete")
+            wait_for_request_count(6)
+            self.assertRegex(capture_pane(), r"REOPENED_MARKER_[0-9]+")
+            self.assertIsNone(re.search(rb"REOPENED_MARKER_[0-9]+", output))
+            send("/q")
+            process.stdin.close()
+            process.wait(timeout=10)
+            self.assertEqual(process.returncode, 0, output.decode(errors="replace"))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
 
     def run_agent(self, *args, stdin=None):
         return subprocess.run([str(BINARY), *args], input=stdin, text=True,

@@ -159,9 +159,11 @@ which shows a compact completion line. Live lines are secret-scrubbed and
 terminal controls are rendered visibly; incomplete lines are withheld after
 interruption. Completed streams are not printed a second time; failed or
 interrupted streams retain the final-result fallback. The pane is removed when
-Omnicode exits. Narrow terminals, non-tmux terminals, and tmux startup failures
-keep the inline Bash renderer. This uses tmux's documented stdin forwarding for
-`split-window -I`, without shell interpolation or a persistent output file.
+Omnicode exits. In the interactive REPL, narrowing below 100 columns closes the
+pane and widening reopens it. Narrow startup, non-tmux terminals, and tmux
+startup failures keep the inline Bash renderer. This uses tmux's documented
+stdin forwarding for `split-window -I`, without shell interpolation or a
+persistent output file.
 See the [tmux manual](https://github.com/tmux/tmux/blob/master/tmux.1).
 Verification includes real PTY cancellation/EOF, paste submission, and termios
 restoration both during API requests and after exit. Terminal sequences follow

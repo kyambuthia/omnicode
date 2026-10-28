@@ -125,6 +125,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 ### Added
 
 - Contributor instructions and a change history for future releases.
+- Interactive tmux sessions close the Bash pane below 100 columns, use inline
+  output, and reopen the pane when the terminal widens.
 - `--dry-run` previews the first proposed tool batch and stops before executing
   any tool calls.
 - `/export [name]` writes a redacted Markdown transcript and checklist to a

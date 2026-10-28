@@ -30,13 +30,46 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         if (status.mode == .title) ui.titleStack(false) catch {};
         if (status.mode == .pinned) ui.resetScrollRegion() catch {};
     }
+    var resized_tmux_feed: ?core.TmuxFeed = null;
+    defer if (resized_tmux_feed) |*feed| feed.deinit();
+    var tmux_width_ready = ui.width >= 100;
     var input_buffer: [16 * 1024]u8 = undefined;
     var input = std.Io.File.Reader.init(.stdin(), init.io, &input_buffer);
     var composer: core.Input = .{};
     while (true) {
         var voice_prompt: ?[]const u8 = null;
         defer if (voice_prompt) |prompt_text| std.crypto.secureZero(u8, @constCast(prompt_text));
-        if (ui.interactive) ui.width = core.terminalWidth(init.environ_map);
+        if (ui.interactive) {
+            ui.width = core.terminalWidth(init.environ_map);
+            const tmux_width_now_ready = ui.width >= 100;
+            if (tmux_width_ready and !tmux_width_now_ready) {
+                var closed_pane = false;
+                if (ui.tmux_feed) |feed| {
+                    if (feed.active) {
+                        feed.disable();
+                        closed_pane = true;
+                    }
+                }
+                ui.tmux_feed = null;
+                resized_tmux_feed = null;
+                if (closed_pane) try ui.note("Terminal narrowed below 100 columns; Bash output now stays in the feed.");
+            } else if (!tmux_width_ready and tmux_width_now_ready and init.environ_map.get("TMUX_PANE") != null) {
+                if (core.TmuxFeed.start(init.io, init.environ_map, ui.width)) |maybe_feed| {
+                    if (maybe_feed) |feed| {
+                        resized_tmux_feed = feed;
+                        ui.tmux_feed = &resized_tmux_feed.?;
+                        try ui.note("Terminal widened; Bash output is back in the tmux side pane.");
+                    } else {
+                        try ui.note("Could not reopen the tmux Bash pane; Bash output will stay in the feed.");
+                    }
+                } else |err| {
+                    if (err == error.Canceled) return err;
+                    ui.tmux_feed = null;
+                    try ui.note("Could not reopen the tmux Bash pane; Bash output will stay in the feed.");
+                }
+            }
+            tmux_width_ready = tmux_width_now_ready;
+        }
         var label: [256]u8 = undefined;
         const policy = if (route.provider == .anthropic) "auto" else if (mode == .free) "auto (free)" else "auto (cost-max)";
         const model_label = if (!automatic) route.model else if (status.lastModel().len == 0) policy else std.fmt.bufPrint(&label, "{s} → {s}", .{ policy, status.lastModel() }) catch policy;
