@@ -618,7 +618,7 @@ class Integration(unittest.TestCase):
             self.assertIn("/out #<id> full", pane_output)
             self.assertRegex(pane_output, r"LIVE_MARKER_[0-9]+")
             self.assertRegex(output, rb"LIVE_MARKER_[0-9]+")
-            self.assertIn(b"/out #1 full", output)
+            self.assertIn(b"Ctrl+O full", output)
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
             self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
 

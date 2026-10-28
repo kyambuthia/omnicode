@@ -342,10 +342,10 @@ pub const Ui = struct {
     }
 
     pub fn preview(ui: Ui, text: []const u8, prefix: []const u8) !void {
-        try ui.previewLimit(text, prefix, 5, "/details or /verbose on");
+        try ui.previewLimit(text, prefix, 5, "/details or /verbose on", "");
     }
 
-    fn previewLimit(ui: Ui, text: []const u8, prefix: []const u8, visible_lines: usize, expand_command: []const u8) !void {
+    fn previewLimit(ui: Ui, text: []const u8, prefix: []const u8, visible_lines: usize, expand_command: []const u8, prefix_style: []const u8) !void {
         const trimmed = std.mem.trimEnd(u8, text, "\n");
         if (trimmed.len == 0) {
             try ui.out.print("    {s}(empty)\n", .{prefix});
@@ -358,12 +358,21 @@ pub const Ui = struct {
         var n: usize = 0;
         while (lines.next()) |line| : (n += 1) {
             if (!ui.verbose and count > visible_lines and n >= head and n < count - tail) {
-                if (n == head) try ui.out.print("{s}    {s}... {d} lines hidden ({s})\n", .{ ui.indent, prefix, count - visible_lines, expand_command });
+                if (n == head) {
+                    try ui.out.writeAll(ui.indent);
+                    try ui.out.writeAll("    ");
+                    try ui.style(prefix_style);
+                    try ui.out.writeAll(prefix);
+                    try ui.style("\x1b[0m");
+                    try ui.out.print("... {d} lines hidden ({s})\n", .{ count - visible_lines, expand_command });
+                }
                 continue;
             }
             try ui.out.writeAll(ui.indent);
             try ui.out.writeAll("    ");
+            try ui.style(prefix_style);
             try ui.out.writeAll(prefix);
+            try ui.style("\x1b[0m");
             try ui.safe(line, if (ui.verbose) std.math.maxInt(usize) else ui.width -| (10 + ui.indent.len));
             try ui.out.writeByte('\n');
         }
@@ -449,13 +458,13 @@ pub const Ui = struct {
                 // Keep the main transcript useful after the command ends. The tmux pane
                 // carries the live stream; a compact final preview avoids making it a
                 // required place to switch to just to read the result.
-                try ui.previewLimit(result, "│ ", 8, "/out");
+                try ui.previewLimit(result, "│ ", 8, "Ctrl+O full", "\x1b[1;36m");
                 try ui.out.writeAll(ui.indent);
                 try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
                 if (call_id > 0) {
                     try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
                     try ui.elapsed(start);
-                    try ui.out.print(" · /out #{d} full", .{call_id});
+                    try ui.out.writeAll(" · Ctrl+O full");
                 } else {
                     try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
                     try ui.elapsed(start);
@@ -466,8 +475,8 @@ pub const Ui = struct {
                 try ui.out.flush();
                 return;
             }
-            const hint = if (call_id > 0) "/out or /verbose on" else "rerun with --verbose";
-            try ui.previewLimit(result, "│ ", 12, hint);
+            const hint = if (call_id > 0 and ui.interactive) "Ctrl+O full" else "--verbose";
+            try ui.previewLimit(result, "│ ", 12, hint, "\x1b[1;36m");
             try ui.out.writeAll(ui.indent);
             try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
             try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
@@ -792,6 +801,21 @@ test "Bash output list orders recent calls and shows status and commands" {
     const older = std.mem.indexOf(u8, rendered, "#1 · ✓ Done · 100ms  $ printf first").?;
     try std.testing.expect(newest < older);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "Use /out <id> to print the full result.") != null);
+}
+
+test "Bash feed marks output source and offers a one-step full-output replay" {
+    var buffer: [8192]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    var details: Details = .{};
+    const ui: Ui = .{ .out = &writer, .io = std.testing.io, .color = true, .interactive = true, .details = &details };
+    const call_id = details.beginOutput();
+
+    try ui.toolEnd("bash", .null, "first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\neighth\nninth\ntenth\neleventh\ntwelfth\nthirteenth\nlast", false, Io.Clock.awake.now(std.testing.io), call_id);
+
+    const rendered = writer.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "\x1b[1;36m│ \x1b[0mfirst") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "2 lines hidden (Ctrl+O full)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "Ctrl+O full") != null);
 }
 
 test "model replies and tool output have explicit source labels" {
