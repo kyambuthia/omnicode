@@ -239,17 +239,23 @@ pub const Ui = struct {
     }
 
     pub fn preview(ui: Ui, text: []const u8, prefix: []const u8) !void {
+        try ui.previewLimit(text, prefix, 5);
+    }
+
+    fn previewLimit(ui: Ui, text: []const u8, prefix: []const u8, visible_lines: usize) !void {
         const trimmed = std.mem.trimEnd(u8, text, "\n");
         if (trimmed.len == 0) {
-            try ui.out.writeAll("    (empty)\n");
+            try ui.out.print("    {s}(empty)\n", .{prefix});
             return;
         }
         const count = std.mem.count(u8, trimmed, "\n") + 1;
+        const head = (visible_lines + 1) / 2;
+        const tail = visible_lines - head;
         var lines = std.mem.splitScalar(u8, trimmed, '\n');
         var n: usize = 0;
         while (lines.next()) |line| : (n += 1) {
-            if (!ui.verbose and count > 5 and n >= 3 and n < count - 2) {
-                if (n == 3) try ui.out.print("{s}    ... {d} lines hidden (/details or /verbose on)\n", .{ ui.indent, count - 5 });
+            if (!ui.verbose and count > visible_lines and n >= head and n < count - tail) {
+                if (n == head) try ui.out.print("{s}    {s}... {d} lines hidden (/details or /verbose on)\n", .{ ui.indent, prefix, count - visible_lines });
                 continue;
             }
             try ui.out.writeAll(ui.indent);
@@ -263,6 +269,15 @@ pub const Ui = struct {
     pub fn toolStart(ui: Ui, name: []const u8, args: j.Value) !void {
         const key = if (std.mem.eql(u8, name, "bash")) "cmd" else if (std.mem.eql(u8, name, "task")) "prompt" else if (std.mem.eql(u8, name, "skill")) "name" else if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) "pat" else "path";
         try ui.out.writeAll(ui.indent);
+        if (std.mem.eql(u8, name, "bash")) {
+            try ui.style("\x1b[1;36m");
+            try ui.out.writeAll("╭─ BASH  $ ");
+            try ui.style("\x1b[0m");
+            try ui.safe(j.aliasedString(args, "cmd", "command") catch "(invalid arguments)", ui.width -| (12 + ui.indent.len));
+            try ui.out.writeByte('\n');
+            try ui.out.flush();
+            return;
+        }
         try ui.style("\x1b[1m");
         try ui.out.writeAll("• ");
         try ui.safe(name, 24);
@@ -291,6 +306,17 @@ pub const Ui = struct {
 
     pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp) !void {
         try ui.retainDetails(result);
+        if (std.mem.eql(u8, name, "bash")) {
+            try ui.previewLimit(result, "│ ", 12);
+            try ui.out.writeAll(ui.indent);
+            try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
+            try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
+            try ui.elapsed(start);
+            try ui.style("\x1b[0m");
+            try ui.out.writeByte('\n');
+            try ui.out.flush();
+            return;
+        }
         try ui.out.writeAll(ui.indent);
         try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
         try ui.out.print("  {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
