@@ -257,7 +257,17 @@ pub const Input = struct {
                 continue;
             }
             if (!paste and c == 4 and n == 0) return null;
-            if (!paste and (c == '\r' or c == '\n')) {
+            if (!paste and c == '\n') {
+                if (n == self.bytes.len) {
+                    overflow = true;
+                } else {
+                    self.bytes[n] = '\n';
+                    n += 1;
+                }
+                try writeContinuationPrompt(ui);
+                continue;
+            }
+            if (!paste and c == '\r') {
                 try ui.out.writeByte('\n');
                 if (overflow) return error.InputTooLong;
                 self.record(std.mem.trim(u8, self.bytes[0..n], " \t\r"));
@@ -287,7 +297,9 @@ pub const Input = struct {
                 n += 1;
                 const masked = masksCurrentArgument(self.bytes[0..n]);
                 if (!masked) {
-                    try ui.out.writeByte(value);
+                    if (value == '\n') try writeContinuationPrompt(ui) else try ui.out.writeByte(value);
+                } else if (value == '\n') {
+                    try writeContinuationPrompt(ui);
                 } else if ((value & 0xc0) != 0x80) {
                     try ui.out.writeByte('*');
                 }
@@ -303,7 +315,7 @@ fn redrawComposer(ui: Ui, line: []const u8) !void {
     var lines = std.mem.splitScalar(u8, line, '\n');
     var first = true;
     while (lines.next()) |part| {
-        if (!first) try ui.out.writeByte('\n');
+        if (!first) try writeContinuationPrompt(ui);
         if (masked) {
             for (part) |byte| if (byte & 0xc0 != 0x80) {
                 try ui.out.writeByte('*');
@@ -313,6 +325,11 @@ fn redrawComposer(ui: Ui, line: []const u8) !void {
         }
         first = false;
     }
+    try ui.out.flush();
+}
+
+fn writeContinuationPrompt(ui: Ui) !void {
+    try ui.out.writeAll("\n  … ");
     try ui.out.flush();
 }
 

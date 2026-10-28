@@ -134,6 +134,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 - The `/` command index now includes local skill descriptions and how to invoke them with `/skill NAME`.
 - Bash result previews use a cyan source rail and offer `Ctrl+O full` when output is folded.
+- Interactive prompts accept `Ctrl+J` to add a line; Enter still sends the prompt.
 - Enter `/` or `/commands` to browse the REPL command index without calling a model.
 - `/help <topic>` searches command help case-insensitively instead of printing the full help page.
 - `/tmux on|off` controls the live Bash pane; an explicit off choice stays off across terminal resizes for the session.

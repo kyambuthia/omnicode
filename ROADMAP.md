@@ -135,7 +135,8 @@ further if it changes more than one behavior:
 4. [x] Render basic Markdown headings and code fences. Verify literal code content
    and redirected output independently.
 5. [x] Add an input module with terminal restoration and bracketed paste; test
-   interruption and EOF before adding history or multiline editing in later commits.
+   interruption and EOF.
+6. [x] Add bounded prompt history and Ctrl+J line breaks for multi-line prompts.
 
 These are proposed Omnicode choices, not claims that fx uses the same design.
 Keep native scrollback and avoid new dependencies; measure LOC growth per change.
@@ -143,8 +144,9 @@ Keep native scrollback and avoid new dependencies; measure LOC growth per change
 
 Completed in separate commits: neutral styling, redundant tool-row removal,
 `/details` (one replaceable 64 KiB result), headings/backtick fences, scoped raw
-input with bracketed paste, and bounded up/down input history with secret
-redaction. Multiline editing remains a follow-on feature. The feed now separates
+input with bracketed paste, bounded up/down input history with secret redaction,
+and Ctrl+J multi-line composition. Cursor-based editing across multiple lines
+remains a follow-on feature. The feed now separates
 assistant and Bash output, retains four recent Bash results for `/out`, and
 offers `/diff` for a bounded Git status and tracked-change view; untracked file
 contents are not included. Input and transcript state preserve the project's

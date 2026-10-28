@@ -191,7 +191,9 @@ pub const Ui = struct {
         try ui.safe(cwd, ui.width - 4);
         try ui.out.writeAll("\n  ");
         try ui.safe(provider, 30);
-        try ui.out.writeAll(" · automatic task routing\n\n  / then Enter lists commands  /help topic  /model  /skills\n\n");
+        try ui.out.writeAll(" · automatic task routing\n\n  / then Enter lists commands  /help topic  /model  /skills\n");
+        if (ui.interactive) try ui.out.writeAll("  Ctrl+J adds a line · Enter sends\n");
+        try ui.out.writeByte('\n');
         if (ui.tmux_feed) |feed| {
             if (feed.active) try ui.note("Bash streams live to tmux; Ctrl+O replays the latest result here.");
         } else if (ui.env) |env| {
