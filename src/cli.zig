@@ -17,7 +17,7 @@ pub const help =
     \\--json                    Emit one JSON object for a one-shot task; progress goes to stderr
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
-    \\  /help                  Show this help
+    \\  /help [topic]          Show all commands or search help by topic
     \\  /providers [...]       List, switch, or configure providers & API keys (/providers <N|name> [key])
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
     \\  /secrets [...]         Manage zero-leak secrets (injected in bash, scrubbed from chat)
@@ -53,6 +53,40 @@ pub const help =
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
 ;
+
+/// Return help lines containing a case-insensitive topic. The caller owns the result.
+pub fn searchHelp(a: std.mem.Allocator, topic: []const u8) ![]const u8 {
+    var output: std.Io.Writer.Allocating = .init(a);
+    defer output.deinit();
+    var lines = std.mem.splitScalar(u8, help, '\n');
+    while (lines.next()) |line| {
+        if (!containsIgnoreCase(line, topic)) continue;
+        try output.writer.writeAll(line);
+        try output.writer.writeByte('\n');
+    }
+    return output.toOwnedSlice();
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    for (0..haystack.len - needle.len + 1) |start| {
+        if (std.ascii.eqlIgnoreCase(haystack[start..][0..needle.len], needle)) return true;
+    }
+    return false;
+}
+
+test "help search finds case-insensitive topics and returns empty for misses" {
+    const a = std.testing.allocator;
+    const tmux = try searchHelp(a, "TMUX");
+    defer a.free(tmux);
+    try std.testing.expect(std.mem.indexOf(u8, tmux, "/tmux [status|on|off]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmux, "Ctrl+O") == null);
+
+    const missing = try searchHelp(a, "no-such-help-topic");
+    defer a.free(missing);
+    try std.testing.expectEqualStrings("", missing);
+}
 
 pub const Options = struct {
     first: usize,

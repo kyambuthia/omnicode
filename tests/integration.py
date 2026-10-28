@@ -2047,6 +2047,16 @@ class Integration(unittest.TestCase):
         self.assertNotIn("lines hidden", repl.stdout)
         self.assertIn("fast-test-model", repl.stdout)
 
+    def test_help_search_filters_commands_case_insensitively(self):
+        result = self.run_agent(stdin="/help tmux\n/help OuTpUt\n/help no-such-help-topic\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Help matches for "tmux":', result.stdout)
+        self.assertIn("/tmux [status|on|off]", result.stdout)
+        self.assertIn('Help matches for "OuTpUt":', result.stdout)
+        self.assertIn("Ctrl+O", result.stdout)
+        self.assertIn("No help entries match that topic.", result.stdout)
+        self.assertEqual(self.requests, [])
+
     def test_retained_details_replace_and_sanitize(self):
         self.reply = lambda _: tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\nlast\\033[2J'"})) if len(self.requests) == 1 else text()
         result = self.run_agent(stdin="/details\nlist files\n/details\n/q\n")

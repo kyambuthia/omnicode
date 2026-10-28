@@ -371,8 +371,24 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             });
             continue;
         }
-        if (std.mem.eql(u8, line, "/help")) {
-            try out.writeAll(cli.help);
+        if (std.mem.eql(u8, line, "/help") or std.mem.startsWith(u8, line, "/help ")) {
+            const topic = if (line.len > 5) std.mem.trim(u8, line[5..], " \t") else "";
+            if (topic.len == 0) {
+                try out.writeAll(cli.help);
+            } else {
+                const matches = try cli.searchHelp(std.heap.page_allocator, topic);
+                defer std.heap.page_allocator.free(matches);
+                try out.writeAll("\nHelp matches for \"");
+                try ui.safe(topic, 120);
+                try out.writeAll("\":\n");
+                if (matches.len == 0) {
+                    try ui.note("No help entries match that topic.");
+                } else {
+                    var full = ui;
+                    full.verbose = true;
+                    try full.preview(matches, "");
+                }
+            }
             continue;
         }
         if (std.mem.eql(u8, line, "/version")) {
