@@ -20,7 +20,7 @@ pub const Feed = struct {
         if (!validPaneId(target)) return null;
 
         const argv = [_][]const u8{
-            "tmux", "split-window", "-d", "-h", "-p", "35", "-P", "-F", "#{pane_id}", "-I", "-t", target,
+            "tmux", "split-window", "-d", "-h", "-p", "45", "-P", "-F", "#{pane_id}", "-I", "-t", target,
         };
         var child = try std.process.spawn(io, .{
             .argv = &argv,
