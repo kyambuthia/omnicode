@@ -537,11 +537,8 @@ pub const Ui = struct {
             return;
         };
         try ui.out.print("\n╭─ BASH output #{d} · {s} · ", .{ id, if (output.failed) "✗ Failed" else "✓ Done" });
-        if (output.elapsed_ms < 1000) {
-            try ui.out.print("{d}ms\n", .{output.elapsed_ms});
-        } else {
-            try ui.out.print("{d}.{d}s\n", .{ @divTrunc(output.elapsed_ms, 1000), @divTrunc(@mod(output.elapsed_ms, 1000), 100) });
-        }
+        try ui.writeElapsed(output.elapsed_ms);
+        try ui.out.writeByte('\n');
         if (output.command_len > 0) {
             try ui.out.writeAll("  $ ");
             try ui.safe(output.command[0..output.command_len], std.math.maxInt(usize));
@@ -561,8 +558,40 @@ pub const Ui = struct {
         try ui.showOutput(output.id);
     }
 
+    pub fn showOutputList(ui: Ui) !void {
+        const details = ui.details orelse return ui.note("No retained Bash output.");
+        if (details.latest_output_id == 0) return ui.note("No retained Bash output.");
+        try ui.out.writeAll("\nRecent Bash outputs\n");
+        var id = details.latest_output_id;
+        var found = false;
+        for (0..Details.output_count) |_| {
+            if (details.findOutput(id)) |output| {
+                found = true;
+                try ui.out.writeAll("  #");
+                try ui.out.print("{d} · ", .{output.id});
+                try ui.style(if (output.failed) "\x1b[31m" else "\x1b[36m");
+                try ui.out.writeAll(if (output.failed) "✗ Failed · " else "✓ Done · ");
+                try ui.writeElapsed(output.elapsed_ms);
+                try ui.style("\x1b[0m");
+                if (output.command_len > 0) {
+                    try ui.out.writeAll("  $ ");
+                    try ui.safe(output.command[0..output.command_len], ui.width -| 36);
+                    if (output.command_truncated) try ui.out.writeAll("...");
+                }
+                try ui.out.writeByte('\n');
+            }
+            id = if (id == 1) std.math.maxInt(usize) else id - 1;
+        }
+        if (!found) return ui.note("No retained Bash output.");
+        try ui.out.writeAll("Use /out <id> to print the full result.\n");
+    }
+
     pub fn elapsed(ui: Ui, start: Io.Timestamp) !void {
         const ms = start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds();
+        try ui.writeElapsed(@intCast(@max(0, ms)));
+    }
+
+    fn writeElapsed(ui: Ui, ms: u64) !void {
         if (ms < 1000) try ui.out.print("{d}ms", .{ms}) else try ui.out.print("{d}.{d}s", .{ @divTrunc(ms, 1000), @divTrunc(@mod(ms, 1000), 100) });
     }
 
@@ -735,6 +764,27 @@ test "repeated Bash output shows its redacted command" {
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "BASH output #1 · ✗ Failed · 1.2s") != null);
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "$ printf [REDACTED:TOKEN]") != null);
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "private-token-998") == null);
+}
+
+test "Bash output list orders recent calls and shows status and commands" {
+    var details: Details = .{};
+    details.saveOutput(1, "first");
+    details.saveOutputCommand(1, "printf first");
+    details.finishOutput(1, false, 100);
+    details.saveOutput(2, "second");
+    details.saveOutputCommand(2, "printf second");
+    details.finishOutput(2, true, 1250);
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details };
+
+    try ui.showOutputList();
+
+    const rendered = output.written();
+    const newest = std.mem.indexOf(u8, rendered, "#2 · ✗ Failed · 1.2s  $ printf second").?;
+    const older = std.mem.indexOf(u8, rendered, "#1 · ✓ Done · 100ms  $ printf first").?;
+    try std.testing.expect(newest < older);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "Use /out <id> to print the full result.") != null);
 }
 
 test "model replies and tool output have explicit source labels" {

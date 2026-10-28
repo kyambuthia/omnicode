@@ -45,7 +45,7 @@ pub const Feed = struct {
 
         feed.child.stdout.?.close(io);
         feed.child.stdout = null;
-        feed.writeRaw("  OMNICODE · BASH OUTPUT\r\n  prefix+Right focuses · prefix+z zooms\r\n  prefix+[ scrolls\r\n  /out repeats latest · /out <id> selects\r\n\r\n") catch {
+        feed.writeRaw("  OMNICODE · BASH OUTPUT\r\n  prefix+Right focus · prefix+z zoom\r\n  prefix+[ scroll · /out repeats latest\r\n  /out list indexes · /out #<id> reads full\r\n\r\n") catch {
             feed.deinit();
             return error.TmuxPaneWriteFailed;
         };

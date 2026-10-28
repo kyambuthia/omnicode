@@ -131,6 +131,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Added
 
+- `/out list` indexes recent Bash calls by command, status, and duration for full-output replay.
 - Interactive feed labels model replies and tool output separately, with elapsed time on the output header.
 - Contributor instructions and a change history for future releases.
 - Interactive tmux sessions close the Bash pane below 100 columns, use inline

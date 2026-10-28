@@ -144,9 +144,13 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.showLatestOutput();
                 continue;
             }
+            if (std.mem.eql(u8, raw, "list")) {
+                try ui.showOutputList();
+                continue;
+            }
             const id_text = if (std.mem.startsWith(u8, raw, "#")) raw[1..] else raw;
             const id = std.fmt.parseInt(usize, id_text, 10) catch {
-                try ui.note("usage: /out [call-id] (bare /out repeats the latest result)");
+                try ui.note("usage: /out [call-id|list] (bare /out repeats the latest result)");
                 continue;
             };
             try ui.showOutput(id);
