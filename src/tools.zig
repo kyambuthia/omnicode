@@ -338,6 +338,7 @@ pub const Context = struct {
             std.crypto.secureZero(u8, @constCast(stderr));
             c.a.free(@constCast(stderr));
         };
+        const valid_output = std.unicode.utf8ValidateSlice(stdout) and std.unicode.utf8ValidateSlice(stderr);
         if (search and result.term == .exited and result.term.exited == 1) {
             const raw = "none";
             const scrubbed = try c.scrub(raw);
@@ -354,7 +355,7 @@ pub const Context = struct {
         }
         const capped = try capCommandOutput(c.a, scrubbed);
         defer if (scrubbed.len > limit and std.unicode.utf8ValidateSlice(scrubbed)) std.crypto.secureZero(u8, @constCast(capped));
-        return .{ .text = try c.a.dupe(u8, capped), .is_error = !result.term.success(), .owned_text = true };
+        return .{ .text = try c.a.dupe(u8, capped), .is_error = !result.term.success() or !valid_output, .owned_text = true };
     }
 
     pub fn loadSkill(c: Context, name: []const u8) ![]const u8 {
@@ -668,7 +669,7 @@ fn normalizeProgressOutput(a: j.Allocator, text: []const u8) ![]const u8 {
 
 pub fn capCommandOutput(a: j.Allocator, full: []const u8) ![]const u8 {
     if (!std.unicode.utf8ValidateSlice(full))
-        return "Command output contained non-UTF-8 bytes and was omitted.";
+        return "error: NonUtf8Output (command output contained non-UTF-8 bytes and was omitted).";
     if (full.len <= limit) return full;
     const marker = "\n...[truncated middle; narrow command or filter output]...\n";
     var head: usize = (limit * 2) / 3;

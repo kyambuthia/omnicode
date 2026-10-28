@@ -8,6 +8,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Fixed
 
+- Commands that produce non-UTF-8 output now return an explicit tool error
+  when that output is omitted.
 - Bash carriage-return progress is collapsed to the latest state in the feed
   and model tool results.
 - Provider credential displays now hide the full value instead of showing key fragments.
