@@ -4,12 +4,50 @@ const Io = std.Io;
 const Usage = @import("usage.zig").Usage;
 const status_line = @import("status.zig");
 
-/// Last tool result only: replacement bounds memory independently of conversation history.
+/// The latest tool result plus a small recent Bash-output ring, all bounded independently of history.
 pub const Details = struct {
+    pub const output_count = 4;
+
+    pub const Output = struct {
+        id: usize = 0,
+        bytes: [64 * 1024]u8 = undefined,
+        len: usize = 0,
+        present: bool = false,
+        truncated: bool = false,
+    };
+
     bytes: [64 * 1024]u8 = undefined,
     len: usize = 0,
     present: bool = false,
     truncated: bool = false,
+    outputs: [output_count]Output = [_]Output{ .{}, .{}, .{}, .{} },
+    next_output_id: usize = 1,
+
+    pub fn beginOutput(self: *Details) usize {
+        const id = self.next_output_id;
+        self.next_output_id +%= 1;
+        if (self.next_output_id == 0) self.next_output_id = 1;
+        return id;
+    }
+
+    pub fn saveOutput(self: *Details, id: usize, text: []const u8) void {
+        if (id == 0) return;
+        const output = &self.outputs[id % output_count];
+        std.crypto.secureZero(u8, output.bytes[0..]);
+        output.id = id;
+        output.len = @min(text.len, output.bytes.len);
+        while (output.len > 0 and !std.unicode.utf8ValidateSlice(text[0..output.len])) output.len -= 1;
+        @memcpy(output.bytes[0..output.len], text[0..output.len]);
+        output.present = true;
+        output.truncated = output.len < text.len;
+    }
+
+    pub fn findOutput(self: *const Details, id: usize) ?*const Output {
+        for (&self.outputs) |*output| {
+            if (output.present and output.id == id) return output;
+        }
+        return null;
+    }
 
     pub fn save(self: *Details, text: []const u8) void {
         std.crypto.secureZero(u8, self.bytes[0..]);
@@ -25,6 +63,13 @@ pub const Details = struct {
         self.len = 0;
         self.present = false;
         self.truncated = false;
+        for (&self.outputs) |*output| {
+            std.crypto.secureZero(u8, output.bytes[0..]);
+            output.id = 0;
+            output.len = 0;
+            output.present = false;
+            output.truncated = false;
+        }
     }
 };
 
@@ -239,10 +284,10 @@ pub const Ui = struct {
     }
 
     pub fn preview(ui: Ui, text: []const u8, prefix: []const u8) !void {
-        try ui.previewLimit(text, prefix, 5);
+        try ui.previewLimit(text, prefix, 5, "/details or /verbose on");
     }
 
-    fn previewLimit(ui: Ui, text: []const u8, prefix: []const u8, visible_lines: usize) !void {
+    fn previewLimit(ui: Ui, text: []const u8, prefix: []const u8, visible_lines: usize, expand_command: []const u8) !void {
         const trimmed = std.mem.trimEnd(u8, text, "\n");
         if (trimmed.len == 0) {
             try ui.out.print("    {s}(empty)\n", .{prefix});
@@ -255,7 +300,7 @@ pub const Ui = struct {
         var n: usize = 0;
         while (lines.next()) |line| : (n += 1) {
             if (!ui.verbose and count > visible_lines and n >= head and n < count - tail) {
-                if (n == head) try ui.out.print("{s}    {s}... {d} lines hidden (/details or /verbose on)\n", .{ ui.indent, prefix, count - visible_lines });
+                if (n == head) try ui.out.print("{s}    {s}... {d} lines hidden ({s})\n", .{ ui.indent, prefix, count - visible_lines, expand_command });
                 continue;
             }
             try ui.out.writeAll(ui.indent);
@@ -266,17 +311,21 @@ pub const Ui = struct {
         }
     }
 
-    pub fn toolStart(ui: Ui, name: []const u8, args: j.Value) !void {
+    pub fn toolStart(ui: Ui, name: []const u8, args: j.Value, track_output: bool) !usize {
         const key = if (std.mem.eql(u8, name, "bash")) "cmd" else if (std.mem.eql(u8, name, "task")) "prompt" else if (std.mem.eql(u8, name, "skill")) "name" else if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) "pat" else "path";
+        var call_id: usize = 0;
+        if (track_output and std.mem.eql(u8, name, "bash")) {
+            if (ui.details) |details| call_id = details.beginOutput();
+        }
         try ui.out.writeAll(ui.indent);
         if (std.mem.eql(u8, name, "bash")) {
             try ui.style("\x1b[1;36m");
-            try ui.out.writeAll("╭─ BASH  $ ");
+            if (call_id > 0) try ui.out.print("╭─ BASH #{d}  $ ", .{call_id}) else try ui.out.writeAll("╭─ BASH  $ ");
             try ui.style("\x1b[0m");
             try ui.safe(j.aliasedString(args, "cmd", "command") catch "(invalid arguments)", ui.width -| (12 + ui.indent.len));
             try ui.out.writeByte('\n');
             try ui.out.flush();
-            return;
+            return call_id;
         }
         try ui.style("\x1b[1m");
         try ui.out.writeAll("• ");
@@ -302,12 +351,16 @@ pub const Ui = struct {
         }
         try ui.out.writeByte('\n');
         try ui.out.flush();
+        return call_id;
     }
 
-    pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp) !void {
+    pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp, call_id: usize) !void {
         try ui.retainDetails(result);
         if (std.mem.eql(u8, name, "bash")) {
-            try ui.previewLimit(result, "│ ", 12);
+            try ui.retainOutput(call_id, result);
+            var hint_buf: [32]u8 = undefined;
+            const hint = if (call_id > 0) std.fmt.bufPrint(&hint_buf, "/out {d} or /verbose on", .{call_id}) catch "/details or /verbose on" else "rerun with --verbose";
+            try ui.previewLimit(result, "│ ", 12, hint);
             try ui.out.writeAll(ui.indent);
             try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
             try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
@@ -345,6 +398,15 @@ pub const Ui = struct {
         details.save(safe_text);
     }
 
+    pub fn retainOutput(ui: Ui, id: usize, text: []const u8) !void {
+        const details = ui.details orelse return;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const safe_text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), text, ui.env) else text;
+        defer if (safe_text.ptr != text.ptr) std.crypto.secureZero(u8, @constCast(safe_text));
+        details.saveOutput(id, safe_text);
+    }
+
     pub fn showDetails(ui: Ui) !void {
         const details = ui.details orelse return ui.note("No retained tool output.");
         if (!details.present) return ui.note("No retained tool output.");
@@ -353,6 +415,21 @@ pub const Ui = struct {
         full.verbose = true;
         try full.preview(details.bytes[0..details.len], "");
         if (details.truncated) try ui.note("Result exceeds 64 KiB; retained prefix only.");
+    }
+
+    pub fn showOutput(ui: Ui, id: usize) !void {
+        const details = ui.details orelse return ui.note("No retained Bash output.");
+        const output = details.findOutput(id) orelse {
+            var note_buf: [128]u8 = undefined;
+            try ui.note(std.fmt.bufPrint(&note_buf, "No retained Bash output for call #{d}; the most recent {d} calls are kept.", .{ id, Details.output_count }) catch "No retained Bash output for that call.");
+            return;
+        };
+        try ui.out.print("\n╭─ BASH output #{d}\n", .{id});
+        var full = ui;
+        full.verbose = true;
+        try full.preview(output.bytes[0..output.len], "│ ");
+        try ui.out.writeAll("╰─ end\n");
+        if (output.truncated) try ui.note("Output exceeds the retained 64 KiB limit; showing the prefix.");
     }
 
     pub fn elapsed(ui: Ui, start: Io.Timestamp) !void {

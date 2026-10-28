@@ -135,7 +135,9 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         defer agent.clearPreviewedContent();
         const prompt = try std.mem.join(a, " ", args[first..]);
         defer std.crypto.secureZero(u8, prompt);
-        agent.respond(prompt, ui) catch |err| {
+        var task_ui = ui;
+        task_ui.details = null;
+        agent.respond(prompt, task_ui) catch |err| {
             if (err == error.Canceled) return err;
             try ui.errorMessage(err);
             try ui.out.flush();

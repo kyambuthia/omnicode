@@ -99,6 +99,16 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             try ui.showDetails();
             continue;
         }
+        if (std.mem.eql(u8, line, "/out") or std.mem.startsWith(u8, line, "/out ")) {
+            const raw = if (line.len > 5) std.mem.trim(u8, line[5..], " \t") else "";
+            const id_text = if (std.mem.startsWith(u8, raw, "#")) raw[1..] else raw;
+            const id = std.fmt.parseInt(usize, id_text, 10) catch {
+                try ui.note("usage: /out <call-id> (for example: /out 3)");
+                continue;
+            };
+            try ui.showOutput(id);
+            continue;
+        }
         if (std.mem.eql(u8, line, "/todo")) {
             try ui.preview(if (todo.len == 0) "(empty todo list)" else todo.slice(), "");
             continue;
@@ -523,5 +533,14 @@ fn redactRetained(agent: *core.Agent, composer: *core.Input, secrets: *const cor
         defer std.crypto.secureZero(u8, snapshot);
         try ui.retainDetails(snapshot);
         retained.truncated = retained.truncated or truncated;
+    };
+    if (ui.details) |retained| for (&retained.outputs) |*output| {
+        if (!output.present) continue;
+        const id = output.id;
+        const truncated = output.truncated;
+        const snapshot = try agent.context.a.dupe(u8, output.bytes[0..output.len]);
+        defer std.crypto.secureZero(u8, snapshot);
+        try ui.retainOutput(id, snapshot);
+        output.truncated = output.truncated or truncated;
     };
 }

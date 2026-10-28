@@ -240,7 +240,7 @@ pub const Agent = struct {
                     if (!std.mem.eql(u8, try j.str(block, "type"), "tool_use")) continue;
                     const name = try j.str(block, "name");
                     const input = try j.get(block, "input");
-                    try ui.toolStart(name, input);
+                    _ = try ui.toolStart(name, input, false);
                     const source = try j.encode(a, input);
                     defer std.crypto.secureZero(u8, @constCast(source));
                     var safe_input = try j.parse(a, source);
@@ -269,7 +269,7 @@ pub const Agent = struct {
                 } else if (std.mem.eql(u8, kind, "tool_use")) {
                     const name = try j.str(block, "name");
                     const input = try j.get(block, "input");
-                    try ui.toolStart(name, input);
+                    const call_id = try ui.toolStart(name, input, true);
                     const start = Io.Clock.awake.now(self.context.io);
                     const result = self.runTool(name, input, ui, &usage) catch |err| blk: {
                         if (err == error.Canceled) return err;
@@ -297,7 +297,7 @@ pub const Agent = struct {
                         }
                         break :blk_txt raw_text;
                     };
-                    try ui.toolEnd(name, input, text, is_err, start);
+                    try ui.toolEnd(name, input, text, is_err, start, call_id);
                     const encoded_result = try j.encode(a, .{
                         .type = "tool_result",
                         .tool_use_id = try j.str(block, "id"),
@@ -1095,7 +1095,7 @@ pub const Agent = struct {
                 } else if (std.mem.eql(u8, kind, "tool_use")) {
                     const name = try j.str(block, "name");
                     const input = try j.get(block, "input");
-                    try child_ui.toolStart(name, input);
+                    const call_id = try child_ui.toolStart(name, input, true);
                     const start = Io.Clock.awake.now(child.context.io);
                     const result = run: {
                         if (child.tool_budget) |budget| budget.take() catch |err| break :run @as(anyerror!tools.Result, err);
@@ -1111,7 +1111,7 @@ pub const Agent = struct {
                     const valid_utf8 = std.unicode.utf8ValidateSlice(result.text);
                     const text = if (valid_utf8) result.text else "error: NonUtf8Output";
                     const is_error = result.is_error or !valid_utf8;
-                    try child_ui.toolEnd(name, input, text, is_error, start);
+                    try child_ui.toolEnd(name, input, text, is_error, start, call_id);
                     const encoded_result = try j.encode(ca, .{
                         .type = "tool_result",
                         .tool_use_id = try j.str(block, "id"),
