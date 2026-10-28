@@ -9,6 +9,10 @@ pub const Feed = struct {
     pane_len: usize = 0,
     active: bool = true,
     closed: bool = false,
+    current_call_id: usize = 0,
+    streamed_call_id: usize = 0,
+    streamed: bool = false,
+    stream_complete: bool = false,
 
     pub fn start(io: Io, env: *const std.process.Environ.Map, width: usize) !?Feed {
         if (width < 100) return null;
@@ -56,6 +60,55 @@ pub const Feed = struct {
 
     pub fn disable(feed: *Feed) void {
         feed.deinit();
+    }
+
+    pub fn beginCall(feed: *Feed, id: usize) void {
+        feed.current_call_id = id;
+        feed.streamed_call_id = 0;
+        feed.streamed = false;
+        feed.stream_complete = false;
+    }
+
+    pub fn markStreamComplete(feed: *Feed, id: usize, complete: bool) void {
+        if (feed.current_call_id == id) feed.stream_complete = complete;
+    }
+
+    pub fn hasCompleteStream(feed: *const Feed, id: usize) bool {
+        return feed.streamed_call_id == id and feed.streamed and feed.stream_complete;
+    }
+
+    /// Write one already-redacted output line, replacing terminal controls before they reach tmux.
+    pub fn writeLiveLine(feed: *Feed, text: []const u8) !void {
+        var buffer: [4096]u8 = undefined;
+        var file_writer = feed.writer(&buffer) orelse return error.TmuxPaneClosed;
+        const out = &file_writer.interface;
+        try out.writeAll("  │ ");
+        const view = std.unicode.Utf8View.init(text) catch {
+            try out.writeAll("[non-UTF-8 line withheld]\r\n");
+            try out.flush();
+            feed.streamed_call_id = feed.current_call_id;
+            feed.streamed = true;
+            return;
+        };
+        var it = view.iterator();
+        var ended = false;
+        while (it.nextCodepointSlice()) |bytes| {
+            const cp = try std.unicode.utf8Decode(bytes);
+            if (cp == '\n') {
+                try out.writeAll("\r\n");
+                ended = true;
+            } else if (cp < 32 or (cp >= 127 and cp <= 159)) {
+                try out.writeByte(if (cp == '\t' or cp == '\r') ' ' else '?');
+                ended = false;
+            } else {
+                try out.writeAll(bytes);
+                ended = false;
+            }
+        }
+        if (!ended) try out.writeAll("\r\n");
+        try out.flush();
+        feed.streamed_call_id = feed.current_call_id;
+        feed.streamed = true;
     }
 
     pub fn deinit(feed: *Feed) void {

@@ -234,7 +234,7 @@ pub const Ui = struct {
         try ui.out.flush();
     }
 
-    /// Only this task writes to the terminal; the worker owns network/tool I/O.
+    /// The main task writes the transcript; workers own tool I/O and may stream to the isolated tmux pane.
     pub fn work(ui: Ui, label: []const u8, comptime function: anytype, args: anytype) anyerror!@typeInfo(@typeInfo(@TypeOf(function)).@"fn".return_type.?).error_union.payload {
         if (!ui.interactive) {
             if (!std.mem.eql(u8, label, "Running tool...")) try ui.note(label);
@@ -500,24 +500,27 @@ pub const Ui = struct {
         try ui.styleTo(out, "\x1b[0m");
         try out.writeAll("\r\n");
         try out.flush();
+        feed.beginCall(id);
     }
 
     fn writeTmuxBashResult(ui: Ui, feed: *TmuxFeed, id: usize, result: []const u8, failed: bool, start: Io.Timestamp) !void {
         var buffer: [4096]u8 = undefined;
         var stream = feed.writer(&buffer) orelse return error.TmuxPaneClosed;
         const out = &stream.interface;
-        try ui.styleTo(out, "\x1b[2m");
-        if (id > 0) try out.print("  output [{d}]\r\n", .{id}) else try out.writeAll("  output\r\n");
-        try ui.styleTo(out, "\x1b[0m");
-        const trimmed = std.mem.trimEnd(u8, result, "\n");
-        if (trimmed.len == 0) {
-            try out.writeAll("  (empty)\r\n");
-        } else {
-            var lines = std.mem.splitScalar(u8, trimmed, '\n');
-            while (lines.next()) |line| {
-                try out.writeAll("  │ ");
-                try ui.safeTo(out, line, std.math.maxInt(usize));
-                try out.writeAll("\r\n");
+        if (!feed.hasCompleteStream(id)) {
+            try ui.styleTo(out, "\x1b[2m");
+            if (id > 0) try out.print("  output [{d}]\r\n", .{id}) else try out.writeAll("  output\r\n");
+            try ui.styleTo(out, "\x1b[0m");
+            const trimmed = std.mem.trimEnd(u8, result, "\n");
+            if (trimmed.len == 0) {
+                try out.writeAll("  (empty)\r\n");
+            } else {
+                var lines = std.mem.splitScalar(u8, trimmed, '\n');
+                while (lines.next()) |line| {
+                    try out.writeAll("  │ ");
+                    try ui.safeTo(out, line, std.math.maxInt(usize));
+                    try out.writeAll("\r\n");
+                }
             }
         }
         try ui.styleTo(out, if (failed) "\x1b[31m" else "\x1b[2m");

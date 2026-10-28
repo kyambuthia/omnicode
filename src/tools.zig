@@ -1,6 +1,7 @@
 const std = @import("std");
 const j = @import("json.zig");
 const Io = std.Io;
+const TmuxFeed = @import("tmux.zig").Feed;
 pub const limit = 64 * 1024;
 const byte_read_limit = 60 * 1024;
 pub const Result = struct {
@@ -119,6 +120,7 @@ pub const Context = struct {
     todo: ?*Todo = null,
     secrets: ?*@import("secrets.zig").Secrets = null,
     env: ?*const std.process.Environ.Map = null,
+    output_feed: ?*TmuxFeed = null,
 
     pub fn readFile(c: Context, path: []const u8) ![]const u8 {
         // Zig 0.17 rejects when the limit is reached; one probe byte makes
@@ -270,7 +272,7 @@ pub const Context = struct {
         if (std.mem.eql(u8, name, "bash")) {
             const timeout = try j.number(args, "timeout_ms", 30_000);
             if (timeout == 0 or timeout > 300_000) return error.InvalidTimeout;
-            return c.commandResult(&.{ "sh", "-c", try j.aliasedString(args, "cmd", "command") }, false, @intCast(timeout));
+            return c.commandResult(&.{ "sh", "-c", try j.aliasedString(args, "cmd", "command") }, false, @intCast(timeout), true);
         }
         const path = try j.optional(args, "path", ".");
         if (std.mem.eql(u8, name, "glob")) return c.commandResult(&.{
@@ -284,7 +286,7 @@ pub const Context = struct {
             "--glob",         "!.cache",       "--glob",
             "!.pytest_cache", "--glob",        try j.str(args, "pat"),
             "--",             path,
-        }, true, 30_000);
+        }, true, 30_000, false);
         if (std.mem.eql(u8, name, "grep")) return c.commandResult(&.{
             "rg",             "--no-config",   "--color=never",
             "-n",             "-m",            "50",
@@ -297,25 +299,33 @@ pub const Context = struct {
             "--glob",         "!.cache",       "--glob",
             "!.pytest_cache", "--",            try j.str(args, "pat"),
             path,
-        }, true, 30_000);
+        }, true, 30_000, false);
         return error.UnknownTool;
     }
 
     pub fn command(c: Context, argv: []const []const u8, search: bool, milliseconds: i64) ![]const u8 {
-        return (try c.commandResult(argv, search, milliseconds)).text;
+        return (try c.commandResult(argv, search, milliseconds, false)).text;
     }
 
-    fn commandResult(c: Context, argv: []const []const u8, search: bool, milliseconds: i64) !Result {
+    fn commandResult(c: Context, argv: []const []const u8, search: bool, milliseconds: i64, live_bash: bool) !Result {
         for (argv) |arg| {
             if (std.mem.indexOfScalar(u8, arg, 0) != null) return error.InvalidCommandArgument;
         }
-        const result = try @import("deadline.zig").run(c.io, @import("command.zig").run, .{ c.a, c.io, std.process.RunOptions{
+        var live_output: ?LiveBashOutput = null;
+        if (live_bash) if (c.output_feed) |feed| {
+            if (feed.active and canStreamLiveOutput(c)) {
+                live_output = LiveBashOutput.init(c, feed) catch null;
+            }
+        };
+        defer if (live_output) |*live| live.deinit();
+        const observer: ?@import("command.zig").OutputObserver = if (live_output) |*live| live.observer() else null;
+        const result = try @import("deadline.zig").run(c.io, @import("command.zig").runObserved, .{ c.a, c.io, std.process.RunOptions{
             .argv = argv,
             .cwd = .{ .dir = c.dir },
             .environ_map = c.env,
             .stdout_limit = .limited(4 * limit),
             .stderr_limit = .limited(4 * limit),
-        } }, milliseconds);
+        }, observer }, milliseconds);
         defer std.crypto.secureZero(u8, @constCast(result.stdout));
         defer std.crypto.secureZero(u8, @constCast(result.stderr));
         if (search and result.term == .exited and result.term.exited == 1) {
@@ -499,6 +509,108 @@ pub const Context = struct {
         return raw;
     }
 };
+
+const LiveBashOutput = struct {
+    context: Context,
+    feed: *TmuxFeed,
+    lines: [2][]u8,
+    line_lens: [2]usize = .{ 0, 0 },
+    finished: [2]bool = .{ false, false },
+    failed: bool = false,
+
+    fn init(context: Context, feed: *TmuxFeed) !LiveBashOutput {
+        const capacity = 4 * limit;
+        const stdout_line = try std.heap.page_allocator.alloc(u8, capacity);
+        errdefer std.heap.page_allocator.free(stdout_line);
+        const stderr_line = try std.heap.page_allocator.alloc(u8, capacity);
+        return .{ .context = context, .feed = feed, .lines = .{ stdout_line, stderr_line } };
+    }
+
+    fn deinit(live: *LiveBashOutput) void {
+        for (live.lines) |line| {
+            std.crypto.secureZero(u8, line);
+            std.heap.page_allocator.free(line);
+        }
+    }
+
+    fn observer(live: *LiveBashOutput) @import("command.zig").OutputObserver {
+        return .{ .context = live, .on_bytes = onBytes, .on_finish = onFinish };
+    }
+
+    fn onBytes(context: *anyopaque, stream: usize, bytes: []const u8) void {
+        const live: *LiveBashOutput = @ptrCast(@alignCast(context));
+        live.receive(stream, bytes) catch {
+            live.failed = true;
+        };
+    }
+
+    fn receive(live: *LiveBashOutput, stream: usize, bytes: []const u8) !void {
+        if (live.failed or !live.feed.active or stream >= live.lines.len) return;
+        var offset: usize = 0;
+        while (offset < bytes.len) {
+            const newline = std.mem.indexOfScalar(u8, bytes[offset..], '\n');
+            const count = if (newline) |index| index + 1 else bytes.len - offset;
+            const current_len = live.line_lens[stream];
+            if (count > live.lines[stream].len - current_len) return error.LiveLineTooLong;
+            @memcpy(live.lines[stream][current_len .. current_len + count], bytes[offset .. offset + count]);
+            live.line_lens[stream] += count;
+            offset += count;
+            if (newline != null) try live.emitLine(stream);
+        }
+    }
+
+    fn emitLine(live: *LiveBashOutput, stream: usize) !void {
+        const raw = live.lines[stream][0..live.line_lens[stream]];
+        defer {
+            std.crypto.secureZero(u8, raw);
+            live.line_lens[stream] = 0;
+        }
+        const safe = if (live.context.secrets) |secrets|
+            try secrets.scrub(std.heap.page_allocator, raw, live.context.env)
+        else
+            raw;
+        defer if (safe.ptr != raw.ptr) {
+            std.crypto.secureZero(u8, @constCast(safe));
+            std.heap.page_allocator.free(@constCast(safe));
+        };
+        try live.feed.writeLiveLine(safe);
+    }
+
+    fn onFinish(context: *anyopaque, stream: usize, complete: bool) void {
+        const live: *LiveBashOutput = @ptrCast(@alignCast(context));
+        if (stream >= live.lines.len or live.finished[stream]) return;
+        live.finished[stream] = true;
+        if (complete and live.line_lens[stream] > 0 and !live.failed) {
+            live.emitLine(stream) catch {
+                live.failed = true;
+            };
+        } else if (!complete) {
+            std.crypto.secureZero(u8, live.lines[stream][0..live.line_lens[stream]]);
+            live.line_lens[stream] = 0;
+            live.failed = true;
+        }
+        if (live.finished[0] and live.finished[1]) {
+            live.feed.markStreamComplete(live.feed.current_call_id, !live.failed and complete);
+        }
+    }
+};
+
+fn canStreamLiveOutput(context: Context) bool {
+    const env = context.env orelse return true;
+    inline for (.{
+        "AN_ABLE_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "XAI_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+    }) |name| {
+        if (env.get(name)) |value| if (std.mem.indexOfAny(u8, value, "\r\n") != null) return false;
+    }
+    return true;
+}
 
 pub fn capCommandOutput(a: j.Allocator, full: []const u8) ![]const u8 {
     if (!std.unicode.utf8ValidateSlice(full))

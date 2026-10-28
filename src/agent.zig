@@ -933,7 +933,9 @@ pub const Agent = struct {
             try tools.validateFields(input, &.{"focus"});
             return .{ .text = try self.runReview(input, ui, usage), .owned_text = true };
         }
-        return ui.work("Running tool...", tools.Context.runResult, .{ self.context, name, input });
+        var tool_context = self.context;
+        tool_context.output_feed = ui.tmux_feed;
+        return ui.work("Running tool...", tools.Context.runResult, .{ tool_context, name, input });
     }
 
     /// Delegate a self-contained investigation or sub-task to a depth-1 child agent.

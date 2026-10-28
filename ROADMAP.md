@@ -152,10 +152,14 @@ normal scrollback model.
 
 Interactive sessions started inside a tmux pane at 100 columns or wider open a
 temporary right-hand Bash output pane using tmux's `split-window -I`. Bash
-commands and completed results go to that pane; assistant text remains in the
-Omnicode feed, which shows a compact completion line. The pane is removed when
-Omnicode exits. Narrow terminals, non-tmux terminals, and tmux startup failures
-keep the inline Bash renderer. This uses tmux's documented stdin forwarding for
+commands appear there before execution, and complete stdout/stderr lines stream
+as they arrive. Assistant text remains in the Omnicode feed, which shows a
+compact completion line. Live lines are secret-scrubbed and terminal controls
+are rendered visibly; incomplete lines are withheld after interruption. A
+completed stream is not printed a second time, while failed or interrupted
+streams retain the final-result fallback. The pane is removed when Omnicode
+exits. Narrow terminals, non-tmux terminals, and tmux startup failures keep the
+inline Bash renderer. This uses tmux's documented stdin forwarding for
 `split-window -I`, without shell interpolation or a persistent output file.
 See the [tmux manual](https://github.com/tmux/tmux/blob/master/tmux.1).
 Verification includes real PTY cancellation/EOF, paste submission, and termios
