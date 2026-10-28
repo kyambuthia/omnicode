@@ -131,6 +131,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Added
 
+- tmux sessions show a compact Bash-result preview in the main feed while the side pane keeps the live stream; `/out` replays full output.
 - `/out list` indexes recent Bash calls by command, status, and duration for full-output replay.
 - Interactive feed labels model replies and tool output separately, with elapsed time on the output header.
 - Contributor instructions and a change history for future releases.

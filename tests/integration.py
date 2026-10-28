@@ -617,7 +617,8 @@ class Integration(unittest.TestCase):
             self.assertIn("/out list indexes", pane_output)
             self.assertIn("/out #<id> reads full", pane_output)
             self.assertRegex(pane_output, r"LIVE_MARKER_[0-9]+")
-            self.assertIsNone(re.search(rb"LIVE_MARKER_[0-9]+", output))
+            self.assertRegex(output, rb"LIVE_MARKER_[0-9]+")
+            self.assertIn(b"/out #1 full", output)
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
             self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
 
@@ -643,7 +644,7 @@ class Integration(unittest.TestCase):
             read_until(b"reopened complete")
             wait_for_request_count(6)
             self.assertRegex(capture_pane(), r"REOPENED_MARKER_[0-9]+")
-            self.assertIsNone(re.search(rb"REOPENED_MARKER_[0-9]+", output))
+            self.assertRegex(output, rb"REOPENED_MARKER_[0-9]+")
             send("/q")
             process.stdin.close()
             process.wait(timeout=10)

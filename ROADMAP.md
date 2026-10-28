@@ -155,8 +155,9 @@ temporary right-hand Bash output pane using tmux's `split-window -I`. Bash
 commands appear there before execution, and complete stdout/stderr lines stream
 as they arrive. Bare carriage returns replace the pending line so progress
 meters show their latest state; captured results are normalized the same way
-for `/out` and model tool results. Assistant text remains in the Omnicode feed,
-which shows a compact completion line. Live lines are secret-scrubbed and
+for `/out` and model tool results. Assistant text and a compact Bash-result
+preview remain in the Omnicode feed, with `/out` available for the full result.
+Live lines are secret-scrubbed and
 terminal controls are rendered visibly; incomplete lines are withheld after
 interruption. Completed streams are not printed a second time; failed or
 interrupted streams retain the final-result fallback. The pane is removed when
