@@ -112,6 +112,21 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             try ui.showOutput(id);
             continue;
         }
+        if (std.mem.eql(u8, line, "/diff")) {
+            const diff = agent.context.collectDiff() catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            defer std.crypto.secureZero(u8, @constCast(diff));
+            try ui.retainDetails(diff);
+            try ui.out.writeAll("\n╭─ GIT STATUS & DIFF · untracked file contents are not included\n");
+            var full = ui;
+            full.verbose = true;
+            try full.preview(diff, "│ ");
+            try ui.out.writeAll("╰─ end\n");
+            try ui.out.flush();
+            continue;
+        }
         if (std.mem.eql(u8, line, "/todo")) {
             try ui.preview(if (todo.len == 0) "(empty todo list)" else todo.slice(), "");
             continue;

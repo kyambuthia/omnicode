@@ -43,6 +43,7 @@ pub const help =
     \\  /resume [name]         Resume saved session (default: latest)
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /out <call-id>         Show a retained Bash result by its feed number
+    \\  /diff                  Show bounded, redacted git status and tracked diff
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
     \\Config: PROVIDER=abliteration|anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL, MAX_TURNS, MAX_REQUESTS_PER_MINUTE
