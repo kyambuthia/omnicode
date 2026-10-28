@@ -37,8 +37,11 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
     var input = std.Io.File.Reader.init(.stdin(), init.io, &input_buffer);
     var composer: core.Input = .{};
     while (true) {
-        var voice_prompt: ?[]const u8 = null;
-        defer if (voice_prompt) |prompt_text| std.crypto.secureZero(u8, @constCast(prompt_text));
+        var voice_prompt: ?[]u8 = null;
+        defer if (voice_prompt) |prompt_text| {
+            std.crypto.secureZero(u8, prompt_text);
+            std.heap.page_allocator.free(prompt_text);
+        };
         if (ui.interactive) {
             ui.width = core.terminalWidth(init.environ_map);
             const tmux_width_now_ready = ui.width >= 100;
@@ -546,13 +549,14 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                     try ui.errorMessage(err);
                     continue;
                 };
-                voice_prompt = transcript;
+                voice_prompt = try std.heap.page_allocator.dupe(u8, transcript);
+                std.crypto.secureZero(u8, @constCast(transcript));
                 var note_scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
                 defer note_scratch.deinit();
-                const note = try std.fmt.allocPrint(note_scratch.allocator(), "Voice: {s}", .{transcript});
+                const note = try std.fmt.allocPrint(note_scratch.allocator(), "Voice: {s}", .{voice_prompt.?});
                 defer std.crypto.secureZero(u8, note);
                 try ui.note(note);
-                active_prompt = transcript;
+                active_prompt = voice_prompt.?;
             } else if (line[0] == '/') {
                 try out.writeAll("Unknown command. Use /help for available commands.\n");
                 continue;

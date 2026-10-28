@@ -1187,7 +1187,7 @@ class Integration(unittest.TestCase):
         self.reply = reply
         result = self.run_agent("execute compatible commands")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("• bash  printf alias-ok", result.stdout)
+        self.assertIn("╭─ BASH  $ printf alias-ok", result.stdout)
         self.assertFalse((self.cwd / "forbidden").exists())
         results = {r["tool_use_id"]: r for r in self.requests[-1][0]["messages"][-1]["content"]}
         for key, output in [("alias", "alias-ok"), ("both", "both-ok")]:
@@ -1924,21 +1924,21 @@ class Integration(unittest.TestCase):
     def test_tool_transcript_previews_and_verbose_mode(self):
         def reply(body):
             if isinstance(body["messages"][-1]["content"], str):
-                return tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\n7\\nlast\\n'"}))
+                return tools(call("bash", {"cmd": "printf '1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n'"}))
             return text("finished")
         self.reply = reply
         compact = self.run_agent("list files")
         self.assertEqual(compact.returncode, 0, compact.stderr)
-        self.assertIn("• bash  printf", compact.stdout)
+        self.assertIn("╭─ BASH  $ printf", compact.stdout)
         self.assertIn("✓ Done", compact.stdout)
-        self.assertIn("3 lines hidden", compact.stdout)
-        self.assertIn("last", compact.stdout)
+        self.assertIn("6 lines hidden", compact.stdout)
+        self.assertIn("18", compact.stdout)
         self.assertIn("1 tool call", compact.stdout)
         self.assertNotIn("\x1b", compact.stdout)
         verbose = self.run_agent("--verbose", "list files")
         self.assertEqual(verbose.returncode, 0, verbose.stderr)
         self.assertNotIn("lines hidden", verbose.stdout)
-        self.assertIn("    5\n", verbose.stdout)
+        self.assertIn("    │ 5\n", verbose.stdout)
         repl = self.run_agent(stdin="/help\n/model\n/verbose on\nlist files\n/verbose off\n/q\n")
         self.assertEqual(repl.returncode, 0, repl.stderr)
         self.assertIn("Full tool output enabled", repl.stdout)
@@ -2288,7 +2288,9 @@ class Integration(unittest.TestCase):
         self.env.pop("FAST_MODEL", None)
         setup_res = self.run_agent("--setup", "deepseek", "sk-deepseek-secret-9876")
         self.assertEqual(setup_res.returncode, 0, setup_res.stderr)
-        self.assertIn("sk-d...9876", setup_res.stdout)
+        self.assertIn("configured (***)", setup_res.stdout)
+        self.assertNotIn("sk-d", setup_res.stdout)
+        self.assertNotIn("9876", setup_res.stdout)
         self.assertNotIn("secret", setup_res.stdout)
         cfg_file = Path(self.tmp.name) / ".config/omnicode/config.env"
         self.assertTrue(cfg_file.exists())
@@ -2328,6 +2330,7 @@ class Integration(unittest.TestCase):
             "/setup\n"
             "/voice sample.wav\n"
             "/voice model custom/voice-model\n"
+            "/providers xai\n"
             "/voice record 1\n"
             "/exit\n"
         ))
@@ -2335,13 +2338,28 @@ class Integration(unittest.TestCase):
         self.assertIn("Configured xai", repl.stdout)
         self.assertIn("Providers (* = active):", repl.stdout)
         self.assertIn("Active provider set to openrouter", repl.stdout)
-        self.assertIn("sk-o...1234", repl.stdout)
+        self.assertIn("configured (***)", repl.stdout)
+        self.assertNotIn("sk-or-voice-key-1234", repl.stdout)
         self.assertEqual(repl.stdout.count("Voice: list project files"), 2)
         self.assertEqual(repl.stdout.count("voice command executed"), 2)
         # First /voice selected cheap/voice-flash from the OpenRouter catalog; second used pinned custom/voice-model.
         audio_reqs = [r[0] for r in self.requests if isinstance(r[0]["messages"][0]["content"], list)]
         self.assertEqual([r["model"] for r in audio_reqs], ["cheap/voice-flash", "custom/voice-model"])
         self.assertEqual(audio_reqs[0]["messages"][0]["content"][1]["input_audio"]["format"], "wav")
+
+    def test_voice_prompt_survives_model_error_and_history_reset(self):
+        self.env["PROVIDER"] = "openrouter"
+        self.env["VOICE_MODEL"] = "custom/voice-model"
+        self.catalog = {"data": []}
+        (self.cwd / "sample.wav").write_bytes(b"RIFF" + bytes([36, 0, 0, 0]) + b"WAVEfmt ")
+        self.reply = lambda _: text("list project files")
+
+        result = self.run_agent(stdin="/voice sample.wav\n/q\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Voice: list project files", result.stdout)
+        self.assertIn("No eligible model in the live catalog", result.stdout)
+        self.assertEqual(len(self.requests), 1)
 
     def test_init_preserves_existing_instruction_entries_without_force(self):
         destination = self.cwd / "OMNICODE.md"

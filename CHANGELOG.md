@@ -8,6 +8,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Fixed
 
+- Voice prompts now remain valid across model turns and are securely cleared after use.
 - Commands that produce non-UTF-8 output now return an explicit tool error
   when that output is omitted.
 - Bash carriage-return progress is collapsed to the latest state in the feed
