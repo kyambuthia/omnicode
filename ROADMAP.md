@@ -90,6 +90,7 @@ porting its Rust renderer or introducing a terminal framework.
 | [Command cells and head/tail previews](https://github.com/openai/codex/blob/main/codex-rs/tui/src/exec_cell/render.rs) | Tool arguments, completion state/timing, first three/last two lines, explicit omission counts, full-output toggle |
 | [Live status row](https://github.com/openai/codex/blob/main/codex-rs/tui/src/status_indicator_widget.rs) | A single waiting line with elapsed seconds, cleared when the operation finishes |
 | [Diff presentation](https://github.com/openai/codex/blob/main/codex-rs/tui/src/diff_render.rs) | Red/green old/new replacement snippets after successful edits |
+| [Change review](https://support.claude.com/en/articles/14553413-claude-code-cheatsheet) | `/diff` prints bounded, redacted Git status and tracked changes in native scrollback |
 | [Composer help and command discovery](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs) | Startup hints, explicit `/help`, routing status, and verbose-output controls |
 
 Keep the transcript in normal terminal scrollback. This first increment used
@@ -141,9 +142,13 @@ Keep native scrollback and avoid new dependencies; measure LOC growth per change
 
 
 Completed in separate commits: neutral styling, redundant tool-row removal,
-`/details` (one replaceable 64 KiB result), headings/backtick fences, and scoped
-raw input with bracketed paste. Input-history navigation and multiline editing
-remain follow-on features, rather than prerequisites for the input module.
+`/details` (one replaceable 64 KiB result), headings/backtick fences, scoped raw
+input with bracketed paste, and bounded up/down input history with secret
+redaction. Multiline editing remains a follow-on feature. The feed now separates
+assistant and Bash output, retains four recent Bash results for `/out`, and
+offers `/diff` for a bounded Git status and tracked-change view; untracked file
+contents are not included. Input and transcript state preserve the project's
+normal scrollback model.
 Verification includes real PTY cancellation/EOF, paste submission, and termios
 restoration both during API requests and after exit. Terminal sequences follow
 [xterm's bracketed-paste protocol](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).
@@ -177,6 +182,23 @@ Supersedes the static GPT-4.1 Nano/Mini defaults and fallback price table above.
 - [x] `--` passes the remaining arguments literally; `--help`/`--skills` stay offline.
 - [x] Reasoning blocks (`thinking`, `redacted_thinking`) are preserved in history
   so GLM/DeepSeek tool continuations stay valid.
+
+## Plan mode (completed)
+
+`--plan` starts a one-shot task or REPL in read-only planning mode. `/plan on`
+and `/plan off` switch modes during a REPL. The mode updates both the system
+instructions and the advertised tool schema; only `read`, `glob`, `grep`, and
+`skill` remain available while planning. A session started with `--read-only`
+keeps that restriction after `/plan off`.
+
+This adapts Claude Code's documented read-only Plan mode and Codex's separate
+permission profile boundary, using the existing tool allowlist. fx also exposes
+an explicit permission mode. Omnicode keeps this increment small and does not
+add a per-action approval system.
+
+- [Claude Code Plan mode](https://support.claude.com/en/articles/14553413-claude-code-cheatsheet)
+- [Codex permission instructions](https://github.com/openai/codex/blob/main/codex-rs/prompts/src/permissions_instructions.rs)
+- [fx permission modes](https://fx.sh/docs/configure-fx/permissions)
 
 ## Subagents and compaction (completed)
 
@@ -246,9 +268,8 @@ report, and that usage adds up.
   `context_length` instead of a fixed byte budget.
 - **Retry for reads only:** retry idempotent HTTP failures (429/5xx) once with
   backoff. Mutating tool effects are never replayed.
-- **Plan/todo tool:** a small in-memory checklist that the model updates. It
-  survives compaction verbatim and anchors long tasks.
-- **Input history:** up/down arrows in the composer (already listed as a follow-on).
+- [x] **Plan/todo tool:** the in-memory checklist survives compaction and anchors long tasks.
+- [x] **Input history:** up/down arrows navigate bounded, secret-scrubbed prompt history.
 
 ### Order
 
