@@ -1946,6 +1946,7 @@ class Integration(unittest.TestCase):
         self.assertEqual(repl.returncode, 0, repl.stderr)
         self.assertIn("Full tool output enabled", repl.stdout)
         self.assertGreaterEqual(repl.stdout.count("BASH output #1"), 2)
+        self.assertIn("\n  $ printf", repl.stdout)
         self.assertIn("18", repl.stdout)
         self.assertNotIn("lines hidden", repl.stdout)
         self.assertIn("fast-test-model", repl.stdout)

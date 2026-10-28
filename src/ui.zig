@@ -8,6 +8,7 @@ const TmuxFeed = @import("tmux.zig").Feed;
 /// The latest tool result plus a small recent Bash-output ring, all bounded independently of history.
 pub const Details = struct {
     pub const output_count = 4;
+    pub const command_limit = 2048;
 
     pub const Output = struct {
         id: usize = 0,
@@ -15,6 +16,9 @@ pub const Details = struct {
         len: usize = 0,
         present: bool = false,
         truncated: bool = false,
+        command: [command_limit]u8 = undefined,
+        command_len: usize = 0,
+        command_truncated: bool = false,
     };
 
     bytes: [64 * 1024]u8 = undefined,
@@ -36,13 +40,27 @@ pub const Details = struct {
         if (id == 0) return;
         const output = &self.outputs[id % output_count];
         std.crypto.secureZero(u8, output.bytes[0..]);
+        std.crypto.secureZero(u8, output.command[0..]);
         output.id = id;
         output.len = @min(text.len, output.bytes.len);
         while (output.len > 0 and !std.unicode.utf8ValidateSlice(text[0..output.len])) output.len -= 1;
         @memcpy(output.bytes[0..output.len], text[0..output.len]);
         output.present = true;
         output.truncated = output.len < text.len;
+        output.command_len = 0;
+        output.command_truncated = false;
         self.latest_output_id = id;
+    }
+
+    pub fn saveOutputCommand(self: *Details, id: usize, text: []const u8) void {
+        if (id == 0) return;
+        const output = &self.outputs[id % output_count];
+        if (!output.present or output.id != id) return;
+        std.crypto.secureZero(u8, output.command[0..]);
+        output.command_len = @min(text.len, output.command.len);
+        while (output.command_len > 0 and !std.unicode.utf8ValidateSlice(text[0..output.command_len])) output.command_len -= 1;
+        @memcpy(output.command[0..output.command_len], text[0..output.command_len]);
+        output.command_truncated = output.command_len < text.len;
     }
 
     pub fn findOutput(self: *const Details, id: usize) ?*const Output {
@@ -74,10 +92,13 @@ pub const Details = struct {
         self.latest_output_id = 0;
         for (&self.outputs) |*output| {
             std.crypto.secureZero(u8, output.bytes[0..]);
+            std.crypto.secureZero(u8, output.command[0..]);
             output.id = 0;
             output.len = 0;
             output.present = false;
             output.truncated = false;
+            output.command_len = 0;
+            output.command_truncated = false;
         }
     }
 };
@@ -398,6 +419,7 @@ pub const Ui = struct {
         try ui.retainDetails(result);
         if (std.mem.eql(u8, name, "bash")) {
             try ui.retainOutput(call_id, result);
+            try ui.retainOutputCommand(call_id, j.aliasedString(args, "cmd", "command") catch "");
             var in_tmux = false;
             if (ui.tmux_feed) |feed| {
                 if (feed.active) {
@@ -469,6 +491,16 @@ pub const Ui = struct {
         details.saveOutput(id, safe_text);
     }
 
+    pub fn retainOutputCommand(ui: Ui, id: usize, text: []const u8) !void {
+        if (id == 0) return;
+        const details = ui.details orelse return;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const safe_text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), text, ui.env) else text;
+        defer if (safe_text.ptr != text.ptr) std.crypto.secureZero(u8, @constCast(safe_text));
+        details.saveOutputCommand(id, safe_text);
+    }
+
     pub fn showDetails(ui: Ui) !void {
         const details = ui.details orelse return ui.note("No retained tool output.");
         if (!details.present) return ui.note("No retained tool output.");
@@ -487,6 +519,12 @@ pub const Ui = struct {
             return;
         };
         try ui.out.print("\n╭─ BASH output #{d}\n", .{id});
+        if (output.command_len > 0) {
+            try ui.out.writeAll("  $ ");
+            try ui.safe(output.command[0..output.command_len], std.math.maxInt(usize));
+            if (output.command_truncated) try ui.out.writeAll("...");
+            try ui.out.writeByte('\n');
+        }
         var full = ui;
         full.verbose = true;
         try full.preview(output.bytes[0..output.len], "│ ");
@@ -639,12 +677,33 @@ test "details bound memory, truncate UTF-8 safely, and evict the previous result
 test "latest Bash output follows the newest saved call and clears with details" {
     var details: Details = .{};
     details.saveOutput(1, "first");
+    details.saveOutputCommand(1, "printf first");
     const first = details.latestOutput().?;
     try std.testing.expectEqualStrings("first", first.bytes[0..first.len]);
+    try std.testing.expectEqualStrings("printf first", first.command[0..first.command_len]);
     details.saveOutput(2, "second");
+    details.saveOutputCommand(2, "printf second");
     try std.testing.expectEqual(2, details.latestOutput().?.id);
+    try std.testing.expectEqualStrings("printf second", details.latestOutput().?.command[0..details.latestOutput().?.command_len]);
     details.clear();
     try std.testing.expect(details.latestOutput() == null);
+    try std.testing.expectEqual(0, details.outputs[2 % Details.output_count].command_len);
+}
+
+test "repeated Bash output shows its redacted command" {
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "private-token-998");
+    var details: Details = .{};
+    details.saveOutput(1, "done");
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details, .secrets = &secrets };
+
+    try ui.retainOutputCommand(1, "printf private-token-998");
+    try ui.showLatestOutput();
+
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "$ printf [REDACTED:TOKEN]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "private-token-998") == null);
 }
 
 test "model replies and tool output have explicit source labels" {
