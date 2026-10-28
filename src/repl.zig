@@ -33,6 +33,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
     var resized_tmux_feed: ?core.TmuxFeed = null;
     defer if (resized_tmux_feed) |*feed| feed.deinit();
     var tmux_width_ready = ui.width >= 100;
+    var tmux_user_disabled = false;
     var input_buffer: [16 * 1024]u8 = undefined;
     var input = std.Io.File.Reader.init(.stdin(), init.io, &input_buffer);
     var composer: core.Input = .{};
@@ -56,7 +57,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 ui.tmux_feed = null;
                 resized_tmux_feed = null;
                 if (closed_pane) try ui.note("Terminal narrowed below 100 columns; Bash output now stays in the feed.");
-            } else if (!tmux_width_ready and tmux_width_now_ready and init.environ_map.get("TMUX_PANE") != null) {
+            } else if (!tmux_width_ready and tmux_width_now_ready and !tmux_user_disabled and init.environ_map.get("TMUX_PANE") != null) {
                 if (core.TmuxFeed.start(init.io, init.environ_map, ui.width)) |maybe_feed| {
                     if (maybe_feed) |feed| {
                         resized_tmux_feed = feed;
@@ -154,6 +155,47 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 continue;
             };
             try ui.showOutput(id);
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/tmux") or std.mem.startsWith(u8, line, "/tmux ")) {
+            const raw = if (line.len > 5) std.mem.trim(u8, line[5..], " \t") else "";
+            const active = if (ui.tmux_feed) |feed| feed.active else false;
+            if (raw.len == 0 or std.mem.eql(u8, raw, "status")) {
+                try ui.note(if (active) "tmux Bash pane is on. Use /tmux off to keep output in the feed." else "tmux Bash pane is off. Use /tmux on to show live output beside the feed.");
+                continue;
+            }
+            if (std.mem.eql(u8, raw, "off")) {
+                tmux_user_disabled = true;
+                if (ui.tmux_feed) |feed| if (feed.active) feed.disable();
+                ui.tmux_feed = null;
+                resized_tmux_feed = null;
+                try ui.note(if (active) "tmux Bash pane closed; Bash results stay in the feed." else "tmux Bash pane remains off; use /tmux on to reopen it.");
+                continue;
+            }
+            if (std.mem.eql(u8, raw, "on")) {
+                tmux_user_disabled = false;
+                if (active) {
+                    try ui.note("tmux Bash pane is already on.");
+                } else if (init.environ_map.get("TMUX_PANE") == null) {
+                    try ui.note("Run Omnicode inside tmux to open the Bash pane.");
+                } else if (ui.width < 100) {
+                    try ui.note("The tmux Bash pane needs at least 100 columns; output stays in the feed for now.");
+                } else if (core.TmuxFeed.start(init.io, init.environ_map, ui.width)) |maybe_feed| {
+                    if (maybe_feed) |feed| {
+                        resized_tmux_feed = feed;
+                        ui.tmux_feed = &resized_tmux_feed.?;
+                        try ui.note("tmux Bash pane opened. Ctrl+O replays the latest output in the feed.");
+                    } else {
+                        try ui.note("Could not open the tmux Bash pane; Bash output stays in the feed.");
+                    }
+                } else |err| {
+                    if (err == error.Canceled) return err;
+                    ui.tmux_feed = null;
+                    try ui.note("Could not open the tmux Bash pane; Bash output stays in the feed.");
+                }
+                continue;
+            }
+            try ui.note("usage: /tmux [status|on|off]");
             continue;
         }
         if (std.mem.eql(u8, line, "/diff")) {

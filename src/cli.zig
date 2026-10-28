@@ -44,7 +44,7 @@ pub const help =
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /out [call-id|list]    Show Bash output or list recent calls
     \\  Ctrl+O                Show latest Bash output and return to the current prompt
-    \\  tmux Bash pane         Opens beside the feed in interactive sessions ≥100 columns wide
+    \\  /tmux [status|on|off] Toggle the live Bash pane in tmux (requires ≥100 columns)
     \\  /diff                  Show bounded, redacted git status and tracked diff
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)

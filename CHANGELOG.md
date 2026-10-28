@@ -132,6 +132,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Added
 
+- `/tmux on|off` controls the live Bash pane; an explicit off choice stays off across terminal resizes for the session.
 - `Ctrl+O` prints the latest retained Bash result inline and restores the current prompt draft.
 - tmux sessions show a compact Bash-result preview in the main feed while the side pane keeps the live stream; `/out` replays full output.
 - `/out list` indexes recent Bash calls by command, status, and duration for full-output replay.

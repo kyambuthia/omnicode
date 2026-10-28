@@ -158,7 +158,8 @@ meters show their latest state; captured results are normalized the same way
 for `/out` and model tool results. Assistant text and a compact Bash-result
 preview remain in the Omnicode feed, with `/out` available for the full result.
 `Ctrl+O` prints the latest retained Bash result while preserving the current
-prompt draft. Live lines are secret-scrubbed and
+prompt draft. `/tmux on|off` controls the side pane, and an explicit off choice
+survives terminal resizes for the session. Live lines are secret-scrubbed and
 terminal controls are rendered visibly; incomplete lines are withheld after
 interruption. Completed streams are not printed a second time; failed or
 interrupted streams retain the final-result fallback. The pane is removed when
