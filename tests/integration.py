@@ -2171,13 +2171,13 @@ class Integration(unittest.TestCase):
         self.assertIn("- check: Check the project", result.stdout)
         self.assertEqual(self.requests, [])
 
-    def test_retained_details_replace_and_sanitize(self):
+    def test_latest_output_replay_sanitizes_terminal_controls(self):
         self.reply = lambda _: tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\nlast\\033[2J'"})) if len(self.requests) == 1 else text()
         result = self.run_agent(stdin="/details\nlist files\n/details\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("No retained tool output", result.stdout)
-        self.assertIn("Last tool result", result.stdout)
-        self.assertIn("    4\n", result.stdout)
+        self.assertIn("BASH output #1", result.stdout)
+        self.assertIn("    │ 4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
     def test_invalid_environment_credentials_are_rejected_before_http(self):
