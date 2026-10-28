@@ -149,7 +149,11 @@ pub const Ui = struct {
         try ui.out.writeAll("\n  ");
         try ui.safe(provider, 30);
         try ui.out.writeAll(" · automatic task routing\n\n  /help commands  /model routing  /skills instructions\n\n");
-        if (ui.tmux_feed != null) try ui.note("Bash output is in the tmux side pane. Use /out <id> to repeat recent output here.");
+        if (ui.tmux_feed) |feed| {
+            if (feed.active) try ui.note("Bash output is in the tmux side pane. Use /out <id> to repeat recent output here.");
+        } else if (ui.env) |env| {
+            if (env.get("TMUX_PANE") != null and ui.width >= 100) try ui.note("Could not open a tmux Bash pane; Bash output will stay in the feed.");
+        }
     }
 
     pub fn prompt(ui: Ui) !void {

@@ -120,6 +120,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     route.mode = mode;
     var tmux_feed: core.TmuxFeed = undefined;
     var tmux_feed_active = false;
+    var tmux_start_failed = false;
     const tmux_tty = (std.Io.File.stdout().isTty(init.io) catch false) and
         !std.mem.eql(u8, init.environ_map.get("TERM") orelse "", "dumb");
     if (tmux_tty and !json_output and init.environ_map.get("TMUX_PANE") != null) {
@@ -132,7 +133,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
             }
         } else |err| {
             if (err == error.Canceled) return err;
-            try ui.note("Could not open a tmux Bash pane; Bash output will stay in the feed.");
+            tmux_start_failed = true;
         }
     }
     defer if (tmux_feed_active) tmux_feed.deinit();
@@ -156,6 +157,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         const prompt = try std.mem.join(a, " ", args[first..]);
         defer std.crypto.secureZero(u8, prompt);
         if (tmux_feed_active) try ui.note("Bash output is in the tmux side pane.");
+        if (tmux_start_failed) try ui.note("Could not open a tmux Bash pane; Bash output will stay in the feed.");
         var task_ui = ui;
         task_ui.details = null;
         agent.respond(prompt, task_ui) catch |err| {
