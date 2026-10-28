@@ -252,7 +252,7 @@ pub const Input = struct {
             }
             if (!paste and c == 15) {
                 try ui.out.writeByte('\n');
-                try ui.showLatestOutput();
+                try ui.showLatestResult();
                 try redrawComposer(ui, self.bytes[0..n]);
                 continue;
             }

@@ -2060,7 +2060,7 @@ class Integration(unittest.TestCase):
         self.reply = reply
         result = self.run_agent(stdin="read both files\n/details list\n/details 1\n/details #2\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Recent tool results", result.stdout)
+        self.assertIn("Recent tool outputs", result.stdout)
         self.assertIn("#1 · read", result.stdout)
         self.assertIn("#2 · read", result.stdout)
         self.assertIn("TOOL #1 · read", result.stdout)
@@ -2068,6 +2068,27 @@ class Integration(unittest.TestCase):
         self.assertIn("first-six", result.stdout)
         self.assertIn("second-two", result.stdout)
         self.assertEqual(len(self.requests), 2)
+
+    def test_recent_output_index_unifies_bash_and_other_tools(self):
+        (self.cwd / "target.txt").write_text("tool-result-marker\n")
+
+        def reply(body):
+            if isinstance(body["messages"][-1]["content"], str):
+                return tools(call("bash", {"cmd": "printf bash-result-marker"}, "bash"),
+                             call("read", {"path": "target.txt"}, "read"))
+            return text("finished")
+
+        self.reply = reply
+        result = self.run_agent(stdin="run both tools\n/details list\n/details 1\n/details #2\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        listing = result.stdout.split("Recent tool outputs", 1)[-1].split("Use /details", 1)[0]
+        self.assertIn("#2 · read", listing, listing)
+        self.assertIn("#1 · BASH", listing, listing)
+        self.assertLess(listing.index("#2 · read"), listing.index("#1 · BASH"))
+        self.assertIn("BASH output #1", result.stdout)
+        self.assertIn("TOOL #2 · read", result.stdout)
+        self.assertIn("bash-result-marker", result.stdout)
+        self.assertIn("tool-result-marker", result.stdout)
 
     def test_new_secrets_scrub_already_retained_tool_results(self):
         secret = "late-retained-secret-773"

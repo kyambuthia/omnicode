@@ -51,8 +51,8 @@ pub const Details = struct {
     next_output_id: usize = 1,
     latest_output_id: usize = 0,
     tool_outputs: [tool_output_count]ToolOutput = [_]ToolOutput{ .{}, .{}, .{}, .{} },
-    next_tool_output_id: usize = 1,
     latest_tool_output_id: usize = 0,
+    latest_result_id: usize = 0,
 
     pub fn beginOutput(self: *Details) usize {
         const id = self.next_output_id;
@@ -77,6 +77,7 @@ pub const Details = struct {
         output.failed = false;
         output.elapsed_ms = 0;
         self.latest_output_id = id;
+        self.latest_result_id = id;
     }
 
     pub fn saveOutputCommand(self: *Details, id: usize, text: []const u8) void {
@@ -111,10 +112,7 @@ pub const Details = struct {
     }
 
     pub fn beginToolOutput(self: *Details) usize {
-        const id = self.next_tool_output_id;
-        self.next_tool_output_id +%= 1;
-        if (self.next_tool_output_id == 0) self.next_tool_output_id = 1;
-        return id;
+        return self.beginOutput();
     }
 
     pub fn saveToolOutput(self: *Details, id: usize, name: []const u8, summary: []const u8, text: []const u8) void {
@@ -140,6 +138,7 @@ pub const Details = struct {
         output.failed = false;
         output.elapsed_ms = 0;
         self.latest_tool_output_id = id;
+        self.latest_result_id = id;
     }
 
     pub fn finishToolOutput(self: *Details, id: usize, failed: bool, elapsed_ms: u64) void {
@@ -185,6 +184,7 @@ pub const Details = struct {
         self.truncated = false;
         self.latest_output_id = 0;
         self.latest_tool_output_id = 0;
+        self.latest_result_id = 0;
         for (&self.outputs) |*output| {
             std.crypto.secureZero(u8, output.bytes[0..]);
             std.crypto.secureZero(u8, output.command[0..]);
@@ -688,6 +688,20 @@ pub const Ui = struct {
         if (details.truncated) try ui.note("Result exceeds 64 KiB; retained prefix only.");
     }
 
+    pub fn showLatestResult(ui: Ui) !void {
+        const details = ui.details orelse return ui.note("No retained tool output.");
+        if (details.latest_result_id == 0) return ui.note("No retained tool output.");
+        try ui.showResult(details.latest_result_id);
+    }
+
+    pub fn showResult(ui: Ui, id: usize) !void {
+        const details = ui.details orelse return ui.note("No retained tool output.");
+        if (details.findOutput(id) != null) return ui.showOutput(id);
+        if (details.findToolOutput(id) != null) return ui.showToolOutput(id);
+        var note_buf: [128]u8 = undefined;
+        try ui.note(std.fmt.bufPrint(&note_buf, "No retained tool output for #{d}; recent results are kept separately by type.", .{id}) catch "No retained tool output for that call.");
+    }
+
     pub fn showToolOutput(ui: Ui, id: usize) !void {
         const details = ui.details orelse return ui.note("No retained tool results.");
         const output = details.findToolOutput(id) orelse {
@@ -717,21 +731,36 @@ pub const Ui = struct {
         if (output.truncated) try ui.note("Tool result exceeds the retained 32 KiB limit; showing the prefix.");
     }
 
-    pub fn showToolOutputList(ui: Ui) !void {
+    pub fn showRecentOutputs(ui: Ui) !void {
         const details = ui.details orelse return ui.note("No retained tool results.");
-        if (details.latest_tool_output_id == 0) return ui.note("No retained tool results.");
-        try ui.out.writeAll("\nRecent tool results\n");
-        var id = details.latest_tool_output_id;
+        if (details.latest_result_id == 0) return ui.note("No retained tool outputs.");
+        try ui.out.writeAll("\nRecent tool outputs\n");
+        var id = details.latest_result_id;
         var found = false;
-        for (0..Details.tool_output_count) |_| {
-            if (details.findToolOutput(id)) |output| {
+        for (0..(Details.output_count + Details.tool_output_count)) |_| {
+            if (details.findOutput(id)) |output| {
                 found = true;
                 try ui.out.writeAll("  #");
                 try ui.out.print("{d} · ", .{output.id});
-                try ui.style(if (output.failed) "\x1b[31m" else "\x1b[36m");
+                try ui.style("\x1b[1;36m");
+                try ui.out.writeAll("BASH");
+                try ui.style("\x1b[0m");
+                try ui.out.writeAll(if (output.failed) " · ✗ Failed · " else " · ✓ Done · ");
+                try ui.writeElapsed(output.elapsed_ms);
+                if (output.command_len > 0) {
+                    try ui.out.writeAll("  $ ");
+                    try ui.safe(output.command[0..output.command_len], ui.width -| 36);
+                    if (output.command_truncated) try ui.out.writeAll("...");
+                }
+                try ui.out.writeByte('\n');
+            } else if (details.findToolOutput(id)) |output| {
+                found = true;
+                try ui.out.writeAll("  #");
+                try ui.out.print("{d} · ", .{output.id});
+                try ui.style(if (output.failed) "\x1b[31m" else "\x1b[35m");
                 try ui.safe(output.name[0..output.name_len], Details.tool_name_limit);
                 try ui.style("\x1b[0m");
-                if (output.name_truncated) try ui.out.writeAll("... ");
+                if (output.name_truncated) try ui.out.writeAll("...");
                 try ui.out.writeAll(if (output.failed) " · ✗ Failed · " else " · ✓ Done · ");
                 try ui.writeElapsed(output.elapsed_ms);
                 if (output.summary_len > 0) {
@@ -741,10 +770,10 @@ pub const Ui = struct {
                 }
                 try ui.out.writeByte('\n');
             }
-            id = if (id == 1) std.math.maxInt(usize) else id - 1;
+            id -|= 1;
         }
-        if (!found) return ui.note("No retained tool results.");
-        try ui.out.writeAll("Use /details <id> to print a full result.\n");
+        if (!found) return ui.note("No retained tool outputs.");
+        try ui.out.writeAll("Use /details <id> to print any full result; Ctrl+O repeats the latest.\n");
     }
 
     pub fn showOutput(ui: Ui, id: usize) !void {
@@ -1017,7 +1046,7 @@ test "recent tool results list in reverse order and replay by id" {
     defer output.deinit();
     const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details };
 
-    try ui.showToolOutputList();
+    try ui.showRecentOutputs();
     try ui.showToolOutput(first);
 
     const rendered = output.written();
@@ -1026,6 +1055,28 @@ test "recent tool results list in reverse order and replay by id" {
     try std.testing.expect(newest < older);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "TOOL #1 · read · ✓ Done · 125ms") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "alpha contents") != null);
+}
+
+test "latest result and shared ids route to the correct output type" {
+    var details: Details = .{};
+    const bash_id = details.beginOutput();
+    details.saveOutput(bash_id, "bash result");
+    details.finishOutput(bash_id, false, 10);
+    const tool_id = details.beginToolOutput();
+    details.saveToolOutput(tool_id, "read", "file.txt", "tool result");
+    details.finishToolOutput(tool_id, false, 20);
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details };
+
+    try ui.showLatestResult();
+    try ui.showResult(bash_id);
+
+    const rendered = output.written();
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "TOOL #2 · read") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "BASH output #1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "tool result") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "bash result") != null);
 }
 
 test "tool result retention evicts old output and clears its buffer" {

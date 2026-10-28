@@ -138,11 +138,11 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         if (std.mem.eql(u8, line, "/details") or std.mem.startsWith(u8, line, "/details ")) {
             const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
             if (raw.len == 0) {
-                try ui.showDetails();
+                try ui.showLatestResult();
                 continue;
             }
             if (std.mem.eql(u8, raw, "list")) {
-                try ui.showToolOutputList();
+                try ui.showRecentOutputs();
                 continue;
             }
             const id_text = if (std.mem.startsWith(u8, raw, "#")) raw[1..] else raw;
@@ -150,7 +150,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.note("usage: /details [call-id|list] (bare /details shows the latest result)");
                 continue;
             };
-            try ui.showToolOutput(id);
+            try ui.showResult(id);
             continue;
         }
         if (std.mem.eql(u8, line, "/out") or std.mem.startsWith(u8, line, "/out ")) {
