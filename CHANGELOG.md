@@ -135,6 +135,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - The `/` command index now includes local skill descriptions and how to invoke them with `/skill NAME`.
 - Bash result previews use a cyan source rail and offer `Ctrl+O full` when output is folded.
 - Other tool-result previews use a cyan rail to keep tool content distinct from model prose.
+- Model replies use a magenta source rail on every line, including terminals without color.
 - Tool result footers show status and elapsed time without repeating the tool name.
 - `/details list` shows recent Bash and tool outputs together; `/details <id>` replays either source.
 - `Ctrl+O` replays the latest Bash or tool result while preserving the prompt draft.

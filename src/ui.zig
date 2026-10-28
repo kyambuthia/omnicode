@@ -428,6 +428,9 @@ pub const Ui = struct {
         var fence: usize = 0;
         while (lines.next()) |line| {
             try ui.out.writeAll("  ");
+            try ui.style("\x1b[35m");
+            try ui.out.writeAll("│ ");
+            try ui.style("\x1b[0m");
             var body = line;
             var ticks: usize = 0;
             while (ticks < line.len and line[ticks] == '`') : (ticks += 1) {}
@@ -1136,13 +1139,14 @@ test "model replies and tool output have explicit source labels" {
     try ui.toolEnd("read\x1b[2J", .null, "file contents", false, Io.Clock.awake.now(std.testing.io), 0);
     const output = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "◆ MODEL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "  │ model answer") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "⎿ ✓ Done ·") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "│ file contents") != null);
     try std.testing.expect(std.mem.indexOfScalar(u8, output, 27) == null);
     try std.testing.expect(std.mem.indexOf(u8, output, "BASH") == null);
 }
 
-test "tool result bodies use a cyan source rail while model prose stays plain" {
+test "tool results and model prose use distinct source rails" {
     var buffer: [4096]u8 = undefined;
     var writer = Io.Writer.fixed(&buffer);
     const ui: Ui = .{ .out = &writer, .io = std.testing.io, .color = true };
@@ -1151,7 +1155,7 @@ test "tool result bodies use a cyan source rail while model prose stays plain" {
     try ui.toolEnd("read", .null, "file contents", false, Io.Clock.awake.now(std.testing.io), 0);
 
     const output = writer.buffered();
-    const model = std.mem.indexOf(u8, output, "  model answer").?;
+    const model = std.mem.indexOf(u8, output, "\x1b[35m│ \x1b[0mmodel answer").?;
     const tool = std.mem.indexOf(u8, output, "\x1b[36m│ \x1b[0mfile contents").?;
     try std.testing.expect(model < tool);
     try std.testing.expect(std.mem.indexOf(u8, output, "• read") != null);
@@ -1162,18 +1166,18 @@ test "tool result bodies use a cyan source rail while model prose stays plain" {
     try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "\x1b[36m│ \x1b[0m(empty)") != null);
 }
 
-test "Markdown headings respect fences and plain output preserves the source" {
+test "Markdown headings respect fences with or without color" {
     var buffer: [4096]u8 = undefined;
     var writer = Io.Writer.fixed(&buffer);
     var ui: Ui = .{ .out = &writer, .io = std.testing.io, .color = true };
     const source = "# Title\n```zig\n# literal\n```\n## Next";
     try ui.message(source);
     try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "\x1b[1mTitle") != null);
-    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "  # literal") != null);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "\x1b[35m│ \x1b[0m# literal") != null);
     writer.end = 0;
     ui.color = false;
     try ui.message(source);
-    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "  # Title\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "  │ # Title\n") != null);
     try std.testing.expect(std.mem.indexOfScalar(u8, writer.buffered(), 27) == null);
 }
 
