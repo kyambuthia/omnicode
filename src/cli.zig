@@ -17,7 +17,7 @@ pub const help =
     \\--json                    Emit one JSON object for a one-shot task; progress goes to stderr
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
-    \\  /, /commands          Browse interactive commands
+    \\  /, /commands          Browse built-in commands and local skills
     \\  /help [topic]          Show all commands or search help by topic
     \\  /providers [...]       List, switch, or configure providers & API keys (/providers <N|name> [key])
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)

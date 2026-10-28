@@ -132,6 +132,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Added
 
+- The `/` command index now includes local skill descriptions and how to invoke them with `/skill NAME`.
 - Enter `/` or `/commands` to browse the REPL command index without calling a model.
 - `/help <topic>` searches command help case-insensitively instead of printing the full help page.
 - `/tmux on|off` controls the live Bash pane; an explicit off choice stays off across terminal resizes for the session.

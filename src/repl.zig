@@ -374,6 +374,20 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         if (std.mem.eql(u8, line, "/") or std.mem.eql(u8, line, "/commands")) {
             try out.writeAll("\nInteractive commands\n");
             try out.writeAll(cli.replCommandHelp());
+            const skills = agent.context.skills() catch |err| {
+                if (err == error.Canceled) return err;
+                try ui.errorMessage(err);
+                continue;
+            };
+            defer std.crypto.secureZero(u8, @constCast(skills));
+            try out.writeAll("\nAvailable skills (load with /skill NAME)\n");
+            if (skills.len == 0) {
+                try ui.note("No local skills available yet.");
+            } else {
+                var full = ui;
+                full.verbose = true;
+                try full.preview(skills, "");
+            }
             continue;
         }
         if (std.mem.eql(u8, line, "/help") or std.mem.startsWith(u8, line, "/help ")) {

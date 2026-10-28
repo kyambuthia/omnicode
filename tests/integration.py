@@ -2067,6 +2067,14 @@ class Integration(unittest.TestCase):
         self.assertNotIn("Config:", result.stdout)
         self.assertEqual(self.requests, [])
 
+    def test_slash_command_index_lists_local_skill_metadata(self):
+        self.skill()
+        result = self.run_agent(stdin="/\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Available skills (load with /skill NAME)", result.stdout)
+        self.assertIn("- check: Check the project", result.stdout)
+        self.assertEqual(self.requests, [])
+
     def test_retained_details_replace_and_sanitize(self):
         self.reply = lambda _: tools(call("bash", {"cmd": "printf 'first\\n2\\n3\\n4\\n5\\n6\\nlast\\033[2J'"})) if len(self.requests) == 1 else text()
         result = self.run_agent(stdin="/details\nlist files\n/details\n/q\n")
