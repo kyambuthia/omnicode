@@ -432,7 +432,7 @@ pub const Ui = struct {
         }
         try ui.out.writeAll(ui.indent);
         try ui.style(if (failed) "\x1b[31m" else "\x1b[36m");
-        try ui.out.print("  ⎿ {s}{s} · ", .{ name, if (failed) " failed" else " output" });
+        try ui.out.print("  ⎿ {s} · {s} · ", .{ name, if (failed) "✗ Failed" else "output" });
         try ui.elapsed(start);
         try ui.out.writeByte('\n');
         try ui.style("\x1b[0m");
@@ -653,7 +653,7 @@ test "model replies and tool output have explicit source labels" {
     try ui.toolEnd("read", .null, "file contents", false, Io.Clock.awake.now(std.testing.io), 0);
     const output = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "◆ MODEL") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "⎿ read output") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "⎿ read · output") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "│ file contents") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "✓ Done") == null);
 }
