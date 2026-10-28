@@ -9,7 +9,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 ### Fixed
 
 - Pinned model overrides continue to work after tool-enabled turns and request cleanup.
-- Bare `/out` repeats the latest Bash command and output; numbered output lookup remains available.
+- Bare `/out` repeats the latest Bash command, status, duration, and output; numbered lookup remains available.
 - Voice prompts now remain valid across model turns and are securely cleared after use.
 - Commands that produce non-UTF-8 output now return an explicit tool error
   when that output is omitted.

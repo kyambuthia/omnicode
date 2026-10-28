@@ -19,6 +19,8 @@ pub const Details = struct {
         command: [command_limit]u8 = undefined,
         command_len: usize = 0,
         command_truncated: bool = false,
+        failed: bool = false,
+        elapsed_ms: u64 = 0,
     };
 
     bytes: [64 * 1024]u8 = undefined,
@@ -49,6 +51,8 @@ pub const Details = struct {
         output.truncated = output.len < text.len;
         output.command_len = 0;
         output.command_truncated = false;
+        output.failed = false;
+        output.elapsed_ms = 0;
         self.latest_output_id = id;
     }
 
@@ -61,6 +65,14 @@ pub const Details = struct {
         while (output.command_len > 0 and !std.unicode.utf8ValidateSlice(text[0..output.command_len])) output.command_len -= 1;
         @memcpy(output.command[0..output.command_len], text[0..output.command_len]);
         output.command_truncated = output.command_len < text.len;
+    }
+
+    pub fn finishOutput(self: *Details, id: usize, failed: bool, elapsed_ms: u64) void {
+        if (id == 0) return;
+        const output = &self.outputs[id % output_count];
+        if (!output.present or output.id != id) return;
+        output.failed = failed;
+        output.elapsed_ms = elapsed_ms;
     }
 
     pub fn findOutput(self: *const Details, id: usize) ?*const Output {
@@ -99,6 +111,8 @@ pub const Details = struct {
             output.truncated = false;
             output.command_len = 0;
             output.command_truncated = false;
+            output.failed = false;
+            output.elapsed_ms = 0;
         }
     }
 };
@@ -420,6 +434,10 @@ pub const Ui = struct {
         if (std.mem.eql(u8, name, "bash")) {
             try ui.retainOutput(call_id, result);
             try ui.retainOutputCommand(call_id, j.aliasedString(args, "cmd", "command") catch "");
+            if (ui.details) |details| {
+                const elapsed_ms = start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds();
+                details.finishOutput(call_id, failed, @intCast(@max(0, elapsed_ms)));
+            }
             var in_tmux = false;
             if (ui.tmux_feed) |feed| {
                 if (feed.active) {
@@ -518,7 +536,12 @@ pub const Ui = struct {
             try ui.note(std.fmt.bufPrint(&note_buf, "No retained Bash output for call #{d}; the most recent {d} calls are kept.", .{ id, Details.output_count }) catch "No retained Bash output for that call.");
             return;
         };
-        try ui.out.print("\n╭─ BASH output #{d}\n", .{id});
+        try ui.out.print("\n╭─ BASH output #{d} · {s} · ", .{ id, if (output.failed) "✗ Failed" else "✓ Done" });
+        if (output.elapsed_ms < 1000) {
+            try ui.out.print("{d}ms\n", .{output.elapsed_ms});
+        } else {
+            try ui.out.print("{d}.{d}s\n", .{ @divTrunc(output.elapsed_ms, 1000), @divTrunc(@mod(output.elapsed_ms, 1000), 100) });
+        }
         if (output.command_len > 0) {
             try ui.out.writeAll("  $ ");
             try ui.safe(output.command[0..output.command_len], std.math.maxInt(usize));
@@ -681,10 +704,16 @@ test "latest Bash output follows the newest saved call and clears with details" 
     const first = details.latestOutput().?;
     try std.testing.expectEqualStrings("first", first.bytes[0..first.len]);
     try std.testing.expectEqualStrings("printf first", first.command[0..first.command_len]);
+    details.finishOutput(1, true, 1234);
+    try std.testing.expect(details.latestOutput().?.failed);
+    try std.testing.expectEqual(1234, details.latestOutput().?.elapsed_ms);
     details.saveOutput(2, "second");
     details.saveOutputCommand(2, "printf second");
+    details.finishOutput(2, false, 42);
     try std.testing.expectEqual(2, details.latestOutput().?.id);
     try std.testing.expectEqualStrings("printf second", details.latestOutput().?.command[0..details.latestOutput().?.command_len]);
+    try std.testing.expect(!details.latestOutput().?.failed);
+    try std.testing.expectEqual(42, details.latestOutput().?.elapsed_ms);
     details.clear();
     try std.testing.expect(details.latestOutput() == null);
     try std.testing.expectEqual(0, details.outputs[2 % Details.output_count].command_len);
@@ -695,6 +724,7 @@ test "repeated Bash output shows its redacted command" {
     try secrets.setMemory("TOKEN", "private-token-998");
     var details: Details = .{};
     details.saveOutput(1, "done");
+    details.finishOutput(1, true, 1234);
     var output: Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
     const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details, .secrets = &secrets };
@@ -702,6 +732,7 @@ test "repeated Bash output shows its redacted command" {
     try ui.retainOutputCommand(1, "printf private-token-998");
     try ui.showLatestOutput();
 
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "BASH output #1 · ✗ Failed · 1.2s") != null);
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "$ printf [REDACTED:TOKEN]") != null);
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "private-token-998") == null);
 }
