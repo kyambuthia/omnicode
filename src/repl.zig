@@ -2,18 +2,20 @@ const std = @import("std");
 const core = @import("omnicode");
 const cli = @import("cli.zig");
 
-pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, secrets: *core.Secrets, mode: @FieldType(core.Route, "mode"), read_only: bool, dry_run: bool, initial_route: core.Route) !void {
+pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, secrets: *core.Secrets, mode: @FieldType(core.Route, "mode"), read_only: bool, initial_plan_mode: bool, dry_run: bool, initial_route: core.Route) !void {
     var ui = initial_ui;
     const out = ui.out;
     const usage = ui.usage.?;
     var route = initial_route;
     var automatic = true;
+    var plan_mode = initial_plan_mode;
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
     var todo: core.Todo = .{};
     var limiter: core.RequestLimiter = .{};
     var menu: core.ModelMenu = .{};
     var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
+    if (plan_mode) try agent.setPlanMode(true);
     agent.dry_run = dry_run;
     agent.rate_limiter = &limiter;
     const cwd = try std.process.currentPathAlloc(init.io, a);
@@ -21,6 +23,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
     var status: core.Status = .{ .clock = core.Clock.load(a, init.io, init.environ_map) };
     if (init.environ_map.get("OMNICODE_STATUS")) |name| status.mode = core.Status.parseMode(name) orelse return error.InvalidStatusMode;
     ui.status = &status;
+    if (plan_mode) try ui.note("Plan mode active. Use /plan off to allow edits and commands.");
     const dir = try core.shortenHome(a, cwd, init.environ_map.get("HOME") orelse "");
     if (status.mode == .title) try ui.titleStack(true);
     defer {
@@ -340,6 +343,25 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             try ui.note(if (ui.interactive) "Status line updated." else "Status line applies to interactive terminals only.");
             continue;
         }
+        if (std.mem.eql(u8, line, "/plan") or std.mem.startsWith(u8, line, "/plan ")) {
+            const arg = if (line.len > 5) std.mem.trim(u8, line[5..], " \t") else "on";
+            const enabled = if (std.mem.eql(u8, arg, "on")) true else if (std.mem.eql(u8, arg, "off")) false else {
+                try ui.note("usage: /plan [on|off]");
+                continue;
+            };
+            if (enabled == plan_mode) {
+                try ui.note(if (enabled) "Plan mode is already active." else if (read_only) "Plan mode is off; --read-only still prevents edits and commands." else "Plan mode is already off.");
+                continue;
+            }
+            agent.setPlanMode(enabled) catch |err| {
+                try ui.errorMessage(err);
+                continue;
+            };
+            try agent.resetArena(&arena);
+            plan_mode = enabled;
+            try ui.note(if (enabled) "Plan mode enabled. Only read, glob, grep, and skill tools are available." else if (read_only) "Plan mode disabled; --read-only still prevents edits and commands." else "Plan mode disabled. Edits and commands are available.");
+            continue;
+        }
         if (std.mem.startsWith(u8, line, "/verbose")) {
             if (std.mem.eql(u8, line, "/verbose on")) ui.verbose = true else if (std.mem.eql(u8, line, "/verbose off")) ui.verbose = false else {
                 try out.writeAll("usage: /verbose on|off\n");
@@ -511,6 +533,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         todo.clear();
         route.mode = mode;
         agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
+        if (plan_mode) try agent.setPlanMode(true);
         agent.automatic = automatic;
         agent.dry_run = dry_run;
         agent.rate_limiter = &limiter;

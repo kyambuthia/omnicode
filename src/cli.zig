@@ -2,7 +2,7 @@ const std = @import("std");
 const core = @import("omnicode");
 
 pub const help =
-    \\omnicode [--free|--cost-max] [--verbose] [--read-only] [--dry-run] [--json] [--session NAME] [prompt ...]  Run a task, or start a REPL without arguments.
+    \\omnicode [--free|--cost-max] [--verbose] [--read-only] [--plan] [--dry-run] [--json] [--session NAME] [prompt ...]  Run a task, or start a REPL without arguments.
     \\omnicode --version         Print version (v0.2.0).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
@@ -12,6 +12,7 @@ pub const help =
     \\--cost-max (default)      Optimize live OpenRouter catalog prices
     \\--session NAME            Resume and checkpoint a named one-shot task
     \\--read-only               Restrict model tools to read, glob, grep, and skill
+    \\--plan                    Start in read-only planning mode
     \\--dry-run                 Preview the first proposed tool batch without executing it
     \\--json                    Emit one JSON object for a one-shot task; progress goes to stderr
     \\--free                    Only current zero-price OpenRouter tool models
@@ -29,6 +30,7 @@ pub const help =
     \\  /model <N|MODEL>       Switch to model #N or MODEL (preserves conversation)
     \\  /model PROVIDER MODEL  Switch provider and pin MODEL
     \\  /model auto|fast|strong  Select automatic routing or pin fast/strong tier
+    \\  /plan [on|off]          Toggle read-only planning mode
     \\  /skills, /skill NAME   List or load project instructions
     \\  /verbose on|off        Show full output for future tool calls
     \\  /status inline|pinned|title|off  Status line: provider, model, directory, local time
@@ -54,6 +56,7 @@ pub const Options = struct {
     mode: @FieldType(core.Route, "mode"),
     prompt_only: bool,
     read_only: bool,
+    plan_mode: bool,
     dry_run: bool,
     json_output: bool,
     session_name: ?[]const u8,
@@ -66,6 +69,7 @@ pub const Options = struct {
         var policy_set = false;
         var prompt_only = false;
         var read_only = false;
+        var plan_mode = false;
         var dry_run = false;
         var json_output = false;
         var session_name: ?[]const u8 = null;
@@ -75,6 +79,8 @@ pub const Options = struct {
                 verbose = true;
             } else if (std.mem.eql(u8, arg, "--read-only")) {
                 read_only = true;
+            } else if (std.mem.eql(u8, arg, "--plan")) {
+                plan_mode = true;
             } else if (std.mem.eql(u8, arg, "--dry-run")) {
                 dry_run = true;
             } else if (std.mem.eql(u8, arg, "--json")) {
@@ -97,6 +103,6 @@ pub const Options = struct {
                 return error.UnknownOption;
             } else break;
         }
-        return .{ .first = first, .mode = mode, .prompt_only = prompt_only, .read_only = read_only, .dry_run = dry_run, .json_output = json_output, .session_name = session_name, .verbose = verbose };
+        return .{ .first = first, .mode = mode, .prompt_only = prompt_only, .read_only = read_only, .plan_mode = plan_mode, .dry_run = dry_run, .json_output = json_output, .session_name = session_name, .verbose = verbose };
     }
 };

@@ -47,6 +47,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
     const mode = options.mode;
     const prompt_only = options.prompt_only;
     const read_only = options.read_only;
+    const plan_mode = options.plan_mode;
     const dry_run = options.dry_run;
     const offline_command = isOfflineCommand(args, options);
     const json_output = options.json_output and !offline_command;
@@ -123,6 +124,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         var todo: core.Todo = .{};
         var limiter: core.RequestLimiter = .{};
         var agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = &secrets, .read_only = read_only }, init.environ_map, route);
+        if (plan_mode) try agent.setPlanMode(true);
         agent.dry_run = dry_run;
         agent.rate_limiter = &limiter;
         if (session_name) |name| {
@@ -162,7 +164,7 @@ fn runParsed(init: std.process.Init, a: std.mem.Allocator, args: []const []const
         }
         return;
     }
-    try @import("repl.zig").run(init, a, ui, &secrets, mode, read_only, dry_run, route);
+    try @import("repl.zig").run(init, a, ui, &secrets, mode, read_only, plan_mode, dry_run, route);
 }
 
 fn isOfflineCommand(args: []const []const u8, options: cli.Options) bool {
