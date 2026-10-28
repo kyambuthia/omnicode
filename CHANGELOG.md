@@ -138,12 +138,11 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Model replies use a magenta source rail on every line, including terminals without color.
 - Tool result footers show status and elapsed time without repeating the tool name.
 - `/details list` shows recent Bash and tool outputs together; `/details <id>` replays either source.
-- `Ctrl+O` replays the latest Bash or tool result while preserving the prompt draft.
+- `Ctrl+O` shows the latest result, then cycles backward through retained Bash and tool outputs while preserving the prompt draft.
 - Interactive prompts accept `Ctrl+J` to add a line; Enter still sends the prompt.
 - Enter `/` or `/commands` to browse the REPL command index without calling a model.
 - `/help <topic>` searches command help case-insensitively instead of printing the full help page.
 - `/tmux on|off` controls the live Bash pane; an explicit off choice stays off across terminal resizes for the session.
-- `Ctrl+O` prints the latest retained Bash result inline and restores the current prompt draft.
 - tmux sessions show a compact Bash-result preview in the main feed while the side pane keeps the live stream; `/out` replays full output.
 - `/out list` indexes recent Bash calls by command, status, and duration for full-output replay.
 - Interactive feed labels model replies and tool output separately, with elapsed time on the output header.

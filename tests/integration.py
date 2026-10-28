@@ -613,7 +613,7 @@ class Integration(unittest.TestCase):
             read_until(b"initial complete")
             wait_for_request_count(2)
             pane_output = capture_pane()
-            self.assertIn("Ctrl+O latest", pane_output)
+            self.assertIn("Ctrl+O cycle outputs", pane_output)
             self.assertIn("/out list", pane_output)
             self.assertIn("/out #<id> full", pane_output)
             self.assertRegex(pane_output, r"LIVE_MARKER_[0-9]+")
@@ -638,7 +638,7 @@ class Integration(unittest.TestCase):
             read_until(b"Session usage")
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 1)
             send("/tmux on")
-            read_until(b"tmux Bash pane opened. Ctrl+O replays the latest output in the feed.")
+            read_until(b"tmux Bash pane opened. Ctrl+O cycles recent outputs in the feed.")
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
 
             set_terminal_width(80)
@@ -675,7 +675,7 @@ class Integration(unittest.TestCase):
                 process.wait()
             os.close(master)
 
-    def test_ctrl_o_replays_latest_tool_output_and_restores_prompt_draft(self):
+    def test_ctrl_o_cycles_recent_outputs_and_restores_prompt_draft(self):
         self.env.update(TERM="xterm-256color", COLUMNS="80")
         self.env.pop("NO_COLOR", None)
         (self.cwd / "shortcut.txt").write_text("shortcut-tool-output\n")
@@ -731,6 +731,13 @@ class Integration(unittest.TestCase):
             read_until(b"draft", result_start)
             self.assertIn(b"TOOL #2", output)
             self.assertIn(b"read", output)
+
+            output.clear()
+            os.write(master, b"\x0f")
+            read_until(b"shortcut-bash-output")
+            result_start = output.index(b"shortcut-bash-output")
+            read_until(b"draft", result_start)
+            self.assertIn(b"BASH output #1", output)
 
             os.write(master, b"\x03")
             read_until(b"^C")
@@ -2113,6 +2120,29 @@ class Integration(unittest.TestCase):
         self.assertNotIn(secret, replay)
         self.assertEqual(len(self.requests), 2)
 
+    def test_re_redaction_preserves_latest_output_and_bash_metadata(self):
+        secret = "order-secret-391"
+        (self.cwd / "secret.txt").write_text(secret + "\n")
+
+        def reply(_):
+            if len(self.requests) == 1:
+                return tools(call("read", {"path": "secret.txt"}, "read"),
+                             call("bash", {"cmd": "printf latest-bash-marker"}, "bash"))
+            return text("finished")
+
+        self.reply = reply
+        result = self.run_agent(stdin=f"read then run bash\n/secrets set TOKEN {secret}\n/details\n/details list\n/details #1\n/details #2\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after_secret = result.stdout.split("Stored secret TOKEN", 1)[-1]
+        latest = after_secret.split("Recent tool outputs", 1)[0]
+        self.assertIn("BASH output #2", latest)
+        self.assertIn("latest-bash-marker", latest)
+        listing = after_secret.split("Recent tool outputs", 1)[-1].split("Use /details", 1)[0]
+        self.assertIn("#2 · BASH", listing)
+        self.assertIn("$ printf latest-bash-marker", listing)
+        self.assertIn("[REDACTED:TOKEN]", after_secret)
+        self.assertNotIn(secret, after_secret)
+
     def test_help_search_filters_commands_case_insensitively(self):
         result = self.run_agent(stdin="/help tmux\n/help OuTpUt\n/help no-such-help-topic\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2412,7 +2442,7 @@ class Integration(unittest.TestCase):
                     self.assertEqual(len(self.requests), 1)
                     output.clear()
                     os.write(master, b"\x0f")
-                    until(b"No retained Bash output.")
+                    until(b"No retained tool output.")
                     until(b"manual first")
                     until("  … ".encode())
                     os.write(master, b"manual second\r")

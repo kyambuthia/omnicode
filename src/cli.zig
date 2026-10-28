@@ -44,7 +44,7 @@ pub const help =
     \\  /resume [name]         Resume saved session (default: latest)
     \\  /details [id|list]     Show or list recent Bash and tool outputs
     \\  /out [call-id|list]    Show Bash output or list recent calls
-    \\  Ctrl+O                Show the latest tool output and return to the prompt
+    \\  Ctrl+O                Cycle recent outputs, starting at the latest
     \\  Ctrl+J                Insert a newline without sending the prompt
     \\  /tmux [status|on|off] Toggle the live Bash pane in tmux (requires ≥100 columns)
     \\  /diff                  Show bounded, redacted git status and tracked diff

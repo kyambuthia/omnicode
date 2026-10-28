@@ -198,7 +198,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                     if (maybe_feed) |feed| {
                         resized_tmux_feed = feed;
                         ui.tmux_feed = &resized_tmux_feed.?;
-                        try ui.note("tmux Bash pane opened. Ctrl+O replays the latest output in the feed.");
+                        try ui.note("tmux Bash pane opened. Ctrl+O cycles recent outputs in the feed.");
                     } else {
                         try ui.note("Could not open the tmux Bash pane; Bash output stays in the feed.");
                     }
@@ -704,42 +704,64 @@ fn refreshRouteEnvironment(route: *core.Route, env: *const std.process.Environ.M
 fn redactRetained(agent: *core.Agent, composer: *core.Input, secrets: *const core.Secrets, ui: core.Ui) !void {
     try agent.redactHistory();
     try composer.redactHistory(secrets, agent.env);
-    if (ui.details) |retained| if (retained.present) {
-        const truncated = retained.truncated;
-        const snapshot = try agent.context.a.dupe(u8, retained.bytes[0..retained.len]);
-        defer std.crypto.secureZero(u8, snapshot);
-        try ui.retainDetails(snapshot);
-        retained.truncated = retained.truncated or truncated;
-    };
-    if (ui.details) |retained| for (&retained.outputs) |*output| {
-        if (!output.present) continue;
-        const id = output.id;
-        const truncated = output.truncated;
-        const snapshot = try agent.context.a.dupe(u8, output.bytes[0..output.len]);
-        defer std.crypto.secureZero(u8, snapshot);
-        try ui.retainOutput(id, snapshot);
-        output.truncated = output.truncated or truncated;
-    };
-    if (ui.details) |retained| for (&retained.tool_outputs) |*output| {
-        if (!output.present) continue;
-        const id = output.id;
-        const name_truncated = output.name_truncated;
-        const summary_truncated = output.summary_truncated;
-        const truncated = output.truncated;
-        const failed = output.failed;
-        const elapsed_ms = output.elapsed_ms;
-        const name = try agent.context.a.dupe(u8, output.name[0..output.name_len]);
-        defer std.crypto.secureZero(u8, name);
-        const summary = try agent.context.a.dupe(u8, output.summary[0..output.summary_len]);
-        defer std.crypto.secureZero(u8, summary);
-        const snapshot = try agent.context.a.dupe(u8, output.bytes[0..output.len]);
-        defer std.crypto.secureZero(u8, snapshot);
-        try ui.retainToolOutput(id, name, summary, snapshot);
-        const updated = retained.findToolOutputMutable(id) orelse continue;
-        updated.name_truncated = updated.name_truncated or name_truncated;
-        updated.summary_truncated = updated.summary_truncated or summary_truncated;
-        updated.truncated = updated.truncated or truncated;
-        updated.failed = failed;
-        updated.elapsed_ms = elapsed_ms;
-    };
+    if (ui.details) |retained| {
+        const latest_output_id = retained.latest_output_id;
+        const latest_tool_output_id = retained.latest_tool_output_id;
+        const latest_result_id = retained.latest_result_id;
+        const replay_anchor_id = retained.replay_anchor_id;
+        const replay_cursor_id = retained.replay_cursor_id;
+        if (retained.present) {
+            const truncated = retained.truncated;
+            const snapshot = try agent.context.a.dupe(u8, retained.bytes[0..retained.len]);
+            defer std.crypto.secureZero(u8, snapshot);
+            try ui.retainDetails(snapshot);
+            retained.truncated = retained.truncated or truncated;
+        }
+        for (&retained.outputs) |*output| {
+            if (!output.present) continue;
+            const id = output.id;
+            const truncated = output.truncated;
+            const command_truncated = output.command_truncated;
+            const failed = output.failed;
+            const elapsed_ms = output.elapsed_ms;
+            const snapshot = try agent.context.a.dupe(u8, output.bytes[0..output.len]);
+            defer std.crypto.secureZero(u8, snapshot);
+            const command = try agent.context.a.dupe(u8, output.command[0..output.command_len]);
+            defer std.crypto.secureZero(u8, command);
+            try ui.retainOutput(id, snapshot);
+            try ui.retainOutputCommand(id, command);
+            const updated = retained.findOutputMutable(id) orelse continue;
+            updated.truncated = updated.truncated or truncated;
+            updated.command_truncated = updated.command_truncated or command_truncated;
+            updated.failed = failed;
+            updated.elapsed_ms = elapsed_ms;
+        }
+        for (&retained.tool_outputs) |*output| {
+            if (!output.present) continue;
+            const id = output.id;
+            const name_truncated = output.name_truncated;
+            const summary_truncated = output.summary_truncated;
+            const truncated = output.truncated;
+            const failed = output.failed;
+            const elapsed_ms = output.elapsed_ms;
+            const name = try agent.context.a.dupe(u8, output.name[0..output.name_len]);
+            defer std.crypto.secureZero(u8, name);
+            const summary = try agent.context.a.dupe(u8, output.summary[0..output.summary_len]);
+            defer std.crypto.secureZero(u8, summary);
+            const snapshot = try agent.context.a.dupe(u8, output.bytes[0..output.len]);
+            defer std.crypto.secureZero(u8, snapshot);
+            try ui.retainToolOutput(id, name, summary, snapshot);
+            const updated = retained.findToolOutputMutable(id) orelse continue;
+            updated.name_truncated = updated.name_truncated or name_truncated;
+            updated.summary_truncated = updated.summary_truncated or summary_truncated;
+            updated.truncated = updated.truncated or truncated;
+            updated.failed = failed;
+            updated.elapsed_ms = elapsed_ms;
+        }
+        retained.latest_output_id = latest_output_id;
+        retained.latest_tool_output_id = latest_tool_output_id;
+        retained.latest_result_id = latest_result_id;
+        retained.replay_anchor_id = replay_anchor_id;
+        retained.replay_cursor_id = replay_cursor_id;
+    }
 }

@@ -5,7 +5,7 @@ const Usage = @import("usage.zig").Usage;
 const status_line = @import("status.zig");
 const TmuxFeed = @import("tmux.zig").Feed;
 
-/// The latest tool result plus a small recent Bash-output ring, all bounded independently of history.
+/// The latest tool result plus small recent Bash and tool-output rings, bounded independently of history.
 pub const Details = struct {
     pub const output_count = 4;
     pub const command_limit = 2048;
@@ -53,6 +53,8 @@ pub const Details = struct {
     tool_outputs: [tool_output_count]ToolOutput = [_]ToolOutput{ .{}, .{}, .{}, .{} },
     latest_tool_output_id: usize = 0,
     latest_result_id: usize = 0,
+    replay_anchor_id: usize = 0,
+    replay_cursor_id: usize = 0,
 
     pub fn beginOutput(self: *Details) usize {
         const id = self.next_output_id;
@@ -100,6 +102,13 @@ pub const Details = struct {
     }
 
     pub fn findOutput(self: *const Details, id: usize) ?*const Output {
+        for (&self.outputs) |*output| {
+            if (output.present and output.id == id) return output;
+        }
+        return null;
+    }
+
+    pub fn findOutputMutable(self: *Details, id: usize) ?*Output {
         for (&self.outputs) |*output| {
             if (output.present and output.id == id) return output;
         }
@@ -168,6 +177,31 @@ pub const Details = struct {
         return self.findToolOutput(self.latest_tool_output_id);
     }
 
+    pub fn resetReplayCycle(self: *Details) void {
+        self.replay_anchor_id = 0;
+        self.replay_cursor_id = 0;
+    }
+
+    pub fn nextReplayResult(self: *Details) ?usize {
+        const latest = self.latest_result_id;
+        if (latest == 0) return null;
+        if (self.replay_anchor_id != latest or self.replay_cursor_id == 0) {
+            self.replay_anchor_id = latest;
+            self.replay_cursor_id = latest;
+            return latest;
+        }
+
+        var previous: ?usize = null;
+        for (&self.outputs) |*output| {
+            if (output.present and output.id < self.replay_cursor_id and (previous == null or output.id > previous.?)) previous = output.id;
+        }
+        for (&self.tool_outputs) |*output| {
+            if (output.present and output.id < self.replay_cursor_id and (previous == null or output.id > previous.?)) previous = output.id;
+        }
+        self.replay_cursor_id = previous orelse self.replay_anchor_id;
+        return self.replay_cursor_id;
+    }
+
     pub fn save(self: *Details, text: []const u8) void {
         std.crypto.secureZero(u8, self.bytes[0..]);
         self.len = @min(text.len, self.bytes.len);
@@ -185,6 +219,7 @@ pub const Details = struct {
         self.latest_output_id = 0;
         self.latest_tool_output_id = 0;
         self.latest_result_id = 0;
+        self.resetReplayCycle();
         for (&self.outputs) |*output| {
             std.crypto.secureZero(u8, output.bytes[0..]);
             std.crypto.secureZero(u8, output.command[0..]);
@@ -300,7 +335,7 @@ pub const Ui = struct {
         if (ui.interactive) try ui.out.writeAll("  Ctrl+J adds a line · Enter sends\n");
         try ui.out.writeByte('\n');
         if (ui.tmux_feed) |feed| {
-            if (feed.active) try ui.note("Bash streams live to tmux; Ctrl+O replays the latest result here.");
+            if (feed.active) try ui.note("Bash streams live to tmux; Ctrl+O cycles recent outputs here.");
         } else if (ui.env) |env| {
             if (env.get("TMUX_PANE") != null and ui.width >= 100) try ui.note("Could not open a tmux Bash pane; Bash output will stay in the feed.");
         }
@@ -697,6 +732,12 @@ pub const Ui = struct {
         try ui.showResult(details.latest_result_id);
     }
 
+    pub fn showNextResult(ui: Ui) !void {
+        const details = ui.details orelse return ui.note("No retained tool output.");
+        const id = details.nextReplayResult() orelse return ui.note("No retained tool output.");
+        try ui.showResult(id);
+    }
+
     pub fn showResult(ui: Ui, id: usize) !void {
         const details = ui.details orelse return ui.note("No retained tool output.");
         if (details.findOutput(id) != null) return ui.showOutput(id);
@@ -736,13 +777,31 @@ pub const Ui = struct {
 
     pub fn showRecentOutputs(ui: Ui) !void {
         const details = ui.details orelse return ui.note("No retained tool results.");
-        if (details.latest_result_id == 0) return ui.note("No retained tool outputs.");
+        var ids: [Details.output_count + Details.tool_output_count]usize = undefined;
+        var count: usize = 0;
+        for (&details.outputs) |*output| {
+            if (!output.present) continue;
+            ids[count] = output.id;
+            count += 1;
+        }
+        for (&details.tool_outputs) |*output| {
+            if (!output.present) continue;
+            ids[count] = output.id;
+            count += 1;
+        }
+        if (count == 0) return ui.note("No retained tool outputs.");
+        for (1..count) |index| {
+            const value = ids[index];
+            var position = index;
+            while (position > 0 and ids[position - 1] < value) : (position -= 1) {
+                ids[position] = ids[position - 1];
+            }
+            ids[position] = value;
+        }
+
         try ui.out.writeAll("\nRecent tool outputs\n");
-        var id = details.latest_result_id;
-        var found = false;
-        for (0..(Details.output_count + Details.tool_output_count)) |_| {
+        for (ids[0..count]) |id| {
             if (details.findOutput(id)) |output| {
-                found = true;
                 try ui.out.writeAll("  #");
                 try ui.out.print("{d} · ", .{output.id});
                 try ui.style("\x1b[1;36m");
@@ -757,7 +816,6 @@ pub const Ui = struct {
                 }
                 try ui.out.writeByte('\n');
             } else if (details.findToolOutput(id)) |output| {
-                found = true;
                 try ui.out.writeAll("  #");
                 try ui.out.print("{d} · ", .{output.id});
                 try ui.style(if (output.failed) "\x1b[31m" else "\x1b[35m");
@@ -773,10 +831,8 @@ pub const Ui = struct {
                 }
                 try ui.out.writeByte('\n');
             }
-            id -|= 1;
         }
-        if (!found) return ui.note("No retained tool outputs.");
-        try ui.out.writeAll("Use /details <id> to print any full result; Ctrl+O repeats the latest.\n");
+        try ui.out.writeAll("Use /details <id> to print any full result; Ctrl+O starts newest and steps back.\n");
     }
 
     pub fn showOutput(ui: Ui, id: usize) !void {
@@ -1073,6 +1129,9 @@ test "latest result and shared ids route to the correct output type" {
     const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details };
 
     try ui.showLatestResult();
+    try ui.showNextResult();
+    try ui.showNextResult();
+    try ui.showNextResult();
     try ui.showResult(bash_id);
 
     const rendered = output.written();
@@ -1080,6 +1139,31 @@ test "latest result and shared ids route to the correct output type" {
     try std.testing.expect(std.mem.indexOf(u8, rendered, "BASH output #1") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "tool result") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "bash result") != null);
+}
+
+test "recent output list includes sparse ids from both retention rings" {
+    var details: Details = .{};
+    const read_id = details.beginToolOutput();
+    details.saveToolOutput(read_id, "read", "secret.txt", "read result");
+    for (0..Details.output_count + 4) |_| {
+        const id = details.beginOutput();
+        details.saveOutput(id, "bash result");
+        details.saveOutputCommand(id, "printf bash result");
+        details.finishOutput(id, false, 5);
+    }
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details };
+
+    try ui.showRecentOutputs();
+
+    const rendered = output.written();
+    const newest_bash = std.mem.indexOf(u8, rendered, "#9 · BASH").?;
+    const oldest_bash = std.mem.indexOf(u8, rendered, "#6 · BASH").?;
+    const older_read = std.mem.indexOf(u8, rendered, "#1 · read").?;
+    try std.testing.expect(newest_bash < oldest_bash);
+    try std.testing.expect(oldest_bash < older_read);
+    try std.testing.expectEqual(@as(usize, 5), std.mem.count(u8, rendered, "  #"));
 }
 
 test "tool result retention evicts old output and clears its buffer" {

@@ -186,6 +186,7 @@ pub const Input = struct {
         var sequence: [8]u8 = undefined;
         var pending: usize = 0;
         var cursor = self.count;
+        if (ui.details) |details| details.resetReplayCycle();
         while (true) {
             if (pending != 0) {
                 var fds = [_]std.posix.pollfd{.{ .fd = 0, .events = std.posix.POLL.IN }};
@@ -252,7 +253,7 @@ pub const Input = struct {
             }
             if (!paste and c == 15) {
                 try ui.out.writeByte('\n');
-                try ui.showLatestResult();
+                try ui.showNextResult();
                 try redrawComposer(ui, self.bytes[0..n]);
                 continue;
             }
