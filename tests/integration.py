@@ -615,6 +615,7 @@ class Integration(unittest.TestCase):
             self.assertRegex(capture_pane(), r"LIVE_MARKER_[0-9]+")
             self.assertIsNone(re.search(rb"LIVE_MARKER_[0-9]+", output))
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
+            self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
 
             set_terminal_width(80)
             tmux_run("resize-window", "-t", f"{session}:0", "-x", "80", "-y", "40")
@@ -632,6 +633,7 @@ class Integration(unittest.TestCase):
             send("/usage")
             read_until(b"Terminal widened; Bash output is back in the tmux side pane.")
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
+            self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
 
             send("run reopened command")
             read_until(b"reopened complete")
@@ -642,6 +644,7 @@ class Integration(unittest.TestCase):
             process.stdin.close()
             process.wait(timeout=10)
             self.assertEqual(process.returncode, 0, output.decode(errors="replace"))
+            self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 1)
         finally:
             if process.poll() is None:
                 process.kill()
