@@ -135,8 +135,22 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             try agent.resetArena(&arena);
             continue;
         }
-        if (std.mem.eql(u8, line, "/details")) {
-            try ui.showDetails();
+        if (std.mem.eql(u8, line, "/details") or std.mem.startsWith(u8, line, "/details ")) {
+            const raw = if (line.len > 8) std.mem.trim(u8, line[8..], " \t") else "";
+            if (raw.len == 0) {
+                try ui.showDetails();
+                continue;
+            }
+            if (std.mem.eql(u8, raw, "list")) {
+                try ui.showToolOutputList();
+                continue;
+            }
+            const id_text = if (std.mem.startsWith(u8, raw, "#")) raw[1..] else raw;
+            const id = std.fmt.parseInt(usize, id_text, 10) catch {
+                try ui.note("usage: /details [call-id|list] (bare /details shows the latest result)");
+                continue;
+            };
+            try ui.showToolOutput(id);
             continue;
         }
         if (std.mem.eql(u8, line, "/out") or std.mem.startsWith(u8, line, "/out ")) {
@@ -269,6 +283,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.errorMessage(err);
                 continue;
             };
+            try redactRetained(&agent, &composer, secrets, ui);
             if (rest.len > 0 and !std.mem.eql(u8, rest, "list")) {
                 if (mode == .free and !std.mem.eql(u8, init.environ_map.get("PROVIDER") orelse "openrouter", "openrouter")) {
                     try core.config.set(a, init.io, .cwd(), init.environ_map, "PROVIDER", "openrouter");
@@ -305,6 +320,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 refreshRouteEnvironment(&route, init.environ_map);
                 agent.route = route;
             }
+            try redactRetained(&agent, &composer, secrets, ui);
             var full = ui;
             full.verbose = true;
             try full.preview(msg, "");
@@ -331,6 +347,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 refreshRouteEnvironment(&route, init.environ_map);
             }
             agent.route = route;
+            try redactRetained(&agent, &composer, secrets, ui);
             var full = ui;
             full.verbose = true;
             try full.preview(msg, "");
@@ -702,5 +719,27 @@ fn redactRetained(agent: *core.Agent, composer: *core.Input, secrets: *const cor
         defer std.crypto.secureZero(u8, snapshot);
         try ui.retainOutput(id, snapshot);
         output.truncated = output.truncated or truncated;
+    };
+    if (ui.details) |retained| for (&retained.tool_outputs) |*output| {
+        if (!output.present) continue;
+        const id = output.id;
+        const name_truncated = output.name_truncated;
+        const summary_truncated = output.summary_truncated;
+        const truncated = output.truncated;
+        const failed = output.failed;
+        const elapsed_ms = output.elapsed_ms;
+        const name = try agent.context.a.dupe(u8, output.name[0..output.name_len]);
+        defer std.crypto.secureZero(u8, name);
+        const summary = try agent.context.a.dupe(u8, output.summary[0..output.summary_len]);
+        defer std.crypto.secureZero(u8, summary);
+        const snapshot = try agent.context.a.dupe(u8, output.bytes[0..output.len]);
+        defer std.crypto.secureZero(u8, snapshot);
+        try ui.retainToolOutput(id, name, summary, snapshot);
+        const updated = retained.findToolOutputMutable(id) orelse continue;
+        updated.name_truncated = updated.name_truncated or name_truncated;
+        updated.summary_truncated = updated.summary_truncated or summary_truncated;
+        updated.truncated = updated.truncated or truncated;
+        updated.failed = failed;
+        updated.elapsed_ms = elapsed_ms;
     };
 }

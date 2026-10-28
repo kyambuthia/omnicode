@@ -2047,6 +2047,39 @@ class Integration(unittest.TestCase):
         self.assertNotIn("lines hidden", repl.stdout)
         self.assertIn("fast-test-model", repl.stdout)
 
+    def test_recent_non_bash_tool_results_can_be_listed_and_replayed(self):
+        (self.cwd / "first.txt").write_text("first-one\nfirst-two\nfirst-three\nfirst-four\nfirst-five\nfirst-six\n")
+        (self.cwd / "second.txt").write_text("second-one\nsecond-two\n")
+
+        def reply(body):
+            if isinstance(body["messages"][-1]["content"], str):
+                return tools(call("read", {"path": "first.txt"}, "first"),
+                             call("read", {"path": "second.txt"}, "second"))
+            return text("finished")
+
+        self.reply = reply
+        result = self.run_agent(stdin="read both files\n/details list\n/details 1\n/details #2\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Recent tool results", result.stdout)
+        self.assertIn("#1 · read", result.stdout)
+        self.assertIn("#2 · read", result.stdout)
+        self.assertIn("TOOL #1 · read", result.stdout)
+        self.assertIn("TOOL #2 · read", result.stdout)
+        self.assertIn("first-six", result.stdout)
+        self.assertIn("second-two", result.stdout)
+        self.assertEqual(len(self.requests), 2)
+
+    def test_new_secrets_scrub_already_retained_tool_results(self):
+        secret = "late-retained-secret-773"
+        (self.cwd / "secret.txt").write_text(secret + "\n")
+        self.reply = lambda _: tools(call("read", {"path": "secret.txt"})) if len(self.requests) == 1 else text("read complete")
+        result = self.run_agent(stdin=f"read secret file\n/secrets set TOKEN {secret}\n/details 1\n/q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replay = result.stdout.rsplit("TOOL #1", 1)[-1]
+        self.assertIn("[REDACTED:TOKEN]", replay)
+        self.assertNotIn(secret, replay)
+        self.assertEqual(len(self.requests), 2)
+
     def test_help_search_filters_commands_case_insensitively(self):
         result = self.run_agent(stdin="/help tmux\n/help OuTpUt\n/help no-such-help-topic\n/q\n")
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -9,6 +9,10 @@ const TmuxFeed = @import("tmux.zig").Feed;
 pub const Details = struct {
     pub const output_count = 4;
     pub const command_limit = 2048;
+    pub const tool_output_count = 4;
+    pub const tool_output_limit = 32 * 1024;
+    pub const tool_name_limit = 32;
+    pub const tool_summary_limit = 512;
 
     pub const Output = struct {
         id: usize = 0,
@@ -23,6 +27,22 @@ pub const Details = struct {
         elapsed_ms: u64 = 0,
     };
 
+    pub const ToolOutput = struct {
+        id: usize = 0,
+        bytes: [tool_output_limit]u8 = undefined,
+        len: usize = 0,
+        present: bool = false,
+        truncated: bool = false,
+        name: [tool_name_limit]u8 = undefined,
+        name_len: usize = 0,
+        name_truncated: bool = false,
+        summary: [tool_summary_limit]u8 = undefined,
+        summary_len: usize = 0,
+        summary_truncated: bool = false,
+        failed: bool = false,
+        elapsed_ms: u64 = 0,
+    };
+
     bytes: [64 * 1024]u8 = undefined,
     len: usize = 0,
     present: bool = false,
@@ -30,6 +50,9 @@ pub const Details = struct {
     outputs: [output_count]Output = [_]Output{ .{}, .{}, .{}, .{} },
     next_output_id: usize = 1,
     latest_output_id: usize = 0,
+    tool_outputs: [tool_output_count]ToolOutput = [_]ToolOutput{ .{}, .{}, .{}, .{} },
+    next_tool_output_id: usize = 1,
+    latest_tool_output_id: usize = 0,
 
     pub fn beginOutput(self: *Details) usize {
         const id = self.next_output_id;
@@ -87,6 +110,65 @@ pub const Details = struct {
         return self.findOutput(self.latest_output_id);
     }
 
+    pub fn beginToolOutput(self: *Details) usize {
+        const id = self.next_tool_output_id;
+        self.next_tool_output_id +%= 1;
+        if (self.next_tool_output_id == 0) self.next_tool_output_id = 1;
+        return id;
+    }
+
+    pub fn saveToolOutput(self: *Details, id: usize, name: []const u8, summary: []const u8, text: []const u8) void {
+        if (id == 0) return;
+        const output = &self.tool_outputs[id % tool_output_count];
+        std.crypto.secureZero(u8, output.bytes[0..]);
+        std.crypto.secureZero(u8, output.name[0..]);
+        std.crypto.secureZero(u8, output.summary[0..]);
+        output.id = id;
+        output.len = @min(text.len, output.bytes.len);
+        while (output.len > 0 and !std.unicode.utf8ValidateSlice(text[0..output.len])) output.len -= 1;
+        @memcpy(output.bytes[0..output.len], text[0..output.len]);
+        output.present = true;
+        output.truncated = output.len < text.len;
+        output.name_len = @min(name.len, output.name.len);
+        while (output.name_len > 0 and !std.unicode.utf8ValidateSlice(name[0..output.name_len])) output.name_len -= 1;
+        @memcpy(output.name[0..output.name_len], name[0..output.name_len]);
+        output.name_truncated = output.name_len < name.len;
+        output.summary_len = @min(summary.len, output.summary.len);
+        while (output.summary_len > 0 and !std.unicode.utf8ValidateSlice(summary[0..output.summary_len])) output.summary_len -= 1;
+        @memcpy(output.summary[0..output.summary_len], summary[0..output.summary_len]);
+        output.summary_truncated = output.summary_len < summary.len;
+        output.failed = false;
+        output.elapsed_ms = 0;
+        self.latest_tool_output_id = id;
+    }
+
+    pub fn finishToolOutput(self: *Details, id: usize, failed: bool, elapsed_ms: u64) void {
+        if (id == 0) return;
+        const output = &self.tool_outputs[id % tool_output_count];
+        if (!output.present or output.id != id) return;
+        output.failed = failed;
+        output.elapsed_ms = elapsed_ms;
+    }
+
+    pub fn findToolOutput(self: *const Details, id: usize) ?*const ToolOutput {
+        for (&self.tool_outputs) |*output| {
+            if (output.present and output.id == id) return output;
+        }
+        return null;
+    }
+
+    pub fn findToolOutputMutable(self: *Details, id: usize) ?*ToolOutput {
+        for (&self.tool_outputs) |*output| {
+            if (output.present and output.id == id) return output;
+        }
+        return null;
+    }
+
+    pub fn latestToolOutput(self: *const Details) ?*const ToolOutput {
+        if (self.latest_tool_output_id == 0) return null;
+        return self.findToolOutput(self.latest_tool_output_id);
+    }
+
     pub fn save(self: *Details, text: []const u8) void {
         std.crypto.secureZero(u8, self.bytes[0..]);
         self.len = @min(text.len, self.bytes.len);
@@ -102,6 +184,7 @@ pub const Details = struct {
         self.present = false;
         self.truncated = false;
         self.latest_output_id = 0;
+        self.latest_tool_output_id = 0;
         for (&self.outputs) |*output| {
             std.crypto.secureZero(u8, output.bytes[0..]);
             std.crypto.secureZero(u8, output.command[0..]);
@@ -114,8 +197,30 @@ pub const Details = struct {
             output.failed = false;
             output.elapsed_ms = 0;
         }
+        for (&self.tool_outputs) |*output| {
+            std.crypto.secureZero(u8, output.bytes[0..]);
+            std.crypto.secureZero(u8, output.name[0..]);
+            std.crypto.secureZero(u8, output.summary[0..]);
+            output.id = 0;
+            output.len = 0;
+            output.present = false;
+            output.truncated = false;
+            output.name_len = 0;
+            output.name_truncated = false;
+            output.summary_len = 0;
+            output.summary_truncated = false;
+            output.failed = false;
+            output.elapsed_ms = 0;
+        }
     }
 };
+
+fn toolSummary(name: []const u8, args: j.Value) []const u8 {
+    if (std.mem.eql(u8, name, "todo")) return "checklist";
+    if (std.mem.eql(u8, name, "review")) return j.optional(args, "focus", "working tree") catch "working tree";
+    const key = if (std.mem.eql(u8, name, "task")) "prompt" else if (std.mem.eql(u8, name, "skill")) "name" else if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "grep")) "pat" else "path";
+    return j.str(args, key) catch "";
+}
 
 /// An append-only transcript: keep native terminal scrolling and copy/paste.
 pub const Ui = struct {
@@ -347,8 +452,10 @@ pub const Ui = struct {
         try ui.previewLimit(text, prefix, 5, "/details or /verbose on", "");
     }
 
-    fn previewTool(ui: Ui, text: []const u8, prefix: []const u8) !void {
-        try ui.previewLimit(text, prefix, 5, "/details or /verbose on", "\x1b[36m");
+    fn previewTool(ui: Ui, text: []const u8, prefix: []const u8, call_id: usize) !void {
+        var hint_buffer: [48]u8 = undefined;
+        const hint = if (call_id > 0) std.fmt.bufPrint(&hint_buffer, "/details #{d}", .{call_id}) catch "/details" else "/details";
+        try ui.previewLimit(text, prefix, 5, hint, "\x1b[36m");
     }
 
     fn previewLimit(ui: Ui, text: []const u8, prefix: []const u8, visible_lines: usize, expand_command: []const u8, prefix_style: []const u8) !void {
@@ -394,6 +501,8 @@ pub const Ui = struct {
         var call_id: usize = 0;
         if (track_output and std.mem.eql(u8, name, "bash")) {
             if (ui.details) |details| call_id = details.beginOutput();
+        } else if (track_output) {
+            if (ui.details) |details| call_id = details.beginToolOutput();
         }
         try ui.out.writeAll(ui.indent);
         if (std.mem.eql(u8, name, "bash")) {
@@ -426,6 +535,7 @@ pub const Ui = struct {
         try ui.out.writeAll("• ");
         try ui.safe(name, 24);
         try ui.style("\x1b[0m");
+        if (call_id > 0) try ui.out.print(" #{d}", .{call_id});
         try ui.out.writeAll("  ");
         if (std.mem.eql(u8, name, "todo")) {
             try ui.out.writeAll("checklist");
@@ -450,8 +560,8 @@ pub const Ui = struct {
     }
 
     pub fn toolEnd(ui: Ui, name: []const u8, args: j.Value, result: []const u8, failed: bool, start: Io.Timestamp, call_id: usize) !void {
-        try ui.retainDetails(result);
         if (std.mem.eql(u8, name, "bash")) {
+            try ui.retainDetails(result);
             try ui.retainOutput(call_id, result);
             try ui.retainOutputCommand(call_id, j.aliasedString(args, "cmd", "command") catch "");
             if (ui.details) |details| {
@@ -497,6 +607,11 @@ pub const Ui = struct {
             try ui.out.flush();
             return;
         }
+        try ui.retainToolDetails(call_id, name, toolSummary(name, args), result);
+        if (ui.details) |details| {
+            const elapsed_ms = start.durationTo(Io.Clock.awake.now(ui.io)).toMilliseconds();
+            details.finishToolOutput(call_id, failed, @intCast(@max(0, elapsed_ms)));
+        }
         try ui.out.writeAll(ui.indent);
         try ui.style(if (failed) "\x1b[31m" else "\x1b[36m");
         try ui.out.print("  ⎿ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
@@ -511,7 +626,7 @@ pub const Ui = struct {
             try ui.style("\x1b[0m");
         } else if (!failed and std.mem.eql(u8, name, "write")) {
             try ui.out.print("{s}    {d} bytes written\n", .{ ui.indent, (try j.str(args, "content")).len });
-        } else try ui.previewTool(result, "│ ");
+        } else try ui.previewTool(result, "│ ", call_id);
         try ui.out.flush();
     }
 
@@ -523,6 +638,25 @@ pub const Ui = struct {
         defer if (safe_text.ptr != text.ptr) std.crypto.secureZero(u8, @constCast(safe_text));
         // Redact before bounding the retained prefix, which could cut a secret in half.
         details.save(safe_text);
+    }
+
+    pub fn retainToolDetails(ui: Ui, id: usize, name: []const u8, summary: []const u8, text: []const u8) !void {
+        try ui.retainDetails(text);
+        try ui.retainToolOutput(id, name, summary, text);
+    }
+
+    pub fn retainToolOutput(ui: Ui, id: usize, name: []const u8, summary: []const u8, text: []const u8) !void {
+        if (id == 0) return;
+        const details = ui.details orelse return;
+        var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer scratch.deinit();
+        const safe_name = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), name, ui.env) else name;
+        defer if (safe_name.ptr != name.ptr) std.crypto.secureZero(u8, @constCast(safe_name));
+        const safe_summary = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), summary, ui.env) else summary;
+        defer if (safe_summary.ptr != summary.ptr) std.crypto.secureZero(u8, @constCast(safe_summary));
+        const safe_text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), text, ui.env) else text;
+        defer if (safe_text.ptr != text.ptr) std.crypto.secureZero(u8, @constCast(safe_text));
+        details.saveToolOutput(id, safe_name, safe_summary, safe_text);
     }
 
     pub fn retainOutput(ui: Ui, id: usize, text: []const u8) !void {
@@ -552,6 +686,65 @@ pub const Ui = struct {
         full.verbose = true;
         try full.preview(details.bytes[0..details.len], "");
         if (details.truncated) try ui.note("Result exceeds 64 KiB; retained prefix only.");
+    }
+
+    pub fn showToolOutput(ui: Ui, id: usize) !void {
+        const details = ui.details orelse return ui.note("No retained tool results.");
+        const output = details.findToolOutput(id) orelse {
+            var note_buf: [128]u8 = undefined;
+            try ui.note(std.fmt.bufPrint(&note_buf, "No retained tool result for #{d}; the most recent {d} calls are kept.", .{ id, Details.tool_output_count }) catch "No retained tool result for that call.");
+            return;
+        };
+        try ui.out.writeAll("\n╭─ TOOL #");
+        try ui.out.print("{d} · ", .{output.id});
+        try ui.style(if (output.failed) "\x1b[31m" else "\x1b[36m");
+        try ui.safe(output.name[0..output.name_len], Details.tool_name_limit);
+        if (output.name_truncated) try ui.out.writeAll("...");
+        try ui.out.writeAll(if (output.failed) " · ✗ Failed · " else " · ✓ Done · ");
+        try ui.writeElapsed(output.elapsed_ms);
+        try ui.style("\x1b[0m");
+        try ui.out.writeByte('\n');
+        if (output.summary_len > 0) {
+            try ui.out.writeAll("  target: ");
+            try ui.safe(output.summary[0..output.summary_len], std.math.maxInt(usize));
+            if (output.summary_truncated) try ui.out.writeAll("...");
+            try ui.out.writeByte('\n');
+        }
+        var full = ui;
+        full.verbose = true;
+        try full.previewTool(output.bytes[0..output.len], "│ ", 0);
+        try ui.out.writeAll("╰─ end\n");
+        if (output.truncated) try ui.note("Tool result exceeds the retained 32 KiB limit; showing the prefix.");
+    }
+
+    pub fn showToolOutputList(ui: Ui) !void {
+        const details = ui.details orelse return ui.note("No retained tool results.");
+        if (details.latest_tool_output_id == 0) return ui.note("No retained tool results.");
+        try ui.out.writeAll("\nRecent tool results\n");
+        var id = details.latest_tool_output_id;
+        var found = false;
+        for (0..Details.tool_output_count) |_| {
+            if (details.findToolOutput(id)) |output| {
+                found = true;
+                try ui.out.writeAll("  #");
+                try ui.out.print("{d} · ", .{output.id});
+                try ui.style(if (output.failed) "\x1b[31m" else "\x1b[36m");
+                try ui.safe(output.name[0..output.name_len], Details.tool_name_limit);
+                try ui.style("\x1b[0m");
+                if (output.name_truncated) try ui.out.writeAll("... ");
+                try ui.out.writeAll(if (output.failed) " · ✗ Failed · " else " · ✓ Done · ");
+                try ui.writeElapsed(output.elapsed_ms);
+                if (output.summary_len > 0) {
+                    try ui.out.writeAll("  ");
+                    try ui.safe(output.summary[0..output.summary_len], ui.width -| 48);
+                    if (output.summary_truncated) try ui.out.writeAll("...");
+                }
+                try ui.out.writeByte('\n');
+            }
+            id = if (id == 1) std.math.maxInt(usize) else id - 1;
+        }
+        if (!found) return ui.note("No retained tool results.");
+        try ui.out.writeAll("Use /details <id> to print a full result.\n");
     }
 
     pub fn showOutput(ui: Ui, id: usize) !void {
@@ -810,6 +1003,63 @@ test "Bash output list orders recent calls and shows status and commands" {
     const older = std.mem.indexOf(u8, rendered, "#1 · ✓ Done · 100ms  $ printf first").?;
     try std.testing.expect(newest < older);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "Use /out <id> to print the full result.") != null);
+}
+
+test "recent tool results list in reverse order and replay by id" {
+    var details: Details = .{};
+    const first = details.beginToolOutput();
+    details.saveToolOutput(first, "read", "alpha.txt", "alpha contents\n");
+    details.finishToolOutput(first, false, 125);
+    const second = details.beginToolOutput();
+    details.saveToolOutput(second, "grep", "beta", "beta match\n");
+    details.finishToolOutput(second, false, 75);
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details };
+
+    try ui.showToolOutputList();
+    try ui.showToolOutput(first);
+
+    const rendered = output.written();
+    const newest = std.mem.indexOf(u8, rendered, "#2 · grep · ✓ Done · 75ms  beta").?;
+    const older = std.mem.indexOf(u8, rendered, "#1 · read · ✓ Done · 125ms  alpha.txt").?;
+    try std.testing.expect(newest < older);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "TOOL #1 · read · ✓ Done · 125ms") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "alpha contents") != null);
+}
+
+test "tool result retention evicts old output and clears its buffer" {
+    var details: Details = .{};
+    for (0..Details.tool_output_count + 1) |index| {
+        const id = details.beginToolOutput();
+        const value = try std.fmt.allocPrint(std.testing.allocator, "result-{d}", .{index});
+        defer std.testing.allocator.free(value);
+        details.saveToolOutput(id, "read", "file", value);
+    }
+    try std.testing.expect(details.findToolOutput(1) == null);
+    try std.testing.expectEqual(@as(usize, 5), details.latest_tool_output_id);
+    details.clear();
+    try std.testing.expect(details.latestToolOutput() == null);
+    try std.testing.expectEqual(@as(usize, 0), details.tool_outputs[1].len);
+    try std.testing.expect(!details.tool_outputs[1].present);
+}
+
+test "retained generic tool results scrub secrets from content and summaries" {
+    var secrets: @import("secrets.zig").Secrets = .{};
+    try secrets.setMemory("TOKEN", "private-token-998");
+    var details: Details = .{};
+    var output: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const ui: Ui = .{ .out = &output.writer, .io = std.testing.io, .details = &details, .secrets = &secrets };
+
+    try ui.retainToolDetails(1, "read", "path private-token-998", "found private-token-998");
+    try ui.showToolOutput(1);
+
+    const retained = details.findToolOutput(1).?;
+    try std.testing.expect(std.mem.indexOf(u8, retained.summary[0..retained.summary_len], "private-token-998") == null);
+    try std.testing.expect(std.mem.indexOf(u8, retained.bytes[0..retained.len], "private-token-998") == null);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "[REDACTED:TOKEN]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "private-token-998") == null);
 }
 
 test "Bash feed marks output source and offers a one-step full-output replay" {

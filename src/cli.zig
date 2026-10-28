@@ -42,7 +42,7 @@ pub const help =
     \\  /save [name]           Save session under .omnicode/sessions/ (default: latest)
     \\  /export [name]         Export redacted Markdown under .omnicode/exports/ (default: latest)
     \\  /resume [name]         Resume saved session (default: latest)
-    \\  /details               Show last tool result (up to 64 KiB)
+    \\  /details [id|list]     Show latest tool result, list/replay recent results
     \\  /out [call-id|list]    Show Bash output or list recent calls
     \\  Ctrl+O                Show latest Bash output and return to the current prompt
     \\  Ctrl+J                Insert a newline without sending the prompt
