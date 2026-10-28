@@ -2053,7 +2053,7 @@ class Integration(unittest.TestCase):
         verbose = self.run_agent("--verbose", "list files")
         self.assertEqual(verbose.returncode, 0, verbose.stderr)
         self.assertNotIn("lines hidden", verbose.stdout)
-        self.assertIn("    │ 5\n", verbose.stdout)
+        self.assertIn("    ┃ 5\n", verbose.stdout)
         repl = self.run_agent(stdin="/help\n/model\n/verbose on\nlist files\n/verbose off\n/out list\n/out\n/out 1\n/q\n")
         self.assertEqual(repl.returncode, 0, repl.stderr)
         self.assertIn("Full tool output enabled", repl.stdout)
@@ -2180,7 +2180,7 @@ class Integration(unittest.TestCase):
         self.assertIn("No retained output", result.stdout)
         self.assertIn("╭─ MODEL #2", result.stdout)
         self.assertIn("BASH output #1", result.stdout)
-        self.assertIn("    │ 4\n", result.stdout)
+        self.assertIn("    ┃ 4\n", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
     def test_invalid_environment_credentials_are_rejected_before_http(self):

@@ -681,7 +681,7 @@ pub const Ui = struct {
                 // Keep the main transcript useful after the command ends. The tmux pane
                 // carries the live stream; a compact final preview avoids making it a
                 // required place to switch to just to read the result.
-                try ui.previewLimit(result, "│ ", 8, "Ctrl+O full", "\x1b[1;36m");
+                try ui.previewLimit(result, "┃ ", 8, "Ctrl+O full", "\x1b[1;36m");
                 try ui.out.writeAll(ui.indent);
                 try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
                 if (call_id > 0) {
@@ -699,7 +699,7 @@ pub const Ui = struct {
                 return;
             }
             const hint = if (call_id > 0 and ui.interactive) "Ctrl+O full" else "--verbose";
-            try ui.previewLimit(result, "│ ", 12, hint, "\x1b[1;36m");
+            try ui.previewLimit(result, "┃ ", 12, hint, "\x1b[1;36m");
             try ui.out.writeAll(ui.indent);
             try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
             try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
@@ -965,7 +965,7 @@ pub const Ui = struct {
         }
         var full = ui;
         full.verbose = true;
-        try full.preview(output.bytes[0..output.len], "│ ");
+        try full.preview(output.bytes[0..output.len], "┃ ");
         try ui.out.writeAll("╰─ end\n");
         if (output.truncated) try ui.note("Output exceeds the retained 64 KiB limit; showing the prefix.");
     }
@@ -1040,7 +1040,7 @@ pub const Ui = struct {
             } else {
                 var lines = std.mem.splitScalar(u8, trimmed, '\n');
                 while (lines.next()) |line| {
-                    try out.writeAll("  │ ");
+                    try out.writeAll("  ┃ ");
                     try ui.safeTo(out, line, std.math.maxInt(usize));
                     try out.writeAll("\r\n");
                 }
@@ -1388,7 +1388,7 @@ test "Bash feed marks output source and offers a one-step full-output replay" {
     try ui.toolEnd("bash", .null, "first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\neighth\nninth\ntenth\neleventh\ntwelfth\nthirteenth\nlast", false, Io.Clock.awake.now(std.testing.io), call_id);
 
     const rendered = writer.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, rendered, "\x1b[1;36m│ \x1b[0mfirst") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "\x1b[1;36m┃ \x1b[0mfirst") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "2 lines hidden (Ctrl+O full)") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "Ctrl+O full") != null);
 }
@@ -1406,6 +1406,17 @@ test "model replies and tool output have explicit source labels" {
     try std.testing.expect(std.mem.indexOf(u8, output, "│ file contents") != null);
     try std.testing.expect(std.mem.indexOfScalar(u8, output, 27) == null);
     try std.testing.expect(std.mem.indexOf(u8, output, "BASH") == null);
+}
+
+test "model and Bash transcript rails stay distinct without color" {
+    var buffer: [4096]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    const ui: Ui = .{ .out = &writer, .io = std.testing.io };
+    try ui.message("model answer");
+    try ui.toolEnd("bash", .null, "shell output", false, Io.Clock.awake.now(std.testing.io), 0);
+    const output = writer.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, output, "  │ model answer") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "    ┃ shell output") != null);
 }
 
 test "tool results and model prose use distinct source rails" {

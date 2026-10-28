@@ -82,7 +82,7 @@ pub const Feed = struct {
         var buffer: [4096]u8 = undefined;
         var file_writer = feed.writer(&buffer) orelse return error.TmuxPaneClosed;
         const out = &file_writer.interface;
-        try out.writeAll("  │ ");
+        try out.writeAll("  ┃ ");
         const view = std.unicode.Utf8View.init(text) catch {
             try out.writeAll("[non-UTF-8 line withheld]\r\n");
             try out.flush();
