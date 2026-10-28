@@ -10,7 +10,16 @@ pub fn encode(a: Allocator, value: anytype) ![]const u8 {
     return std.json.Stringify.valueAlloc(a, value, .{});
 }
 
+/// Insert a map key owned by the JSON value, so secureClear may wipe it.
+pub fn putOwnedKey(a: Allocator, object: *@FieldType(Value, "object"), key: []const u8, value: Value) !void {
+    if (object.contains(key)) return object.put(a, key, value);
+    const owned_key = try a.dupe(u8, key);
+    errdefer std.crypto.secureZero(u8, owned_key);
+    try object.put(a, owned_key, value);
+}
+
 /// Clear every parsed JSON string before releasing its owning scratch arena.
+/// Object keys added after parsing must go through putOwnedKey.
 /// An explicit worklist keeps deeply nested responses off the call stack.
 pub fn secureClear(a: Allocator, value: *Value) !void {
     var pending: std.ArrayList(*Value) = .empty;
@@ -114,6 +123,27 @@ test "generated JSON values retain strings, numbers, and canonical encoding" {
         try std.testing.expectEqual(index % 2 == 0, enabled.bool);
         try std.testing.expectEqualStrings(encoded, try encode(a, try parse(a, try encode(a, parsed))));
     }
+}
+
+test "owned object insertion keeps borrowed keys safe during cleanup" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const borrowed_key = "tools";
+    const secret = try a.dupe(u8, "secret");
+    var value: Value = .{ .object = .empty };
+    try putOwnedKey(a, &value.object, borrowed_key, .{ .string = secret });
+    var it = value.object.iterator();
+    const stored_key = it.next().?.key_ptr.*;
+
+    try std.testing.expect(stored_key.ptr != borrowed_key.ptr);
+    try secureClear(std.heap.page_allocator, &value);
+
+    const expected_key = [_]u8{ 't', 'o', 'o', 'l', 's' };
+    for (expected_key, borrowed_key) |expected, actual|
+        try std.testing.expectEqual(expected, actual);
+    for (stored_key) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+    for (secret) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
 }
 
 test "fuzz JSON parsing and serialization" {

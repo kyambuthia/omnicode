@@ -396,11 +396,11 @@ pub const Agent = struct {
                     var cache_control = try j.parse(a, "{\"type\":\"ephemeral\"}");
                     var cache_transferred = false;
                     defer if (!cache_transferred) j.secureClear(std.heap.page_allocator, &cache_control) catch {};
-                    try tools_copy.array.items[last_idx].object.put(a, "cache_control", cache_control);
+                    try j.putOwnedKey(a, &tools_copy.array.items[last_idx].object, "cache_control", cache_control);
                     cache_transferred = true;
                 }
             }
-            try payload.object.put(a, "tools", tools_copy);
+            try j.putOwnedKey(a, &payload.object, "tools", tools_copy);
             tools_transferred = true;
         }
         if (route.provider == .openrouter) {
@@ -411,7 +411,7 @@ pub const Agent = struct {
             else
                 "{\"sort\":\"price\"}");
             errdefer j.secureClear(std.heap.page_allocator, &provider) catch {};
-            try payload.object.put(a, "provider", provider);
+            try j.putOwnedKey(a, &payload.object, "provider", provider);
         }
         return j.encode(a, payload);
     }
@@ -546,7 +546,7 @@ pub const Agent = struct {
                         // Retry from the original messages, never a truncated summary.
                         var payload = try j.parse(sa, body);
                         defer j.secureClear(std.heap.page_allocator, &payload) catch {};
-                        try payload.object.put(sa, "max_tokens", .{ .integer = 8192 });
+                        try j.putOwnedKey(sa, &payload.object, "max_tokens", .{ .integer = 8192 });
                         const retry_body = try j.encode(sa, payload);
                         std.crypto.secureZero(u8, @constCast(body));
                         body = retry_body;
