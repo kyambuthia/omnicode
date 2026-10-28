@@ -347,10 +347,19 @@ pub const Ui = struct {
         try ui.previewLimit(text, prefix, 5, "/details or /verbose on", "");
     }
 
+    fn previewTool(ui: Ui, text: []const u8, prefix: []const u8) !void {
+        try ui.previewLimit(text, prefix, 5, "/details or /verbose on", "\x1b[36m");
+    }
+
     fn previewLimit(ui: Ui, text: []const u8, prefix: []const u8, visible_lines: usize, expand_command: []const u8, prefix_style: []const u8) !void {
         const trimmed = std.mem.trimEnd(u8, text, "\n");
         if (trimmed.len == 0) {
-            try ui.out.print("    {s}(empty)\n", .{prefix});
+            try ui.out.writeAll(ui.indent);
+            try ui.out.writeAll("    ");
+            try ui.style(prefix_style);
+            try ui.out.writeAll(prefix);
+            try ui.style("\x1b[0m");
+            try ui.out.writeAll("(empty)\n");
             return;
         }
         const count = std.mem.count(u8, trimmed, "\n") + 1;
@@ -504,7 +513,7 @@ pub const Ui = struct {
             try ui.style("\x1b[0m");
         } else if (!failed and std.mem.eql(u8, name, "write")) {
             try ui.out.print("{s}    {d} bytes written\n", .{ ui.indent, (try j.str(args, "content")).len });
-        } else try ui.preview(result, "│ ");
+        } else try ui.previewTool(result, "│ ");
         try ui.out.flush();
     }
 
@@ -832,6 +841,23 @@ test "model replies and tool output have explicit source labels" {
     try std.testing.expect(std.mem.indexOf(u8, output, "│ file contents") != null);
     try std.testing.expect(std.mem.indexOfScalar(u8, output, 27) == null);
     try std.testing.expect(std.mem.indexOf(u8, output, "✓ Done") == null);
+}
+
+test "tool result bodies use a cyan source rail while model prose stays plain" {
+    var buffer: [4096]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    const ui: Ui = .{ .out = &writer, .io = std.testing.io, .color = true };
+    try ui.message("model answer");
+    try ui.toolEnd("read", .null, "file contents", false, Io.Clock.awake.now(std.testing.io), 0);
+
+    const output = writer.buffered();
+    const model = std.mem.indexOf(u8, output, "  model answer").?;
+    const tool = std.mem.indexOf(u8, output, "\x1b[36m│ \x1b[0mfile contents").?;
+    try std.testing.expect(model < tool);
+    try std.testing.expect(std.mem.indexOf(u8, output, "⎿ read · output") != null);
+
+    try ui.toolEnd("grep", .null, "", false, Io.Clock.awake.now(std.testing.io), 0);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "\x1b[36m│ \x1b[0m(empty)") != null);
 }
 
 test "Markdown headings respect fences and plain output preserves the source" {
