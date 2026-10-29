@@ -624,6 +624,7 @@ class Integration(unittest.TestCase):
             self.assertRegex(pane_output, r"LIVE_MARKER_[0-9]+")
             self.assertIn("┃ FEED_LINE_05", pane_output)
             self.assertRegex(output, rb"LIVE_MARKER_[0-9]+")
+            self.assertIn("╭─ BASH #1".encode(), output)
             self.assertIn(b"\x1b[0mFEED_LINE_05", output)
             self.assertIn(b"3 lines hidden (Ctrl+O full)", output)
             self.assertIn(b"Ctrl+O full", output)

@@ -624,7 +624,7 @@ pub const Ui = struct {
             };
             if (in_tmux) {
                 try ui.style("\x1b[1;36m");
-                if (call_id > 0) try ui.out.print("bash #{d} $ ", .{call_id}) else try ui.out.writeAll("bash $ ");
+                if (call_id > 0) try ui.out.print("╭─ BASH #{d}  $ ", .{call_id}) else try ui.out.writeAll("╭─ BASH  $ ");
                 try ui.style("\x1b[0m");
                 try ui.safe(command, ui.width -| (16 + ui.indent.len));
                 try ui.out.writeByte('\n');
