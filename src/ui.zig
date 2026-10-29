@@ -687,16 +687,15 @@ pub const Ui = struct {
                 }
             }
             if (in_tmux) {
-                // Keep the main transcript useful after the command ends. The tmux pane
-                // carries the live stream; a compact final preview avoids making it a
-                // required place to switch to just to read the result.
+                // The pane carries the live stream; the main transcript still obeys
+                // /verbose so users can choose a complete inline copy as well.
                 try ui.previewLimit(result, "┃ ", 12, "Ctrl+O full", "\x1b[1;36m");
                 try ui.out.writeAll(ui.indent);
                 try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
                 if (call_id > 0) {
                     try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
                     try ui.elapsed(start);
-                    try ui.out.writeAll(" · Ctrl+O full");
+                    if (!ui.verbose) try ui.out.writeAll(" · Ctrl+O full");
                 } else {
                     try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
                     try ui.elapsed(start);

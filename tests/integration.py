@@ -542,6 +542,10 @@ class Integration(unittest.TestCase):
                 if call_index == 1:
                     feed_lines = "\\n".join(f"FEED_LINE_{line:02}" for line in range(1, 15))
                     cmd = f"printf '{marker}_%s\\n' \"$$\"; printf '{feed_lines}\\n'; sleep 0.1"
+                elif call_index == 5:
+                    feed_lines = "\\n".join(f"FEED_LINE_{line:02}" for line in range(1, 15))
+                    prefix = marker.split("_")[0]
+                    cmd = f"printf '{prefix}_MARKER_%s\\n' \"$$\"; printf '{feed_lines}\\n'; sleep 0.1"
                 else:
                     prefix = marker.split("_")[0]
                     cmd = f"printf '{prefix}'; printf '_MARKER_%s\\n' \"$$\"; sleep 0.1"
@@ -663,11 +667,17 @@ class Integration(unittest.TestCase):
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
             self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
 
+            send("/verbose on")
+            read_until(b"Full tool output enabled")
+            output.clear()
             send("run reopened command")
             read_until(b"reopened complete")
             wait_for_request_count(6)
             self.assertRegex(capture_pane(), r"REOPENED_MARKER_[0-9]+")
             self.assertRegex(output, rb"REOPENED_MARKER_[0-9]+")
+            self.assertIn(b"\x1b[0mFEED_LINE_01", output)
+            self.assertIn(b"\x1b[0mFEED_LINE_14", output)
+            self.assertNotIn(b"3 lines hidden (Ctrl+O full)", output)
             send("/q")
             process.stdin.close()
             process.wait(timeout=10)
