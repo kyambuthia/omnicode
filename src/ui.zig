@@ -692,7 +692,6 @@ pub const Ui = struct {
                 if (call_id > 0) {
                     try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
                     try ui.elapsed(start);
-                    if (!ui.verbose) try ui.out.writeAll(" · Ctrl+O full");
                 } else {
                     try ui.out.print("╰─ {s} · ", .{if (failed) "✗ Failed" else "✓ Done"});
                     try ui.elapsed(start);

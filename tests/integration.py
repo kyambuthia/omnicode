@@ -627,7 +627,7 @@ class Integration(unittest.TestCase):
             self.assertIn("╭─ BASH #1".encode(), output)
             self.assertIn(b"\x1b[0mFEED_LINE_05", output)
             self.assertIn(b"3 lines hidden (Ctrl+O full)", output)
-            self.assertIn(b"Ctrl+O full", output)
+            self.assertEqual(output.count(b"Ctrl+O full"), 1)
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
             self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
 
