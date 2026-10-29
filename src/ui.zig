@@ -690,7 +690,7 @@ pub const Ui = struct {
                 // Keep the main transcript useful after the command ends. The tmux pane
                 // carries the live stream; a compact final preview avoids making it a
                 // required place to switch to just to read the result.
-                try ui.previewLimit(result, "┃ ", 8, "Ctrl+O full", "\x1b[1;36m");
+                try ui.previewLimit(result, "┃ ", 12, "Ctrl+O full", "\x1b[1;36m");
                 try ui.out.writeAll(ui.indent);
                 try ui.style(if (failed) "\x1b[31m" else "\x1b[2m");
                 if (call_id > 0) {

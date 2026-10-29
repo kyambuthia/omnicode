@@ -12,6 +12,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Pinned model overrides continue to work after tool-enabled turns and request cleanup.
 - Bare `/out` repeats the latest Bash command, status, duration, and output; numbered lookup remains available.
 - Output previews now show their replay command when a single long line is clipped to fit the terminal.
+- The inline Bash preview now shows the same 12-line head/tail window with tmux active as it does without tmux.
 - Voice prompts now remain valid across model turns and are securely cleared after use.
 - Commands that produce non-UTF-8 output now return an explicit tool error
   when that output is omitted.

@@ -540,7 +540,8 @@ class Integration(unittest.TestCase):
             if call_index in (1, 3, 5):
                 marker = {1: "LIVE_MARKER", 3: "FALLBACK_MARKER", 5: "REOPENED_MARKER"}[call_index]
                 if call_index == 1:
-                    cmd = f"printf '{marker}_%s\\n' \"$$\"; sleep 0.1"
+                    feed_lines = "\\n".join(f"FEED_LINE_{line:02}" for line in range(1, 15))
+                    cmd = f"printf '{marker}_%s\\n' \"$$\"; printf '{feed_lines}\\n'; sleep 0.1"
                 else:
                     prefix = marker.split("_")[0]
                     cmd = f"printf '{prefix}'; printf '_MARKER_%s\\n' \"$$\"; sleep 0.1"
@@ -617,7 +618,10 @@ class Integration(unittest.TestCase):
             self.assertIn("/out list", pane_output)
             self.assertIn("/out #<id> full", pane_output)
             self.assertRegex(pane_output, r"LIVE_MARKER_[0-9]+")
+            self.assertIn("┃ FEED_LINE_05", pane_output)
             self.assertRegex(output, rb"LIVE_MARKER_[0-9]+")
+            self.assertIn(b"\x1b[0mFEED_LINE_05", output)
+            self.assertIn(b"3 lines hidden (Ctrl+O full)", output)
             self.assertIn(b"Ctrl+O full", output)
             self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
             self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
