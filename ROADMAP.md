@@ -161,6 +161,8 @@ as they arrive. Bare carriage returns replace the pending line so progress
 meters show their latest state; captured results are normalized the same way
 for `/out` and model tool results. Assistant text and a compact Bash-result
 preview remain in the Omnicode feed, with `/out` available for the full result.
+The side pane scales toward 50 columns, within a 30–45% split, leaving more room
+for the feed on wider terminals.
 `Ctrl+O` prints the latest retained Bash result while preserving the current
 prompt draft. `/tmux on|off` controls the side pane, and an explicit off choice
 survives terminal resizes for the session. Live lines are secret-scrubbed and

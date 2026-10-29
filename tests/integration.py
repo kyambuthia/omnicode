@@ -628,7 +628,15 @@ class Integration(unittest.TestCase):
             self.assertIn(b"\x1b[0mFEED_LINE_05", output)
             self.assertIn(b"3 lines hidden (Ctrl+O full)", output)
             self.assertEqual(output.count(b"Ctrl+O full"), 1)
-            self.assertEqual(len(tmux_run("list-panes", "-t", session, "-F", "#{pane_id}").stdout.splitlines()), 2)
+            pane_sizes = {}
+            for line in tmux_run("list-panes", "-t", session, "-F", "#{pane_id} #{pane_width}").stdout.splitlines():
+                pane_id, width = line.split()
+                pane_sizes[pane_id] = int(width)
+            self.assertEqual(len(pane_sizes), 2)
+            output_pane = next(pane_id for pane_id in pane_sizes if pane_id != pane)
+            self.assertGreater(pane_sizes[pane], pane_sizes[output_pane])
+            self.assertGreaterEqual(pane_sizes[output_pane], 45)
+            self.assertLessEqual(pane_sizes[output_pane], 50)
             self.assertEqual(tmux_run("display-message", "-p", "-t", pane, "#{pane_active}").stdout.strip(), "1")
 
             send("/tmux off")

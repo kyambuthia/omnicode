@@ -19,8 +19,11 @@ pub const Feed = struct {
         const target = env.get("TMUX_PANE") orelse return null;
         if (!validPaneId(target)) return null;
 
+        const pane_percent = std.math.clamp(@divTrunc(5_000, width), 30, 45);
+        var percent_buffer: [3]u8 = undefined;
+        const percent_text = std.fmt.bufPrint(&percent_buffer, "{d}", .{pane_percent}) catch unreachable;
         const argv = [_][]const u8{
-            "tmux", "split-window", "-d", "-h", "-p", "45", "-P", "-F", "#{pane_id}", "-I", "-t", target,
+            "tmux", "split-window", "-d", "-h", "-p", percent_text, "-P", "-F", "#{pane_id}", "-I", "-t", target,
         };
         var child = try std.process.spawn(io, .{
             .argv = &argv,
