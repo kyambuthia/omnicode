@@ -150,7 +150,9 @@ remains a follow-on feature. The feed now separates
 assistant and Bash output, retains four recent Bash results for `/out`, and
 offers `/diff` for a bounded Git status and tracked-change view; untracked file
 contents are not included. Input and transcript state preserve the project's
-normal scrollback model.
+normal scrollback model. Model replies render as indented prose under a `MODEL`
+heading, while Bash keeps a heavier output rail, so the two sources remain easy
+to tell apart without color and the model body has less repeated decoration.
 
 Interactive sessions started inside a tmux pane at 100 columns or wider open a
 temporary right-hand Bash output pane using tmux's `split-window -I`. Bash
