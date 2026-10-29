@@ -350,17 +350,17 @@ pub const Ui = struct {
 
     // Never let model/file/command text emit terminal controls; truncate on UTF-8 boundaries.
     pub fn safe(ui: Ui, value: []const u8, max: usize) !void {
-        try ui.safeTo(ui.out, value, max);
+        _ = try ui.safeTo(ui.out, value, max);
     }
 
-    fn safeTo(ui: Ui, out: *Io.Writer, value: []const u8, max: usize) !void {
+    fn safeTo(ui: Ui, out: *Io.Writer, value: []const u8, max: usize) !bool {
         var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch.deinit();
         const text = if (ui.secrets) |secrets| try secrets.scrub(scratch.allocator(), value, ui.env) else value;
         defer if (text.ptr != value.ptr) std.crypto.secureZero(u8, @constCast(text));
         const view = std.unicode.Utf8View.init(text) catch {
             try out.writeAll("[non-UTF-8 text]");
-            return;
+            return false;
         };
         var it = view.iterator();
         var n: usize = 0;
@@ -368,13 +368,14 @@ pub const Ui = struct {
             const cp = try std.unicode.utf8Decode(bytes);
             if (n >= max) {
                 try out.writeAll("...");
-                break;
+                return true;
             }
             if (cp < 32 or (cp >= 127 and cp <= 159)) {
                 try out.writeByte(if (cp == '\t' or cp == '\n' or cp == '\r') ' ' else '?');
             } else try out.writeAll(bytes);
             n += 1;
         }
+        return false;
     }
 
     pub fn banner(ui: Ui, provider: []const u8, cwd: []const u8) !void {
@@ -576,6 +577,7 @@ pub const Ui = struct {
         const tail = visible_lines - head;
         var lines = std.mem.splitScalar(u8, trimmed, '\n');
         var n: usize = 0;
+        var clipped_line = false;
         while (lines.next()) |line| : (n += 1) {
             if (!ui.verbose and count > visible_lines and n >= head and n < count - tail) {
                 if (n == head) {
@@ -593,7 +595,14 @@ pub const Ui = struct {
             try ui.style(prefix_style);
             try ui.out.writeAll(prefix);
             try ui.style("\x1b[0m");
-            try ui.safe(line, if (ui.verbose) std.math.maxInt(usize) else ui.width -| (10 + ui.indent.len));
+            clipped_line = (try ui.safeTo(ui.out, line, if (ui.verbose) std.math.maxInt(usize) else ui.width -| (10 + ui.indent.len))) or clipped_line;
+            try ui.out.writeByte('\n');
+        }
+        if (clipped_line and count <= visible_lines) {
+            try ui.style("\x1b[2m");
+            try ui.out.writeAll("  ... long line clipped to fit; ");
+            try ui.safe(expand_command, std.math.maxInt(usize));
+            try ui.style("\x1b[0m");
             try ui.out.writeByte('\n');
         }
     }
@@ -1019,7 +1028,7 @@ pub const Ui = struct {
         const out = &stream.interface;
         try ui.styleTo(out, "\x1b[1;36m");
         if (id > 0) try out.print("$ [{d}] ", .{id}) else try out.writeAll("$ ");
-        try ui.safeTo(out, command, std.math.maxInt(usize));
+        _ = try ui.safeTo(out, command, std.math.maxInt(usize));
         try ui.styleTo(out, "\x1b[0m");
         try out.writeAll("\r\n");
         try out.flush();
@@ -1041,7 +1050,7 @@ pub const Ui = struct {
                 var lines = std.mem.splitScalar(u8, trimmed, '\n');
                 while (lines.next()) |line| {
                     try out.writeAll("  ┃ ");
-                    try ui.safeTo(out, line, std.math.maxInt(usize));
+                    _ = try ui.safeTo(out, line, std.math.maxInt(usize));
                     try out.writeAll("\r\n");
                 }
             }
@@ -1129,6 +1138,15 @@ test "previews keep head and tail, preserve UTF-8, and neutralize terminal escap
     try std.testing.expect(std.mem.indexOfScalar(u8, text, 27) == null);
     try std.testing.expect(std.unicode.utf8ValidateSlice(text));
     try std.testing.expect(std.mem.endsWith(u8, text, "é..."));
+}
+
+test "single long preview lines show how to recover the full output" {
+    var buffer: [4096]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    const ui: Ui = .{ .out = &writer, .io = std.testing.io, .width = 40 };
+    try ui.preview("abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN", "");
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "long line clipped to fit; /details or /verbose on") != null);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "...\n") != null);
 }
 
 test "details bound memory, truncate UTF-8 safely, and evict the previous result" {
@@ -1391,6 +1409,16 @@ test "Bash feed marks output source and offers a one-step full-output replay" {
     try std.testing.expect(std.mem.indexOf(u8, rendered, "\x1b[1;36m┃ \x1b[0mfirst") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "2 lines hidden (Ctrl+O full)") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "Ctrl+O full") != null);
+}
+
+test "clipped Bash lines point to the full-output shortcut" {
+    var buffer: [4096]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    var details: Details = .{};
+    const ui: Ui = .{ .out = &writer, .io = std.testing.io, .interactive = true, .width = 40, .details = &details };
+    const call_id = details.beginOutput();
+    try ui.toolEnd("bash", .null, "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN", false, Io.Clock.awake.now(std.testing.io), call_id);
+    try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "long line clipped to fit; Ctrl+O full") != null);
 }
 
 test "model replies and tool output have explicit source labels" {
