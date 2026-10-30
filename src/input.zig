@@ -5,6 +5,16 @@ const ModelMenu = @import("catalog.zig").ModelMenu;
 const Provider = @import("router.zig").Provider;
 const status_line = @import("status.zig");
 
+const setup_providers = [_]Provider{
+    .abliteration, .anthropic, .openrouter, .deepseek,  .xai,      .openai,    .gemini, .groq,
+    .runinfra,     .mistral,   .together,   .fireworks, .cerebras, .deepinfra, .nvidia, .custom,
+};
+
+pub const ProviderSetup = struct {
+    provider: Provider,
+    key_len: usize,
+};
+
 fn redrawInput(ui: Ui, bytes: []const u8) !void {
     if (ui.workspace != null) {
         try ui.prompt();
@@ -15,6 +25,351 @@ fn redrawInput(ui: Ui, bytes: []const u8) !void {
         try ui.out.writeAll(bytes);
     }
     try ui.out.flush();
+}
+
+/// Let users choose a provider, then enter its key without echoing it.
+/// Ctrl+V requests the terminal clipboard when OSC 52 reads are supported;
+/// the terminal's native paste shortcut is also accepted through bracketed paste.
+pub fn setupProvider(
+    io: Io,
+    ui: Ui,
+    env: *const std.process.Environ.Map,
+    active_provider: Provider,
+    openrouter_only: bool,
+    key_buffer: *[4096]u8,
+) !?ProviderSetup {
+    if (!ui.interactive or !(Io.File.stdin().isTty(io) catch false)) return null;
+    var keep_key = false;
+    defer if (!keep_key) @memset(key_buffer, 0);
+    const original = try std.posix.tcgetattr(0);
+    var raw = original;
+    raw.lflag.ICANON = false;
+    raw.lflag.ECHO = false;
+    raw.lflag.ISIG = false;
+    raw.lflag.IEXTEN = false;
+    raw.iflag.IXON = false;
+    raw.iflag.ICRNL = false;
+    raw.cc[@backingInt(std.posix.V.MIN)] = 1;
+    raw.cc[@backingInt(std.posix.V.TIME)] = 0;
+    try std.posix.tcsetattr(0, .NOW, raw);
+    defer std.posix.tcsetattr(0, .NOW, original) catch {};
+    try ui.out.writeAll("\x1b[?2004h");
+    defer {
+        ui.out.writeAll("\x1b[?2004l") catch {};
+        ui.out.flush() catch {};
+    }
+
+    const alternate_screen = ui.workspace == null;
+    if (alternate_screen) try ui.out.writeAll("\x1b[?1049h");
+    defer {
+        if (alternate_screen) {
+            ui.out.writeAll("\x1b[?25h\x1b[?1049l") catch {};
+            ui.out.flush() catch {};
+        } else {
+            ui.redrawWorkspace() catch {};
+        }
+    }
+
+    const provider = (try chooseProvider(io, ui, env, active_provider, openrouter_only)) orelse return null;
+    @memset(key_buffer, 0);
+    const key_len = (try enterProviderKey(io, ui, provider, env, key_buffer)) orelse return null;
+    keep_key = true;
+    return .{ .provider = provider, .key_len = key_len };
+}
+
+fn chooseProvider(io: Io, ui: Ui, env: *const std.process.Environ.Map, active_provider: Provider, openrouter_only: bool) !?Provider {
+    var query: [96]u8 = undefined;
+    var query_len: usize = 0;
+    var matches: [setup_providers.len]usize = undefined;
+    var match_count = collectProviderMatches("", &matches, openrouter_only);
+    var selected: usize = 0;
+    for (matches[0..match_count], 0..) |idx, pos| {
+        if (setup_providers[idx] == active_provider) {
+            selected = pos;
+            break;
+        }
+    }
+    var scroll_top: usize = 0;
+    var escape: u8 = 0;
+    var csi_parameter: u8 = 0;
+    try drawProviderMenu(ui, env, matches[0..match_count], selected, scroll_top, query[0..query_len]);
+    while (true) {
+        if (escape != 0) {
+            var fds = [_]std.posix.pollfd{.{ .fd = 0, .events = std.posix.POLL.IN }};
+            if (try std.posix.poll(&fds, 100) == 0) {
+                if (escape == 1) return null;
+                escape = 0;
+                csi_parameter = 0;
+                continue;
+            }
+        }
+        var byte: [1]u8 = undefined;
+        if (try Io.File.stdin().readStreaming(io, &.{&byte}) == 0) return null;
+        const c = byte[0];
+        if (escape == 0 and c == 27) {
+            escape = 1;
+            continue;
+        }
+        if (escape == 1) {
+            if (c == '[' or c == 'O') {
+                escape = 2;
+                csi_parameter = 0;
+                continue;
+            }
+            escape = 0;
+            return null;
+        }
+        if (escape == 2) {
+            if (c >= 0x40 and c <= 0x7e) {
+                escape = 0;
+                switch (c) {
+                    'A' => if (selected > 0) {
+                        selected -= 1;
+                    },
+                    'B' => if (match_count > 0 and selected + 1 < match_count) {
+                        selected += 1;
+                    },
+                    'H' => selected = 0,
+                    'F' => if (match_count > 0) {
+                        selected = match_count - 1;
+                    },
+                    '~' => switch (csi_parameter) {
+                        '1' => selected = 0,
+                        '4' => if (match_count > 0) {
+                            selected = match_count - 1;
+                        },
+                        '5' => selected -|= providerMenuVisible(status_line.terminalRows()),
+                        '6' => selected = @min(selected + providerMenuVisible(status_line.terminalRows()), match_count -| 1),
+                        else => {},
+                    },
+                    else => {},
+                }
+                csi_parameter = 0;
+            } else if (c >= '0' and c <= '9' and csi_parameter == 0) {
+                csi_parameter = c;
+                continue;
+            }
+            if (escape != 0) continue;
+        } else switch (c) {
+            3, 4, 27 => return null,
+            '\r', '\n' => if (match_count > 0) return setup_providers[matches[selected]] else continue,
+            '\t' => {
+                if (match_count > 0) selected = (selected + 1) % match_count;
+            },
+            8, 127 => if (query_len > 0) {
+                query_len -= 1;
+                match_count = collectProviderMatches(query[0..query_len], &matches, openrouter_only);
+                selected = 0;
+                scroll_top = 0;
+            },
+            21 => {
+                query_len = 0;
+                match_count = collectProviderMatches("", &matches, openrouter_only);
+                selected = 0;
+                scroll_top = 0;
+            },
+            else => if (c >= 0x20 and c <= 0x7e and query_len < query.len) {
+                query[query_len] = c;
+                query_len += 1;
+                match_count = collectProviderMatches(query[0..query_len], &matches, openrouter_only);
+                selected = 0;
+                scroll_top = 0;
+            },
+        }
+        const visible = providerMenuVisible(status_line.terminalRows());
+        if (selected < scroll_top) scroll_top = selected;
+        if (selected >= scroll_top + visible) scroll_top = selected - visible + 1;
+        try drawProviderMenu(ui, env, matches[0..match_count], selected, scroll_top, query[0..query_len]);
+    }
+}
+
+fn collectProviderMatches(query: []const u8, matches: *[setup_providers.len]usize, openrouter_only: bool) usize {
+    var count: usize = 0;
+    for (setup_providers, 0..) |provider, index| {
+        if (openrouter_only and provider != .openrouter) continue;
+        if (containsIgnoreCase(@tagName(provider), query) or containsIgnoreCase(provider.envKey(), query)) {
+            matches[count] = index;
+            count += 1;
+        }
+    }
+    return count;
+}
+
+fn providerMenuVisible(detected_rows: usize) usize {
+    const rows = if (detected_rows < 12) 24 else detected_rows;
+    return @max(rows -| 8, 1);
+}
+
+fn drawProviderMenu(ui: Ui, env: *const std.process.Environ.Map, matches: []const usize, selected: usize, scroll_top: usize, query: []const u8) !void {
+    const detected_rows = status_line.terminalRows();
+    const rows = if (detected_rows < 12) 24 else detected_rows;
+    const visible = providerMenuVisible(rows);
+    try ui.out.writeAll("\x1b[2J\x1b[H\x1b[?25l");
+    if (ui.color) try ui.out.writeAll("\x1b[1m");
+    try ui.out.writeAll("Set up a provider");
+    if (ui.color) try ui.out.writeAll("\x1b[0m");
+    try ui.out.writeAll("\x1b[K\nSearch: ");
+    try ui.writeSafeText(query, 96);
+    try ui.out.writeAll("\x1b[K\n\n");
+    for (0..visible) |offset| {
+        const index = scroll_top + offset;
+        if (index < matches.len) {
+            const provider = setup_providers[matches[index]];
+            if (index == selected) try ui.out.writeAll("\x1b[30;46m");
+            try ui.out.print("  {s:<12} {s}", .{ @tagName(provider), provider.envKey() });
+            try ui.out.writeAll(if (provider.key(env).len > 0) "  · key available" else "  · key required");
+            if (index == selected) try ui.out.writeAll("\x1b[0m");
+        }
+        try ui.out.writeAll("\x1b[K\n");
+    }
+    try ui.out.print("\n↑/↓ choose · type to search · Enter select · Ctrl+C/Esc cancel\x1b[K\n\x1b[{d};1H", .{rows});
+    try ui.out.flush();
+}
+
+fn enterProviderKey(io: Io, ui: Ui, provider: Provider, env: *const std.process.Environ.Map, buffer: []u8) !?usize {
+    const existing = provider.key(env).len > 0;
+    try ui.out.writeAll("\x1b[2J\x1b[H");
+    if (ui.color) try ui.out.writeAll("\x1b[1m");
+    try ui.out.print("API key for {s}\x1b[0m\n\n", .{@tagName(provider)});
+    try ui.out.print("{s}", .{provider.envKey()});
+    if (provider.aliasEnvKey()) |alias| try ui.out.print(" (also accepts {s})", .{alias});
+    try ui.out.writeAll("\nKey entry is hidden. Ctrl+V reads the clipboard where supported; terminal paste also works.\n");
+    try ui.out.writeAll(if (existing) "Press Enter to keep the current key, or Ctrl+C/Esc to cancel.\n\n" else "Enter a key; Ctrl+C/Esc cancel.\n\n");
+    try ui.out.writeAll("API key: \x1b[?25h");
+    try ui.out.flush();
+
+    var used: usize = 0;
+    var paste = false;
+    var carriage_return = false;
+    var sequence: [8]u8 = undefined;
+    var pending: usize = 0;
+    while (true) {
+        if (pending == 1) {
+            var fds = [_]std.posix.pollfd{.{ .fd = 0, .events = std.posix.POLL.IN }};
+            if (try std.posix.poll(&fds, 100) == 0) return null;
+        }
+        var byte: [1]u8 = undefined;
+        if (try Io.File.stdin().readStreaming(io, &.{&byte}) == 0) return null;
+        const c = byte[0];
+        if (pending > 0 or c == 27) {
+            if (pending < sequence.len) {
+                sequence[pending] = c;
+                pending += 1;
+            } else {
+                pending = sequence.len + 1;
+            }
+            if (pending == 1 or (pending == 2 and (c == '[' or c == 'O'))) continue;
+            if (c == '[' or (c >= 0x20 and c <= 0x3f)) continue;
+            const escape = if (pending <= sequence.len) sequence[0..pending] else "";
+            if (std.mem.eql(u8, escape, "\x1b[200~")) paste = true;
+            if (std.mem.eql(u8, escape, "\x1b[201~")) paste = false;
+            if (std.mem.eql(u8, escape, "\x1b") or std.mem.eql(u8, escape, "\x1b[") or std.mem.eql(u8, escape, "\x1bO")) return null;
+            pending = 0;
+            continue;
+        }
+        if (!paste and c == 3) return null;
+        if (!paste and c == 4) return null;
+        if (!paste and c == 22) {
+            const pasted = try readClipboard(io, ui, buffer[used..]);
+            if (pasted) |count| {
+                used += count;
+                try drawProviderKeyState(ui, used);
+            } else {
+                try ui.out.writeAll("\r\x1b[2KClipboard read unavailable; use the terminal paste shortcut (often Ctrl+Shift+V).\nAPI key: ");
+                try ui.out.flush();
+            }
+            continue;
+        }
+        if (!paste and (c == '\r' or c == '\n')) {
+            const trimmed = std.mem.trim(u8, buffer[0..used], " \t\r\n");
+            if (trimmed.len > 0) {
+                @memmove(buffer[0..trimmed.len], trimmed);
+                return trimmed.len;
+            }
+            if (existing) return 0;
+            try ui.out.writeAll("\r\x1b[2KA key is required. Paste or type it, or press Esc to cancel.\nAPI key: ");
+            try ui.out.flush();
+            used = 0;
+            @memset(buffer, 0);
+            continue;
+        }
+        if (!paste and (c == 8 or c == 127)) {
+            if (used > 0) {
+                used -= 1;
+                while (used > 0 and buffer[used] & 0xc0 == 0x80) used -= 1;
+                try drawProviderKeyState(ui, used);
+            }
+            continue;
+        }
+        if (!paste and c == 21) {
+            @memset(buffer[0..used], 0);
+            used = 0;
+            try drawProviderKeyState(ui, used);
+            continue;
+        }
+        if (c >= 0x20 or (paste and (c == '\n' or c == '\r' or c == '\t'))) {
+            if (paste and c == '\n' and carriage_return) {
+                carriage_return = false;
+                continue;
+            }
+            carriage_return = c == '\r';
+            if (used == buffer.len) continue;
+            if (c == '\n' or c == '\r' or c == '\t') continue;
+            buffer[used] = c;
+            used += 1;
+            try drawProviderKeyState(ui, used);
+        }
+    }
+}
+
+fn drawProviderKeyState(ui: Ui, used: usize) !void {
+    try ui.out.writeAll("\r\x1b[2KAPI key: ");
+    if (used > 0) try ui.out.writeAll("•••••••• (hidden)");
+    try ui.out.flush();
+}
+
+fn readClipboard(io: Io, ui: Ui, dest: []u8) !?usize {
+    try ui.out.writeAll("\x1b]52;c;?\x1b\\");
+    try ui.out.flush();
+    const started = Io.Clock.awake.now(io);
+    const prefix = "\x1b]52;c;";
+    for (prefix) |expected| {
+        const actual = try clipboardByte(io, started, 1500) orelse return null;
+        if (actual != expected) return null;
+    }
+    var encoded: [8192]u8 = undefined;
+    defer @memset(&encoded, 0);
+    var encoded_len: usize = 0;
+    while (true) {
+        const c = try clipboardByte(io, started, 1500) orelse return null;
+        if (c == 7) break;
+        if (c == 27) {
+            const terminator = try clipboardByte(io, started, 1500) orelse return null;
+            if (terminator == '\\') break;
+            return null;
+        }
+        if (encoded_len == encoded.len) return null;
+        encoded[encoded_len] = c;
+        encoded_len += 1;
+    }
+    const data = encoded[0..encoded_len];
+    const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(data) catch return null;
+    if (decoded_len > dest.len) return null;
+    std.base64.standard.Decoder.decode(dest[0..decoded_len], data) catch return null;
+    const text = std.mem.trim(u8, dest[0..decoded_len], " \t\r\n");
+    if (text.len > 0) @memmove(dest[0..text.len], text);
+    return text.len;
+}
+
+fn clipboardByte(io: Io, started: Io.Timestamp, timeout_ms: i64) !?u8 {
+    const elapsed = started.durationTo(Io.Clock.awake.now(io)).toMilliseconds();
+    if (elapsed >= timeout_ms) return null;
+    var fds = [_]std.posix.pollfd{.{ .fd = 0, .events = std.posix.POLL.IN }};
+    const remaining: i32 = @intCast(timeout_ms - elapsed);
+    if (try std.posix.poll(&fds, remaining) == 0) return null;
+    var byte: [1]u8 = undefined;
+    if (try Io.File.stdin().readStreaming(io, &.{&byte}) == 0) return null;
+    return byte[0];
 }
 
 /// Open a searchable, scrollable model picker. Null means the user canceled.

@@ -157,6 +157,45 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         {
             const prefix_len: usize = if (std.mem.startsWith(u8, line, "/providers")) 10 else 9;
             const rest = if (line.len > prefix_len) std.mem.trim(u8, line[prefix_len..], " \t") else "";
+            if (std.mem.eql(u8, rest, "setup") or std.mem.eql(u8, rest, "configure")) {
+                if (!ui.interactive or !(std.Io.File.stdin().isTty(init.io) catch false)) {
+                    try ui.output("Interactive provider setup requires a terminal. Use /providers <provider> <key> or export the provider key.\n");
+                    continue;
+                }
+                try redactRetained(&agent, &composer, secrets, ui);
+                var key_buffer: [4096]u8 = undefined;
+                defer @memset(&key_buffer, 0);
+                const selected = core.setupProvider(init.io, ui, init.environ_map, route.provider, mode == .free, &key_buffer) catch |err| {
+                    if (err == error.Canceled) return err;
+                    try ui.errorMessage(err);
+                    continue;
+                } orelse continue;
+                if (mode == .free and selected.provider != .openrouter) {
+                    try ui.note("--free requires OpenRouter; provider setup canceled.");
+                    continue;
+                }
+                var command_buffer: [4096 + 64]u8 = undefined;
+                defer @memset(&command_buffer, 0);
+                const command = if (selected.key_len == 0)
+                    try std.fmt.bufPrint(&command_buffer, "{s}", .{@tagName(selected.provider)})
+                else
+                    try std.fmt.bufPrint(&command_buffer, "{s} {s}", .{ @tagName(selected.provider), key_buffer[0..selected.key_len] });
+                const msg = core.config.executeProviders(a, init.io, .cwd(), init.environ_map, route.provider, command) catch |err| {
+                    if (err == error.Canceled) return err;
+                    try ui.errorMessage(err);
+                    continue;
+                };
+                if (core.Route.init(init.environ_map, if (mode == .free) "openrouter" else null, null)) |updated| {
+                    route = updated;
+                    route.mode = mode;
+                    automatic = true;
+                    agent.route = route;
+                    agent.automatic = true;
+                    status.setModel(route.model);
+                } else |_| {}
+                try ui.note(msg);
+                continue;
+            }
             try redactRetained(&agent, &composer, secrets, ui);
             const msg = core.config.executeProviders(a, init.io, .cwd(), init.environ_map, route.provider, rest) catch |err| {
                 if (err == error.Canceled) return err;

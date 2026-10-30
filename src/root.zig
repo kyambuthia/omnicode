@@ -2,6 +2,7 @@ pub const version = "0.3.0";
 pub const Usage = @import("usage.zig").Usage;
 pub const Input = @import("input.zig").Input;
 pub const pickModel = @import("input.zig").pickModel;
+pub const setupProvider = @import("input.zig").setupProvider;
 pub const Details = @import("ui.zig").Details;
 pub const Ui = @import("ui.zig").Ui;
 pub const Workspace = @import("ui.zig").Workspace;
