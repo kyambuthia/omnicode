@@ -18,7 +18,7 @@ pub const help =
     \\REPL commands:
     \\  /help                  Show this help
     \\  /view chat|activity|changes|plan  Switch workspace view (Tab/Shift-Tab also switches)
-    \\  /providers [...]       List, switch, or configure providers & API keys (/providers <N|name> [key])
+    \\  /providers [...]       List, switch, or configure providers & API keys (/providers setup opens key entry)
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
     \\  /secrets [...]         Manage zero-leak secrets (injected in bash, scrubbed from chat)
     \\  /voice [sec|file]      Record or transcribe audio via cheap OpenRouter voice models
