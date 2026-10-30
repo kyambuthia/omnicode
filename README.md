@@ -164,6 +164,7 @@ REPL commands:
 | Command | Effect |
 |---|---|
 | `/providers` or `/providers list` | Show numbered list of all supported providers, active status (`*`), API key status, default models, and endpoints |
+| `/providers setup` | Open a searchable provider menu, then enter or paste a key without displaying it; saves the key (`0o600`) and activates that provider |
 | `/providers <N\|provider>` | Switch active provider by number or name (preserves conversation) |
 | `/providers <provider> <key>` | Save API key for `<provider>` (`0o600`) and activate it immediately |
 | `/providers url <url\|default>` | Set or reset the complete `API_URL` endpoint |
@@ -206,6 +207,8 @@ REPL commands:
 | `/details` | Recover the last tool result, up to 64 KiB; next tool call replaces it |
 | `/c` | Clear conversation and free session allocations |
 | `/q`, `/exit`, or `exit` | Quit |
+
+In `/providers setup`, search by provider name or environment variable, move with the arrow keys, and press Enter. The key is masked while typing. Ctrl+V requests clipboard access from terminals that permit OSC 52 clipboard reads; otherwise use the terminal's paste shortcut (often Ctrl+Shift+V). Press Enter to keep an existing key, or Ctrl+C/Escape to cancel.
 
 Config, vault, and session saves use private (`0600`) temporary files and atomic
 replacement. Saving repairs loose permissions on an existing destination and
