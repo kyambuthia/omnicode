@@ -39,12 +39,24 @@ pub const allowed_keys = [_][]const u8{
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "GROQ_API_KEY",
+    "RUNINFRA_API_KEY",
+    "RUNINFRA_GATEWAY_KEY",
+    "MISTRAL_API_KEY",
+    "TOGETHER_API_KEY",
+    "FIREWORKS_API_KEY",
+    "CEREBRAS_API_KEY",
+    "DEEPINFRA_API_KEY",
+    "NVIDIA_API_KEY",
+    "CUSTOM_API_KEY",
     "PROVIDER",
     "MODEL",
     "FAST_MODEL",
     "VOICE_MODEL",
     "VOICE_URL",
     "API_URL",
+    "API_MODELS_URL",
+    "API_PROTOCOL",
+    "API_AUTH",
     "MODELS_URL",
     "OMNICODE_STATUS",
     "MAX_TURNS",
@@ -68,6 +80,14 @@ pub const all_providers = [_]router.Provider{
     .openai,
     .gemini,
     .groq,
+    .runinfra,
+    .mistral,
+    .together,
+    .fireworks,
+    .cerebras,
+    .deepinfra,
+    .nvidia,
+    .custom,
 };
 
 pub fn resolveProvider(token: []const u8) ?router.Provider {
@@ -210,8 +230,10 @@ fn writeEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, ent
 pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8, value: []const u8) !void {
     if (!isAllowedKey(key)) return error.InvalidConfigKey;
     if (value.len == 0 or std.mem.indexOfAny(u8, value, "\x00\r\n") != null) return error.InvalidConfigValue;
-    if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
+    if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "API_MODELS_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
         try @import("http.zig").validateEndpoint(value);
+    if (std.mem.eql(u8, key, "API_PROTOCOL") and !validApiProtocol(value)) return error.InvalidApiProtocol;
+    if (std.mem.eql(u8, key, "API_AUTH") and !validApiAuth(value)) return error.InvalidApiAuth;
     if (std.mem.eql(u8, key, "MAX_TURNS")) _ = try parseMaxTurns(value);
     if (std.mem.eql(u8, key, "MAX_TOOL_CALLS")) _ = try parseMaxToolCalls(value);
     if (std.mem.eql(u8, key, "MAX_REQUESTS_PER_MINUTE")) _ = try parseMaxRequestsPerMinute(value);
@@ -257,9 +279,21 @@ fn applyPending(env: *std.process.Environ.Map, pending: *std.process.Environ.Map
 
 fn clearOwnedSensitiveValue(env: *std.process.Environ.Map, key: []const u8) void {
     const sensitive = std.mem.endsWith(u8, key, "_KEY") or std.mem.eql(u8, key, "API_URL") or
-        std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL");
+        std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL") or
+        std.mem.eql(u8, key, "API_MODELS_URL");
     if (!sensitive) return;
     if (env.get(key)) |old| std.crypto.secureZero(u8, @constCast(old));
+}
+
+fn validApiProtocol(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "openai") or std.ascii.eqlIgnoreCase(value, "chat") or
+        std.ascii.eqlIgnoreCase(value, "openai_chat_completions") or std.ascii.eqlIgnoreCase(value, "anthropic") or
+        std.ascii.eqlIgnoreCase(value, "messages") or std.ascii.eqlIgnoreCase(value, "anthropic_messages");
+}
+
+fn validApiAuth(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "bearer") or std.ascii.eqlIgnoreCase(value, "x-api-key") or
+        std.ascii.eqlIgnoreCase(value, "x_api_key");
 }
 
 pub fn unset(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8) !void {
@@ -299,18 +333,9 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
     const path = try status.shortenHome(a, raw_path, env.get("HOME") orelse "");
     var out: Io.Writer.Allocating = .init(a);
     try out.writer.print("Config file: {s}\nProviders & API keys:\n", .{path});
-    inline for (.{
-        router.Provider.abliteration,
-        router.Provider.openrouter,
-        router.Provider.anthropic,
-        router.Provider.deepseek,
-        router.Provider.xai,
-        router.Provider.openai,
-        router.Provider.gemini,
-        router.Provider.groq,
-    }) |p| {
-        const val = env.get(p.envKey()) orelse "";
-        try out.writer.print("  {s:<11} ({s}): {s}\n", .{ @tagName(p), p.envKey(), maskSecret(val) });
+    for (all_providers) |p| {
+        const val = p.key(env);
+        try out.writer.print("  {s:<11} ({s}): {s}\n", .{ @tagName(p), p.configuredEnvKey(env), maskSecret(val) });
     }
     const route = router.Route.init(env, null, null) catch null;
     const active_provider = if (route) |r| @tagName(r.provider) else (env.get("PROVIDER") orelse "auto");
@@ -328,7 +353,7 @@ pub fn statusReport(a: std.mem.Allocator, env: *const std.process.Environ.Map) !
         \\  MAX_REQUESTS_PER_MINUTE = {s} (0 disables model pacing; default 60)
         \\Usage:
         \\  /setup <provider> <api_key>     Save API key (e.g. /setup openrouter sk-or-...)
-        \\  /setup set <KEY> <VALUE>        Set PROVIDER, MODEL, FAST_MODEL, VOICE_MODEL, etc.
+        \\  /setup set <KEY> <VALUE>        Set PROVIDER, MODEL, FAST_MODEL, API_PROTOCOL, API_AUTH, etc.
         \\  /setup unset <provider|KEY>     Remove a saved key or setting
         \\
     , .{ active_provider, active_model, fast_model, voice_model, env.get("MAX_TURNS") orelse "32", env.get("MAX_TOOL_CALLS") orelse "256", env.get("MAX_REQUESTS_PER_MINUTE") orelse "60" });
@@ -361,6 +386,7 @@ pub fn execute(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Envi
         if (parts.next() != null) return error.InvalidSetupCommand;
         const key = resolveKeyName(target) orelse return error.InvalidConfigKey;
         try unset(a, io, dir, env, key);
+        if (std.mem.eql(u8, key, "RUNINFRA_API_KEY")) try unset(a, io, dir, env, "RUNINFRA_GATEWAY_KEY");
         return std.fmt.allocPrint(a, "Cleared {s} from session and config.", .{key});
     }
     if (std.mem.eql(u8, first, "set")) {
@@ -389,12 +415,13 @@ pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map
     const raw_path = try configPath(a, env);
     const path = try status.shortenHome(a, raw_path, env.get("HOME") orelse "");
     const detected = router.Route.init(env, null, null) catch null;
-    const active: ?router.Provider = active_override orelse if (detected) |r| r.provider else null;
+    const configured = if (env.get("PROVIDER")) |name| std.meta.stringToEnum(router.Provider, name) else null;
+    const active: ?router.Provider = active_override orelse if (detected) |r| r.provider else configured;
     const custom_url = env.get("API_URL") orelse "";
     var out: Io.Writer.Allocating = .init(a);
     try out.writer.print("Config file: {s}\nProviders (* = active):\n", .{path});
     for (all_providers, 1..) |p, idx| {
-        const val = env.get(p.envKey()) orelse "";
+        const val = p.key(env);
         const mark: u8 = if (active != null and active.? == p) '*' else ' ';
         const strong = p.defaultModel(true);
         const fast = p.defaultModel(false);
@@ -405,19 +432,27 @@ pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map
         const raw_url = if (custom_url.len > 0 and active != null and active.? == p) custom_url else p.defaultUrl();
         const url = try displayEndpoint(a, raw_url);
         try out.writer.print("  {c} {d:>2}. {s:<12} key: {s:<14} [{s}]  models: {s}  url: {s}\n", .{
-            mark, idx, @tagName(p), maskSecret(val), p.envKey(), models_buf, url,
+            mark, idx, @tagName(p), maskSecret(val), p.configuredEnvKey(env), models_buf, url,
         });
     }
     if (custom_url.len > 0) {
         try out.writer.print("Custom API_URL override: {s}\n", .{try displayEndpoint(a, custom_url)});
     }
+    if (env.get("API_MODELS_URL")) |url| try out.writer.print("Provider API_MODELS_URL override: {s}\n", .{url});
+    if (env.get("API_PROTOCOL")) |protocol| try out.writer.print("Custom API_PROTOCOL override: {s}\n", .{protocol});
+    if (env.get("API_AUTH")) |auth| try out.writer.print("Custom API_AUTH override: {s}\n", .{auth});
     try out.writer.writeAll(
         \\Usage:
         \\  /providers                       List providers, key status, default models, and endpoints
         \\  /providers <N|provider>          Switch active provider (e.g. /providers 2 or /providers openrouter)
         \\  /providers <provider> <api_key>  Save API key and activate provider (e.g. /providers deepseek sk-...)
-        \\  /providers url <url|default>     Set or reset custom API_URL endpoint
+        \\  /providers url <url|default>     Set or reset the complete API endpoint URL
+        \\  /providers models-url <url|default> Set or reset the provider model-list URL
+        \\  /providers protocol <openai|anthropic> Set wire format for compatible/custom APIs
+        \\  /providers auth <bearer|x-api-key> Set authentication header for custom API
+        \\  /providers custom <key>          Configure a custom OpenAI-compatible API key
         \\  /providers unset <provider>      Remove saved API key for a provider
+        \\  Custom setup: set URL, protocol, auth, MODEL, and optionally FAST_MODEL with /setup set
         \\
     );
     return out.toOwnedSlice();
@@ -434,6 +469,10 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
         if (parts.next() != null) return error.InvalidProvidersCommand;
         const p = resolveProvider(target) orelse return error.UnknownProvider;
         try unset(a, io, dir, env, p.envKey());
+        if (p.aliasEnvKey()) |name| try unset(a, io, dir, env, name);
+        if (p == .custom) {
+            for ([_][]const u8{ "API_URL", "API_MODELS_URL", "API_PROTOCOL", "API_AUTH", "MODEL", "FAST_MODEL" }) |name| try unset(a, io, dir, env, name);
+        }
         if (std.mem.eql(u8, env.get("PROVIDER") orelse "", @tagName(p))) {
             try unset(a, io, dir, env, "PROVIDER");
         }
@@ -449,6 +488,28 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
         try set(a, io, dir, env, "API_URL", url);
         return std.fmt.allocPrint(a, "Saved API_URL = {s}", .{try displayEndpoint(a, url)});
     }
+    if (std.mem.eql(u8, first, "models-url")) {
+        const url = std.mem.trim(u8, parts.rest(), " \t");
+        if (url.len == 0) return error.InvalidProvidersCommand;
+        if (std.mem.eql(u8, url, "default") or std.mem.eql(u8, url, "reset") or std.mem.eql(u8, url, "clear")) {
+            try unset(a, io, dir, env, "API_MODELS_URL");
+            return a.dupe(u8, "Reset API_MODELS_URL to the provider's standard model-list endpoint.");
+        }
+        try set(a, io, dir, env, "API_MODELS_URL", url);
+        return std.fmt.allocPrint(a, "Saved API_MODELS_URL = {s}", .{url});
+    }
+    if (std.mem.eql(u8, first, "protocol")) {
+        const protocol = std.mem.trim(u8, parts.rest(), " \t");
+        if (!validApiProtocol(protocol)) return error.InvalidApiProtocol;
+        try set(a, io, dir, env, "API_PROTOCOL", protocol);
+        return std.fmt.allocPrint(a, "Saved API_PROTOCOL = {s}.", .{protocol});
+    }
+    if (std.mem.eql(u8, first, "auth")) {
+        const auth = std.mem.trim(u8, parts.rest(), " \t");
+        if (!validApiAuth(auth)) return error.InvalidApiAuth;
+        try set(a, io, dir, env, "API_AUTH", auth);
+        return std.fmt.allocPrint(a, "Saved API_AUTH = {s}.", .{auth});
+    }
     const is_explicit_verb = std.mem.eql(u8, first, "use") or std.mem.eql(u8, first, "select") or std.mem.eql(u8, first, "set");
     const target_tok = if (is_explicit_verb) (parts.next() orelse return error.InvalidProvidersCommand) else first;
     const p = resolveProvider(target_tok) orelse return error.UnknownProvider;
@@ -456,7 +517,7 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
     if (remainder.len == 0) {
         if (std.mem.eql(u8, first, "set")) return error.InvalidProvidersCommand;
         try set(a, io, dir, env, "PROVIDER", @tagName(p));
-        const key_val: []const u8 = env.get(p.envKey()) orelse "";
+        const key_val = p.key(env);
         if (key_val.len > 0) {
             return std.fmt.allocPrint(a, "Active provider set to {s} (default model: {s}).", .{ @tagName(p), p.defaultModel(true) });
         }
@@ -464,6 +525,7 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
     }
     try set(a, io, dir, env, p.envKey(), remainder);
     try set(a, io, dir, env, "PROVIDER", @tagName(p));
+    if (p == .custom) return std.fmt.allocPrint(a, "Configured custom provider ({s} = {s}). Set /providers url <complete endpoint>, /providers protocol openai|anthropic, then /setup set MODEL <model-id> (and optionally FAST_MODEL).", .{ p.envKey(), maskSecret(remainder) });
     return std.fmt.allocPrint(a, "Configured {s} ({s} = {s}) and set as active provider.", .{ @tagName(p), p.envKey(), maskSecret(remainder) });
 }
 

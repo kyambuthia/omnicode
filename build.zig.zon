@@ -1,8 +1,8 @@
 .{
     .name = .omnicode,
-    .version = "0.2.0",
+    .version = "0.3.1",
     .fingerprint = 0x7605d4c9aa070470,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{},
-    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", "ROADMAP.md", "install.sh" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", "install.sh" },
 }

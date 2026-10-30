@@ -3,7 +3,7 @@ const core = @import("omnicode");
 
 pub const help =
     \\omnicode [--free|--cost-max] [--verbose] [--read-only] [--plan] [--dry-run] [--json] [--session NAME] [prompt ...]  Run a task, or start a REPL without arguments.
-    \\omnicode --version         Print version (v0.2.0).
+    \\omnicode --version         Print version (v0.3.1).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
     \\omnicode --providers [...] View, switch, or configure LLM providers and API keys.
@@ -19,13 +19,14 @@ pub const help =
     \\REPL commands:
     \\  /, /commands          Browse built-in commands and local skills
     \\  /help [topic]          Show all commands or search help by topic
-    \\  /providers [...]       List, switch, or configure providers & API keys (/providers <N|name> [key])
+    \\  /view chat|activity|changes|plan  Switch workspace view (Tab/Shift-Tab also switches)
+    \\  /providers [...]       List, switch, or configure providers & API keys (/providers setup opens key entry)
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
     \\  /secrets [...]         Manage zero-leak secrets (injected in bash, scrubbed from chat)
     \\  /voice [sec|file]      Record or transcribe audio via cheap OpenRouter voice models
     \\  /init [force]          Bootstrap OMNICODE.md and verify skill
     \\  /review [focus]        Run adversarial multi-agent code review
-    \\  /model                 Choose a model with ↑/↓ and Enter (Esc cancels)
+    \\  /model                 Search provider tabs and models (←/→ or Tab, ↑/↓, Enter)
     \\  /model list            Show current routing and numbered list of available models
     \\  /model compare         Compare live OpenRouter price and throughput order before switching
     \\  /model <N|MODEL>       Switch to model #N or MODEL (preserves conversation)
@@ -50,8 +51,8 @@ pub const help =
     \\  /diff                  Show bounded, redacted git status and tracked diff
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
-    \\Config: PROVIDER=abliteration|anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL, MAX_TURNS, MAX_REQUESTS_PER_MINUTE
-    \\Keys: OPENROUTER_API_KEY, ANTHROPIC_API_KEY, etc. (or run /setup). Searches require rg.
+    \\Config: PROVIDER=abliteration|anthropic|openrouter|runinfra|deepseek|xai|openai|gemini|groq|mistral|together|fireworks|cerebras|deepinfra|nvidia|custom, MODEL, FAST_MODEL, VOICE_MODEL
+    \\Keys: provider API keys (or run /providers). Custom OpenAI-compatible and Anthropic Messages endpoints are supported.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
 ;

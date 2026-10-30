@@ -6,6 +6,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ## Unreleased
 
+## 0.3.1 - 2026-10-30
+
 ### Fixed
 
 - Interactive `/setup <provider> <key>` input now masks the credential while typing and while restoring a prompt draft.
@@ -128,11 +130,6 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - Non-UTF-8 shell output is replaced with a bounded diagnostic before entering
   model history.
 
-### Breaking changes
-
-- Tool calls now reject unrecognized input fields instead of silently ignoring
-  them. Invalid calls return the expected tool input schema for recovery.
-
 ### Added
 
 - The `/` command index now includes local skill descriptions and how to invoke them with `/skill NAME`.
@@ -163,6 +160,27 @@ section for a release. Put incompatible changes under `Breaking changes`.
 - `--json` keeps offline commands such as `--setup` on their normal text interface.
 - Model requests are paced to 60 starts per minute by default across turns and
   delegated work. `MAX_REQUESTS_PER_MINUTE` sets 1–600 or 0 to disable pacing.
+
+- Tabbed workspace views and a searchable provider/model picker.
+- Interactive `/providers setup` for choosing a provider and entering an API key without echo; supports terminal paste and Ctrl+V clipboard access where available.
+
+### Changed
+
+- Missing API key errors now direct users to `/providers setup` and accept any selected provider.
+- Simplified the README and removed standalone project guides.
+
+## 0.3.0 - 2026-10-30
+
+### Breaking changes
+
+- Tool calls now reject unrecognized input fields instead of silently ignoring
+  them. Invalid calls return the expected tool input schema for recovery.
+
+### Added
+- OpenAI Chat Completions support, including tool-call conversion, for OpenAI, Gemini, Mistral, Together, Fireworks, Cerebras, DeepInfra, and NVIDIA NIM.
+- Six direct provider presets (Mistral, Together, Fireworks, Cerebras, DeepInfra, NVIDIA) and a configurable custom endpoint using either OpenAI Chat Completions or Anthropic Messages.
+- `/model` and `/model list` discover models from the active provider's standard `/models` API when available; `API_MODELS_URL` overrides discovery for custom gateways.
+- RunInfra provider support through its Anthropic-compatible Messages API, using `RUNINFRA_API_KEY` or `RUNINFRA_GATEWAY_KEY`.
 
 ## 0.2.0
 
