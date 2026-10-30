@@ -92,6 +92,7 @@ beyond those keywords; override the model for ambiguous work.
 | `CUSTOM_API_KEY` | Key for a custom OpenAI-compatible or Anthropic Messages endpoint |
 | `OMNICODE_CONFIG` | Optional path to the persistent config file (default: `$XDG_CONFIG_HOME/omnicode/config.env` or `~/.config/omnicode/config.env`) |
 | `API_URL` | Optional complete chat endpoint URL; used with the selected provider or custom endpoint |
+| `API_MODELS_URL` | Optional provider model-list endpoint; otherwise Omnicode derives `/models` from the selected chat endpoint |
 | `API_PROTOCOL` | Optional wire format override: `openai` (Chat Completions) or `anthropic` (Messages) |
 | `API_AUTH` | Optional auth header override: `bearer` or `x-api-key` |
 | `MODELS_URL` | Optional OpenRouter model catalog URL (public metadata; the API key is never sent to it) |
@@ -153,6 +154,7 @@ across both formats. Configure a custom endpoint with:
 /providers url https://llm.example/v1/chat/completions
 /providers protocol openai
 /providers auth bearer
+/providers models-url https://llm.example/v1/models
 /setup set MODEL provider/model-id
 /setup set FAST_MODEL provider/fast-model-id
 ```
@@ -165,6 +167,7 @@ REPL commands:
 | `/providers <N\|provider>` | Switch active provider by number or name (preserves conversation) |
 | `/providers <provider> <key>` | Save API key for `<provider>` (`0o600`) and activate it immediately |
 | `/providers url <url\|default>` | Set or reset the complete `API_URL` endpoint |
+| `/providers models-url <url\|default>` | Set or reset the provider model-list endpoint used by `/model` |
 | `/providers protocol <openai\|anthropic>` | Select Chat Completions or Messages wire format |
 | `/providers auth <bearer\|x-api-key>` | Select the custom API authentication header |
 | `/providers custom <key>` | Save a key and select a custom API; configure endpoint, protocol, and model with the commands above |
@@ -181,7 +184,7 @@ REPL commands:
 | `/voice model [MODEL]` | View or pin `VOICE_MODEL` for voice transcription |
 | `/init [force]` | Generate `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md`, then reload system instructions |
 | `/review [focus]` | Run the two-critic adversarial code review (Correctness/Security + Anti-Slop/Simplicity) on workspace changes |
-| `/model` or `/model list` | Show current routing mode and a numbered list (`[1]`, `[2]`, …) of available models across the OpenRouter catalog and configured providers |
+| `/model` or `/model list` | Show current routing mode and a numbered model list; direct providers are queried for models when their API exposes `/models` |
 | `/model <N>` | Switch directly to model `#N` from the `/model` list (preserves conversation) |
 | `/model <MODEL>` | Pin `<MODEL>` on the current or inferred provider (preserves conversation) |
 | `/model <PROVIDER> <MODEL>` | Switch to `<PROVIDER>` and pin `<MODEL>` (preserves conversation) |

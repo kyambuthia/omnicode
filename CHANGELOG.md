@@ -6,6 +6,8 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-30
+
 ### Breaking changes
 
 - Tool calls now reject unrecognized input fields instead of silently ignoring
@@ -15,6 +17,7 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 - OpenAI Chat Completions support, including tool-call conversion, for OpenAI, Gemini, Mistral, Together, Fireworks, Cerebras, DeepInfra, and NVIDIA NIM.
 - Six direct provider presets (Mistral, Together, Fireworks, Cerebras, DeepInfra, NVIDIA) and a configurable custom endpoint using either OpenAI Chat Completions or Anthropic Messages.
+- `/model` and `/model list` discover models from the active provider's standard `/models` API when available; `API_MODELS_URL` overrides discovery for custom gateways.
 - RunInfra provider support through its Anthropic-compatible Messages API, using `RUNINFRA_API_KEY` or `RUNINFRA_GATEWAY_KEY`.
 - Contributor instructions and a change history for future releases.
 - `--dry-run` previews the first proposed tool batch and stops before executing

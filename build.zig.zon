@@ -1,6 +1,6 @@
 .{
     .name = .omnicode,
-    .version = "0.2.0",
+    .version = "0.3.0",
     .fingerprint = 0x7605d4c9aa070470,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{},

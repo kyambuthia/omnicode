@@ -1,4 +1,4 @@
-pub const version = "0.2.0";
+pub const version = "0.3.0";
 pub const Usage = @import("usage.zig").Usage;
 pub const Input = @import("input.zig").Input;
 pub const pickModel = @import("input.zig").pickModel;

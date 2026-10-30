@@ -3,7 +3,7 @@ const core = @import("omnicode");
 
 pub const help =
     \\omnicode [--free|--cost-max] [--verbose] [--read-only] [--dry-run] [--json] [--session NAME] [prompt ...]  Run a task, or start a REPL without arguments.
-    \\omnicode --version         Print version (v0.2.0).
+    \\omnicode --version         Print version (v0.3.0).
     \\omnicode --skills          List project skills without an API call.
     \\omnicode --init            Initialize OMNICODE.md and .omnicode/skills/verify/SKILL.md.
     \\omnicode --providers [...] View, switch, or configure LLM providers and API keys.
