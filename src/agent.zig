@@ -324,6 +324,7 @@ pub const Agent = struct {
             "{\"sort\":\"price\",\"require_parameters\":true}"
         else
             "{\"sort\":\"price\"}"));
+        if (route.protocol == .openai_chat_completions) return encodeOpenAiPayload(a, payload);
         return j.encode(a, payload);
     }
 
@@ -670,11 +671,15 @@ pub const Agent = struct {
         if (route.key.len == 0) return error.MissingApiKey;
         if (self.rate_limiter) |limiter| try limiter.wait(self.context.io, self.env);
         const a = self.context.a;
-        const auth: std.http.Header = if (route.provider == .anthropic)
+        const auth: std.http.Header = if (route.auth_style == .x_api_key)
             .{ .name = "x-api-key", .value = route.key }
         else
             .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
-        return @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000);
+        const raw = if (route.protocol == .anthropic_messages)
+            try @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }, max_bytes, 120_000)
+        else
+            try @import("http.zig").fetchModel(a, self.context.io, route.url, body, &.{auth}, max_bytes, 120_000);
+        return if (route.protocol == .openai_chat_completions) normalizeOpenAiResponse(a, raw) else raw;
     }
 
     fn systemWithBudget(self: *const Agent, a: std.mem.Allocator, system: []const u8) ![]const u8 {
@@ -894,6 +899,192 @@ pub const Agent = struct {
         return .{ .text = try capReport(a, safe_report), .passed = complete and criticPassed(report) };
     }
 };
+
+fn jsonObject(a: std.mem.Allocator) !j.Value {
+    return j.parse(a, "{}");
+}
+
+fn jsonArray(a: std.mem.Allocator) !j.Value {
+    return j.parse(a, "[]");
+}
+
+fn put(a: std.mem.Allocator, value: *j.Value, key: []const u8, item: j.Value) !void {
+    try value.object.put(a, key, item);
+}
+
+fn push(a: std.mem.Allocator, value: *j.Value, item: j.Value) !void {
+    _ = a;
+    try value.array.append(item);
+}
+
+fn openAiMessage(a: std.mem.Allocator, role: []const u8, content: j.Value) !j.Value {
+    var message = try jsonObject(a);
+    try put(a, &message, "role", .{ .string = role });
+    try put(a, &message, "content", content);
+    return message;
+}
+
+/// Convert the agent's Anthropic-shaped internal conversation to the OpenAI
+/// Chat Completions wire format. The stored history remains protocol neutral.
+fn encodeOpenAiPayload(a: std.mem.Allocator, source: j.Value) ![]const u8 {
+    var messages = try jsonArray(a);
+    try push(a, &messages, try openAiMessage(a, "system", try j.get(source, "system")));
+    const source_messages = try j.get(source, "messages");
+    if (source_messages != .array) return error.InvalidConversation;
+    for (source_messages.array.items) |source_message| {
+        const role = try j.str(source_message, "role");
+        const content = try j.get(source_message, "content");
+        if (content == .string) {
+            try push(a, &messages, try openAiMessage(a, role, content));
+            continue;
+        }
+        if (content != .array) return error.InvalidConversation;
+        if (std.mem.eql(u8, role, "assistant")) {
+            var text: std.Io.Writer.Allocating = .init(a);
+            var calls = try jsonArray(a);
+            for (content.array.items) |block| {
+                const kind = try j.str(block, "type");
+                if (std.mem.eql(u8, kind, "text")) {
+                    try text.writer.writeAll(try j.str(block, "text"));
+                } else if (std.mem.eql(u8, kind, "tool_use")) {
+                    var function = try jsonObject(a);
+                    try put(a, &function, "name", .{ .string = try j.str(block, "name") });
+                    try put(a, &function, "arguments", .{ .string = try j.encode(a, try j.get(block, "input")) });
+                    var call = try jsonObject(a);
+                    try put(a, &call, "id", .{ .string = try j.str(block, "id") });
+                    try put(a, &call, "type", .{ .string = "function" });
+                    try put(a, &call, "function", function);
+                    try push(a, &calls, call);
+                } else if (!std.mem.eql(u8, kind, "thinking") and !std.mem.eql(u8, kind, "redacted_thinking")) {
+                    return error.InvalidConversation;
+                }
+            }
+            const text_content = try text.toOwnedSlice();
+            var message = try openAiMessage(a, "assistant", if (text_content.len == 0) .null else .{ .string = text_content });
+            if (calls.array.items.len > 0) try put(a, &message, "tool_calls", calls);
+            try push(a, &messages, message);
+        } else if (std.mem.eql(u8, role, "user")) {
+            for (content.array.items) |block| {
+                const kind = try j.str(block, "type");
+                if (std.mem.eql(u8, kind, "text")) {
+                    try push(a, &messages, try openAiMessage(a, "user", .{ .string = try j.str(block, "text") }));
+                } else if (std.mem.eql(u8, kind, "tool_result")) {
+                    var result = try openAiMessage(a, "tool", try j.get(block, "content"));
+                    try put(a, &result, "tool_call_id", .{ .string = try j.str(block, "tool_use_id") });
+                    if (block.object.get("is_error")) |is_error| {
+                        if (is_error == .bool and is_error.bool) {
+                            const old = try j.str(result, "content");
+                            try put(a, &result, "content", .{ .string = try std.fmt.allocPrint(a, "Tool error: {s}", .{old}) });
+                        }
+                    }
+                    try push(a, &messages, result);
+                } else if (!std.mem.eql(u8, kind, "thinking") and !std.mem.eql(u8, kind, "redacted_thinking")) {
+                    return error.InvalidConversation;
+                }
+            }
+        } else return error.InvalidConversation;
+    }
+
+    var payload = try jsonObject(a);
+    try put(a, &payload, "model", try j.get(source, "model"));
+    try put(a, &payload, "max_tokens", try j.get(source, "max_tokens"));
+    try put(a, &payload, "messages", messages);
+    if (source.object.get("tools")) |source_tools| {
+        if (source_tools != .array) return error.InvalidConversation;
+        var converted = try jsonArray(a);
+        for (source_tools.array.items) |source_tool| {
+            var function = try jsonObject(a);
+            try put(a, &function, "name", try j.get(source_tool, "name"));
+            if (source_tool.object.get("description")) |description| try put(a, &function, "description", description);
+            try put(a, &function, "parameters", try j.get(source_tool, "input_schema"));
+            var item = try jsonObject(a);
+            try put(a, &item, "type", .{ .string = "function" });
+            try put(a, &item, "function", function);
+            try push(a, &converted, item);
+        }
+        if (converted.array.items.len > 0) try put(a, &payload, "tools", converted);
+    }
+    return j.encode(a, payload);
+}
+
+/// Normalize OpenAI-compatible chat replies to the shape validated and stored
+/// by the existing tool loop.
+fn normalizeOpenAiResponse(a: std.mem.Allocator, source: j.Value) !j.Value {
+    const choices = try j.get(source, "choices");
+    if (choices != .array or choices.array.items.len == 0) return error.InvalidResponse;
+    const choice = choices.array.items[0];
+    const message = try j.get(choice, "message");
+    if (message != .object) return error.InvalidResponse;
+    var content = try jsonArray(a);
+    if (message.object.get("content")) |raw_content| {
+        if (raw_content == .string and raw_content.string.len > 0) {
+            var block = try jsonObject(a);
+            try put(a, &block, "type", .{ .string = "text" });
+            try put(a, &block, "text", raw_content);
+            try push(a, &content, block);
+        } else if (raw_content == .array) {
+            for (raw_content.array.items) |part| {
+                const text = j.str(part, "text") catch continue;
+                var block = try jsonObject(a);
+                try put(a, &block, "type", .{ .string = "text" });
+                try put(a, &block, "text", .{ .string = text });
+                try push(a, &content, block);
+            }
+        } else if (raw_content != .null and raw_content != .string) return error.InvalidResponse;
+    }
+    var tool_call_count: usize = 0;
+    if (message.object.get("tool_calls")) |calls| {
+        if (calls != .null) {
+            if (calls != .array or calls.array.items.len > 64) return error.InvalidResponse;
+            for (calls.array.items, 0..) |call, idx| {
+                const function = try j.get(call, "function");
+                const raw_arguments = try j.get(function, "arguments");
+                const arguments = if (raw_arguments == .string)
+                    try j.parse(a, raw_arguments.string)
+                else
+                    raw_arguments;
+                if (arguments != .object) return error.InvalidResponse;
+                const id = if (call.object.get("id")) |value|
+                    try j.string(value)
+                else
+                    try std.fmt.allocPrint(a, "call-{d}", .{idx});
+                var block = try jsonObject(a);
+                try put(a, &block, "type", .{ .string = "tool_use" });
+                try put(a, &block, "id", .{ .string = id });
+                try put(a, &block, "name", try j.get(function, "name"));
+                try put(a, &block, "input", arguments);
+                try push(a, &content, block);
+                tool_call_count += 1;
+            }
+        }
+    }
+    if (content.array.items.len == 0) {
+        var empty = try jsonObject(a);
+        try put(a, &empty, "type", .{ .string = "text" });
+        try put(a, &empty, "text", .{ .string = "" });
+        try push(a, &content, empty);
+    }
+    const finish = try j.str(choice, "finish_reason");
+    const stop: []const u8 = if (std.mem.eql(u8, finish, "length"))
+        "max_tokens"
+    else if (tool_call_count > 0 or std.mem.eql(u8, finish, "tool_calls"))
+        "tool_use"
+    else if (std.mem.eql(u8, finish, "stop") or std.mem.eql(u8, finish, "end_turn"))
+        "end_turn"
+    else
+        return error.InvalidResponse;
+    var normalized = try jsonObject(a);
+    try put(a, &normalized, "content", content);
+    try put(a, &normalized, "stop_reason", .{ .string = stop });
+    var usage = try jsonObject(a);
+    if (source.object.get("usage")) |raw_usage| {
+        if (raw_usage != .object) return error.InvalidResponse;
+        if (raw_usage.object.get("prompt_tokens")) |tokens| try put(a, &usage, "input_tokens", tokens);
+        if (raw_usage.object.get("completion_tokens")) |tokens| try put(a, &usage, "output_tokens", tokens);
+    }
+    try put(a, &normalized, "usage", usage);
+    return normalized;
+}
 
 fn utf8Prefix(text: []const u8, limit: usize) []const u8 {
     var end = @min(text.len, limit);

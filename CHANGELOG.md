@@ -13,6 +13,9 @@ section for a release. Put incompatible changes under `Breaking changes`.
 
 ### Added
 
+- OpenAI Chat Completions support, including tool-call conversion, for OpenAI, Gemini, Mistral, Together, Fireworks, Cerebras, DeepInfra, and NVIDIA NIM.
+- Six direct provider presets (Mistral, Together, Fireworks, Cerebras, DeepInfra, NVIDIA) and a configurable custom endpoint using either OpenAI Chat Completions or Anthropic Messages.
+- RunInfra provider support through its Anthropic-compatible Messages API, using `RUNINFRA_API_KEY` or `RUNINFRA_GATEWAY_KEY`.
 - Contributor instructions and a change history for future releases.
 - `--dry-run` previews the first proposed tool batch and stops before executing
   any tool calls.

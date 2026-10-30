@@ -81,17 +81,27 @@ beyond those keywords; override the model for ambiguous work.
 
 | Variable | Meaning / default |
 |---|---|
-| `PROVIDER` | `abliteration`, `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq`; otherwise auto-detected from configured API keys. `--free` forces `openrouter` |
+| `PROVIDER` | `abliteration`, `openrouter`, `runinfra`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, `groq`, `mistral`, `together`, `fireworks`, `cerebras`, `deepinfra`, `nvidia`, or `custom`; hosted providers are auto-detected from configured API keys. `--free` forces `openrouter` |
 | `MODEL` | Strong model. Default: provider default or catalog-selected (OpenRouter) |
 | `FAST_MODEL` | Fast model. Default: provider default or catalog-selected (OpenRouter) |
 | `VOICE_MODEL` | Audio transcription model for `/voice`. Default: cheapest audio-capable model in the OpenRouter catalog (fallback `google/gemini-2.0-flash-lite-001`) |
 | `ANTHROPIC_API_KEY` | Key for direct Anthropic requests |
 | `OPENROUTER_API_KEY` | Key for OpenRouter requests and `/voice` audio transcription |
-| `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY` | Keys for additional providers (manageable via `/setup`) |
+| `RUNINFRA_API_KEY` (`RUNINFRA_GATEWAY_KEY` also accepted) | RunInfra key for its Anthropic-compatible Messages API |
+| `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `CEREBRAS_API_KEY`, `DEEPINFRA_API_KEY`, `NVIDIA_API_KEY` | Keys for direct provider APIs (manageable via `/providers` or `/setup`) |
+| `CUSTOM_API_KEY` | Key for a custom OpenAI-compatible or Anthropic Messages endpoint |
 | `OMNICODE_CONFIG` | Optional path to the persistent config file (default: `$XDG_CONFIG_HOME/omnicode/config.env` or `~/.config/omnicode/config.env`) |
-| `API_URL` | Optional **complete Messages endpoint URL**, primarily for local testing |
+| `API_URL` | Optional complete chat endpoint URL; used with the selected provider or custom endpoint |
+| `API_PROTOCOL` | Optional wire format override: `openai` (Chat Completions) or `anthropic` (Messages) |
+| `API_AUTH` | Optional auth header override: `bearer` or `x-api-key` |
 | `MODELS_URL` | Optional OpenRouter model catalog URL (public metadata; the API key is never sent to it) |
 | `OMNICODE_STATUS` | Status line mode: `pinned` (default), `inline`, `title`, or `off` |
+
+RunInfra uses `https://api.runinfra.ai/v1/messages`, with `deepseek-v4-1-flash-1017`
+for fast turns and `glm-5-3` for strong turns. If a RunInfra key is already
+exported by your login shell, run `omnicode --providers runinfra` once to select
+it. This persists the provider selection while leaving the key in the environment.
+You can change the models with `FAST_MODEL` and `MODEL` or `/model`.
 
 ### Live catalog selection (OpenRouter)
 
@@ -126,12 +136,26 @@ retry. The two-minute deadline covers all attempts and backoff together. Other
 HTTP errors, transport failures, and invalid responses are not retried. Failed
 HTTP attempts are printed without response bodies; usage totals count returned
 model responses and do not estimate charges for failed attempts. For a custom
-endpoint, its authentication still
-follows `PROVIDER`; HTTPS is required except for HTTP to literal IPv4 loopback addresses
+endpoint, HTTPS is required except for HTTP to literal IPv4 loopback addresses
 (`127.0.0.0/8`) or IPv6 loopback (`[::1]`). This applies to `API_URL`,
 `MODELS_URL`, and `VOICE_URL`. Use `127.0.0.1` instead of `localhost` for local
 testing; DNS hostnames are not accepted for plaintext HTTP. Endpoint URLs must
 not contain embedded credentials, fragments, or whitespace.
+
+Omnicode includes 15 hosted provider presets and supports custom endpoints that
+implement OpenAI Chat Completions or Anthropic Messages. OpenAI, Gemini, and the
+new presets use Chat Completions; Anthropic-compatible providers continue using Messages. The
+adapter translates tool calls and results so the same local tool loop works
+across both formats. Configure a custom endpoint with:
+
+```text
+/providers custom <api-key>
+/providers url https://llm.example/v1/chat/completions
+/providers protocol openai
+/providers auth bearer
+/setup set MODEL provider/model-id
+/setup set FAST_MODEL provider/fast-model-id
+```
 
 REPL commands:
 
@@ -140,10 +164,13 @@ REPL commands:
 | `/providers` or `/providers list` | Show numbered list of all supported providers, active status (`*`), API key status, default models, and endpoints |
 | `/providers <N\|provider>` | Switch active provider by number or name (preserves conversation) |
 | `/providers <provider> <key>` | Save API key for `<provider>` (`0o600`) and activate it immediately |
-| `/providers url <url\|default>` | Set or reset custom `API_URL` endpoint |
+| `/providers url <url\|default>` | Set or reset the complete `API_URL` endpoint |
+| `/providers protocol <openai\|anthropic>` | Select Chat Completions or Messages wire format |
+| `/providers auth <bearer\|x-api-key>` | Select the custom API authentication header |
+| `/providers custom <key>` | Save a key and select a custom API; configure endpoint, protocol, and model with the commands above |
 | `/providers unset <provider>` | Remove saved API key for `<provider>` |
 | `/setup` | Show configured provider API keys (masked), active settings, and config file path |
-| `/setup <provider> <key>` | Save an API key for `abliteration`, `openrouter`, `anthropic`, `deepseek`, `xai`, `openai`, `gemini`, or `groq` (`0o600`) and activate it |
+| `/setup <provider> <key>` | Save an API key for a listed provider (`0o600`) and activate it |
 | `/setup set <KEY> <VALUE>` | Persist a setting (`PROVIDER`, `MODEL`, `FAST_MODEL`, `VOICE_MODEL`, etc.) and apply it immediately |
 | `/setup unset <provider\|KEY>` | Remove a saved API key or setting |
 | `/secrets` | List stored secret names and character lengths (values are never shown) |

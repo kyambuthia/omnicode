@@ -42,8 +42,8 @@ pub const help =
     \\  /details               Show last tool result (up to 64 KiB)
     \\  /c                     Clear conversation
     \\  /q, /exit, or exit     Quit (Ctrl-D also exits)
-    \\Config: PROVIDER=abliteration|anthropic|openrouter|deepseek|xai|openai|gemini|groq, MODEL, FAST_MODEL, VOICE_MODEL, MAX_TURNS, MAX_REQUESTS_PER_MINUTE
-    \\Keys: OPENROUTER_API_KEY, ANTHROPIC_API_KEY, etc. (or run /setup). Searches require rg.
+    \\Config: PROVIDER=abliteration|anthropic|openrouter|runinfra|deepseek|xai|openai|gemini|groq|mistral|together|fireworks|cerebras|deepinfra|nvidia|custom, MODEL, FAST_MODEL, VOICE_MODEL
+    \\Keys: provider API keys (or run /providers). Custom OpenAI-compatible and Anthropic Messages endpoints are supported.
     \\Skills: .omnicode/skills/<name>/SKILL.md. Tools run with your permissions.
     \\
 ;

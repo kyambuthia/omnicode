@@ -87,7 +87,7 @@ pub const Catalog = struct {
 };
 
 pub const ModelMenu = struct {
-    pub const max_items = 32;
+    pub const max_items = 64;
     providers: [max_items]Provider = undefined,
     models: [max_items][160]u8 = undefined,
     model_lens: [max_items]usize = @splat(0),
@@ -169,13 +169,25 @@ pub const ModelMenu = struct {
                 .{ .p = .gemini, .m = "gemini-2.5-flash", .tier = "fast" },
                 .{ .p = .gemini, .m = "gemini-2.5-pro", .tier = "strong" },
                 .{ .p = .groq, .m = "llama-3.3-70b-versatile", .tier = "fast/strong" },
+                .{ .p = .runinfra, .m = "deepseek-v4-1-flash-1017", .tier = "fast" },
+                .{ .p = .runinfra, .m = "glm-5-3", .tier = "strong" },
+                .{ .p = .mistral, .m = "mistral-small-latest", .tier = "fast" },
+                .{ .p = .mistral, .m = "mistral-large-latest", .tier = "strong" },
+                .{ .p = .together, .m = Provider.together.defaultModel(false), .tier = "fast" },
+                .{ .p = .together, .m = Provider.together.defaultModel(true), .tier = "strong" },
+                .{ .p = .fireworks, .m = Provider.fireworks.defaultModel(true), .tier = "fast/strong" },
+                .{ .p = .cerebras, .m = Provider.cerebras.defaultModel(true), .tier = "fast/strong" },
+                .{ .p = .deepinfra, .m = "deepseek-ai/DeepSeek-V4.1-Flash", .tier = "fast" },
+                .{ .p = .deepinfra, .m = "zai-org/GLM-5.3", .tier = "strong" },
+                .{ .p = .nvidia, .m = "openai/gpt-oss-20b", .tier = "fast" },
+                .{ .p = .nvidia, .m = "z-ai/glm-5.3", .tier = "strong" },
                 .{ .p = .abliteration, .m = "abliterated-model", .tier = "fast" },
                 .{ .p = .abliteration, .m = "abliterated-model-large-flash", .tier = "strong" },
             };
             for (presets) |item| {
                 if (self.add(item.p, item.m)) |idx| {
                     const active = route.provider == item.p and std.mem.eql(u8, route.model, item.m);
-                    const has_key = if (env.get(item.p.envKey())) |v| v.len > 0 else false;
+                    const has_key = item.p.key(env).len > 0;
                     try out.writer.print("  [{d:>2}]{s} {s:<12} {s:<30} · {s}{s}\n", .{
                         idx,
                         if (active) "*" else " ",
