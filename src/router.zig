@@ -183,6 +183,17 @@ pub const Route = struct {
         };
     }
 
+    /// Resolve the provider's standard model-list endpoint. Custom gateways can
+    /// override discovery with API_MODELS_URL when their route differs.
+    pub fn modelListUrl(self: Route, a: std.mem.Allocator, env: *const std.process.Environ.Map) ![]const u8 {
+        if (env.get("API_MODELS_URL")) |url| return a.dupe(u8, url);
+        inline for (.{ "/chat/completions", "/messages" }) |suffix| {
+            if (std.mem.endsWith(u8, self.url, suffix))
+                return std.fmt.allocPrint(a, "{s}/models", .{self.url[0 .. self.url.len - suffix.len]});
+        }
+        return error.ProviderModelCatalogUnavailable;
+    }
+
     fn detectProvider(env: *const std.process.Environ.Map) []const u8 {
         inline for (.{ Provider.abliteration, Provider.openrouter, Provider.runinfra, Provider.anthropic, Provider.deepseek, Provider.xai, Provider.openai, Provider.gemini, Provider.groq, Provider.mistral, Provider.together, Provider.fireworks, Provider.cerebras, Provider.deepinfra, Provider.nvidia }) |p| {
             if (p.key(env).len > 0) return @tagName(p);

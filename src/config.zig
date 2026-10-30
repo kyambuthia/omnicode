@@ -54,6 +54,7 @@ pub const allowed_keys = [_][]const u8{
     "VOICE_MODEL",
     "VOICE_URL",
     "API_URL",
+    "API_MODELS_URL",
     "API_PROTOCOL",
     "API_AUTH",
     "MODELS_URL",
@@ -204,7 +205,7 @@ fn writeEntries(a: std.mem.Allocator, io: Io, dir: Io.Dir, path: []const u8, ent
 pub fn set(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.process.Environ.Map, key: []const u8, value: []const u8) !void {
     if (!isAllowedKey(key)) return error.InvalidConfigKey;
     if (value.len == 0 or std.mem.indexOfAny(u8, value, "\x00\r\n") != null) return error.InvalidConfigValue;
-    if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
+    if (std.mem.eql(u8, key, "API_URL") or std.mem.eql(u8, key, "API_MODELS_URL") or std.mem.eql(u8, key, "VOICE_URL") or std.mem.eql(u8, key, "MODELS_URL"))
         try @import("http.zig").validateEndpoint(value);
     if (std.mem.eql(u8, key, "API_PROTOCOL") and !validApiProtocol(value)) return error.InvalidApiProtocol;
     if (std.mem.eql(u8, key, "API_AUTH") and !validApiAuth(value)) return error.InvalidApiAuth;
@@ -379,6 +380,7 @@ pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map
     if (custom_url.len > 0) {
         try out.writer.print("Custom API_URL override: {s}\n", .{custom_url});
     }
+    if (env.get("API_MODELS_URL")) |url| try out.writer.print("Provider API_MODELS_URL override: {s}\n", .{url});
     if (env.get("API_PROTOCOL")) |protocol| try out.writer.print("Custom API_PROTOCOL override: {s}\n", .{protocol});
     if (env.get("API_AUTH")) |auth| try out.writer.print("Custom API_AUTH override: {s}\n", .{auth});
     try out.writer.writeAll(
@@ -387,6 +389,7 @@ pub fn providersReport(a: std.mem.Allocator, env: *const std.process.Environ.Map
         \\  /providers <N|provider>          Switch active provider (e.g. /providers 2 or /providers openrouter)
         \\  /providers <provider> <api_key>  Save API key and activate provider (e.g. /providers deepseek sk-...)
         \\  /providers url <url|default>     Set or reset the complete API endpoint URL
+        \\  /providers models-url <url|default> Set or reset the provider model-list URL
         \\  /providers protocol <openai|anthropic> Set wire format for compatible/custom APIs
         \\  /providers auth <bearer|x-api-key> Set authentication header for custom API
         \\  /providers custom <key>          Configure a custom OpenAI-compatible API key
@@ -410,7 +413,7 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
         try unset(a, io, dir, env, p.envKey());
         if (p.aliasEnvKey()) |name| try unset(a, io, dir, env, name);
         if (p == .custom) {
-            for ([_][]const u8{ "API_URL", "API_PROTOCOL", "API_AUTH", "MODEL", "FAST_MODEL" }) |name| try unset(a, io, dir, env, name);
+            for ([_][]const u8{ "API_URL", "API_MODELS_URL", "API_PROTOCOL", "API_AUTH", "MODEL", "FAST_MODEL" }) |name| try unset(a, io, dir, env, name);
         }
         if (std.mem.eql(u8, env.get("PROVIDER") orelse "", @tagName(p))) {
             try unset(a, io, dir, env, "PROVIDER");
@@ -426,6 +429,16 @@ pub fn executeProviders(a: std.mem.Allocator, io: Io, dir: Io.Dir, env: *std.pro
         }
         try set(a, io, dir, env, "API_URL", url);
         return std.fmt.allocPrint(a, "Saved API_URL = {s}", .{url});
+    }
+    if (std.mem.eql(u8, first, "models-url")) {
+        const url = std.mem.trim(u8, parts.rest(), " \t");
+        if (url.len == 0) return error.InvalidProvidersCommand;
+        if (std.mem.eql(u8, url, "default") or std.mem.eql(u8, url, "reset") or std.mem.eql(u8, url, "clear")) {
+            try unset(a, io, dir, env, "API_MODELS_URL");
+            return a.dupe(u8, "Reset API_MODELS_URL to the provider's standard model-list endpoint.");
+        }
+        try set(a, io, dir, env, "API_MODELS_URL", url);
+        return std.fmt.allocPrint(a, "Saved API_MODELS_URL = {s}", .{url});
     }
     if (std.mem.eql(u8, first, "protocol")) {
         const protocol = std.mem.trim(u8, parts.rest(), " \t");

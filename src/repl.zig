@@ -252,7 +252,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.route(@tagName(route.provider), route.model);
                 if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
             }
-            const list = try menu.populateAndFormat(a, init.io, init.environ_map, route, std.mem.eql(u8, line, "/model list"));
+            const list = try menu.populateAndFormat(a, init.io, init.environ_map, route, true);
             var full = ui;
             full.verbose = true;
             try full.preview(list, "");
@@ -344,7 +344,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 target_provider = first_tok;
                 target_model = m;
             } else if (std.fmt.parseInt(usize, first_tok, 10) catch null) |num| {
-                if (menu.count == 0) _ = try menu.populateAndFormat(a, init.io, init.environ_map, route, false);
+                if (menu.count == 0) _ = try menu.populateAndFormat(a, init.io, init.environ_map, route, true);
                 const choice = menu.get(num) orelse {
                     try out.writeAll("Invalid model number. Run /model to list available models.\n");
                     continue;

@@ -23,6 +23,24 @@ pub const Catalog = struct {
         return parse(value);
     }
 
+    /// Load the authenticated model list exposed by a direct provider. This
+    /// covers OpenAI-compatible `/models` and Anthropic Messages `/models` APIs.
+    pub fn loadProvider(a: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, route: Route) !Catalog {
+        const url = try route.modelListUrl(a, env);
+        const auth: std.http.Header = if (route.auth_style == .x_api_key)
+            .{ .name = "x-api-key", .value = route.key }
+        else
+            .{ .name = "Authorization", .value = try std.fmt.allocPrint(a, "Bearer {s}", .{route.key}) };
+        const headers: []const std.http.Header = if (route.protocol == .anthropic_messages)
+            &.{ auth, .{ .name = "anthropic-version", .value = "2023-06-01" } }
+        else
+            &.{auth};
+        const value = try @import("http.zig").fetch(a, io, url, null, headers, 8 * 1024 * 1024, 15_000);
+        const models = if (value == .object) value.object.get("data") orelse value.object.get("models") orelse return error.InvalidCatalog else return error.InvalidCatalog;
+        if (models != .array) return error.InvalidCatalog;
+        return .{ .models = models.array.items };
+    }
+
     pub fn parse(value: j.Value) !Catalog {
         const data = try j.get(value, "data");
         if (data != .array) return error.InvalidCatalog;
@@ -87,7 +105,7 @@ pub const Catalog = struct {
 };
 
 pub const ModelMenu = struct {
-    pub const max_items = 64;
+    pub const max_items = 128;
     providers: [max_items]Provider = undefined,
     models: [max_items][160]u8 = undefined,
     model_lens: [max_items]usize = @splat(0),
@@ -136,7 +154,27 @@ pub const ModelMenu = struct {
                 try out.writer.print("  [{d:>2}]{s} {s:<12} {s} (configured fast)\n", .{ idx, if (active) "*" else " ", @tagName(route.provider), m });
             }
         }
-        if (route.provider == .openrouter or fetch_catalog) {
+        if (route.provider != .openrouter and fetch_catalog) {
+            if (route.key.len == 0) {
+                try out.writer.writeAll("Provider model discovery skipped: API key is not configured.\n");
+            } else if (Catalog.loadProvider(a, io, env, route)) |cat| {
+                try out.writer.writeAll("Models exposed by the selected provider API (tool support depends on the model):\n");
+                var shown: usize = 0;
+                for (cat.models) |model| {
+                    if (shown >= 64) break;
+                    const id = j.str(model, "id") catch continue;
+                    if (self.add(route.provider, id)) |idx| {
+                        const active = std.mem.eql(u8, route.model, id);
+                        try out.writer.print("  [{d:>2}]{s} {s:<12} {s} · provider API\n", .{ idx, if (active) "*" else " ", @tagName(route.provider), id });
+                        shown += 1;
+                    }
+                }
+                if (shown == 0) try out.writer.writeAll("Provider returned no model IDs Omnicode can display.\n");
+            } else |err| {
+                try out.writer.print("Provider model discovery unavailable ({s}); showing configured and built-in models.\n", .{@errorName(err)});
+            }
+        }
+        if (route.provider == .openrouter) {
             if (Catalog.load(a, io, env)) |cat| {
                 var shown: usize = 0;
                 for (cat.models) |model| {
