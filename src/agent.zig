@@ -134,10 +134,10 @@ pub const Agent = struct {
         };
         try ui.route(@tagName(route.provider), route.model);
         if (route.price) |price| {
-            try out.print("  --{s} · catalog ${d:.4} in / ${d:.4} out per 1M tokens{s}\n", .{
+            try ui.note(try std.fmt.allocPrint(a, "--{s} · catalog $" ++ "{d:.4} in / $" ++ "{d:.4} out per 1M tokens{s}", .{
                 if (route.mode == .free) "free" else "cost-max",      price.input * 1_000_000, price.output * 1_000_000,
                 if (price.variable) " (variable base rates)" else "",
-            });
+            }));
         }
         const scrubbed_prompt = if (self.context.secrets) |s| try s.scrub(a, prompt, self.env) else prompt;
         // Input buffers are reused on the next REPL read; history owns its text.
@@ -280,9 +280,7 @@ pub const Agent = struct {
                     if (pending > 0) try ui.note("Checklist still has pending steps; retained for continuation.");
                 }
                 try self.checkpoint();
-                try out.writeAll("\n  Completed · ");
-                try ui.elapsed(turn_start);
-                try out.print(" · {d} tool {s}\n\n", .{ budget.calls, if (budget.calls == 1) "call" else "calls" });
+                try ui.turnComplete(turn_start, budget.calls);
                 return out.flush();
             }
             try self.history.append(a, .{ .role = "user", .content = .{ .array = results.toManaged(a) } });

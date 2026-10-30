@@ -4,7 +4,13 @@ const cli = @import("cli.zig");
 
 pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, secrets: *core.Secrets, mode: @FieldType(core.Route, "mode"), read_only: bool, dry_run: bool, initial_route: core.Route) !void {
     var ui = initial_ui;
-    const out = ui.out;
+    ui.secrets = secrets;
+    var workspace: core.Workspace = .{};
+    if (ui.interactive and (std.Io.File.stdin().isTty(init.io) catch false)) {
+        ui.workspace = &workspace;
+    }
+    defer workspace.leave(ui) catch {};
+    if (ui.workspace != null) try workspace.enter(ui);
     const usage = ui.usage.?;
     var route = initial_route;
     var automatic = true;
@@ -83,7 +89,26 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             continue;
         }
         if (std.mem.eql(u8, line, "/todo")) {
+            try ui.setPlan(if (todo.len == 0) "(empty todo list)" else todo.slice());
+            if (ui.workspace != null) {
+                try ui.workspaceSelect(.plan);
+                continue;
+            }
             try ui.preview(if (todo.len == 0) "(empty todo list)" else todo.slice(), "");
+            continue;
+        }
+        if (std.mem.eql(u8, line, "/view") or std.mem.startsWith(u8, line, "/view ")) {
+            if (ui.workspace == null) {
+                try ui.output("Workspace views require an interactive terminal.\n");
+                continue;
+            }
+            const name = if (line.len > 6) std.mem.trim(u8, line[6..], " \t") else "";
+            const tab: ?core.Tab = if (std.mem.eql(u8, name, "chat")) .chat else if (std.mem.eql(u8, name, "activity")) .activity else if (std.mem.eql(u8, name, "changes")) .changes else if (std.mem.eql(u8, name, "plan")) .plan else null;
+            if (tab) |selected| {
+                try ui.workspaceSelect(selected);
+            } else {
+                try ui.output("Usage: /view chat|activity|changes|plan\n");
+            }
             continue;
         }
         if (std.mem.eql(u8, line, "/save") or std.mem.startsWith(u8, line, "/save ")) {
@@ -91,7 +116,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             const name = if (raw.len > 0) raw else "latest";
             agent.saveSession(name) catch |err| {
                 if (err == error.Canceled) return err;
-                try out.print("error: {s}\n", .{@errorName(err)});
+                try ui.outputf("error: {s}\n", .{@errorName(err)});
                 continue;
             };
             try ui.note("Session saved.");
@@ -118,6 +143,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             };
             agent.resetArena(&arena) catch {};
             try agent.refreshSystem();
+            try ui.setPlan(if (todo.len == 0) "(empty todo list)" else todo.slice());
             try ui.note("Session resumed.");
             continue;
         }
@@ -195,7 +221,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         if (std.mem.eql(u8, line, "/init") or std.mem.startsWith(u8, line, "/init ")) {
             const arg = if (line.len > 6) std.mem.trim(u8, line[6..], " \t") else "";
             if (arg.len > 0 and !std.mem.eql(u8, arg, "force")) {
-                try out.writeAll("usage: /init [force]\n");
+                try ui.output("usage: /init [force]\n");
                 continue;
             }
             const msg = agent.context.initProject(std.mem.eql(u8, arg, "force")) catch |err| {
@@ -226,7 +252,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             continue;
         }
         if (std.mem.eql(u8, line, "/help")) {
-            try out.writeAll(cli.help);
+            try ui.output(cli.help);
             continue;
         }
         if (std.mem.eql(u8, line, "/version")) {
@@ -245,18 +271,31 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             continue;
         }
         if (std.mem.eql(u8, line, "/model") or std.mem.eql(u8, line, "/model list")) {
-            try ui.note(if (mode == .free) "--free: live zero-price tool models only; paid overrides are rejected." else "--cost-max (default): optimize live catalog prices within the ranked candidate pool.");
-            if (automatic and route.provider == .openrouter) {
-                try ui.note("Automatic model selection refreshes from OpenRouter before each turn.");
-            } else {
-                try ui.route(@tagName(route.provider), route.model);
-                if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
+            const open_picker = std.mem.eql(u8, line, "/model") and ui.interactive and
+                (std.Io.File.stdin().isTty(init.io) catch false);
+            if (!open_picker) {
+                try ui.note(if (mode == .free) "--free: live zero-price tool models only; paid overrides are rejected." else "--cost-max (default): optimize live catalog prices within the ranked candidate pool.");
+                if (automatic and route.provider == .openrouter) {
+                    try ui.note("Automatic model selection refreshes from OpenRouter before each turn.");
+                } else {
+                    try ui.route(@tagName(route.provider), route.model);
+                    if (automatic) try ui.route("fast", route.forTask(init.environ_map, "lookup").model);
+                }
             }
-            const list = try menu.populateAndFormat(a, init.io, init.environ_map, route, true);
-            var full = ui;
-            full.verbose = true;
-            try full.preview(list, "");
-            if (std.mem.eql(u8, line, "/model")) {
+            const list = if (open_picker)
+                try ui.work("Loading models...", core.ModelMenu.populateAndFormat, .{ &menu, a, init.io, init.environ_map, route, true })
+            else
+                try menu.populateAndFormat(a, init.io, init.environ_map, route, true);
+            if (!open_picker or menu.count == 0) {
+                var full = ui;
+                full.verbose = true;
+                try full.preview(list, "");
+            }
+            if (open_picker and menu.count == 0) {
+                try ui.note("No models are available to select. Check the provider or run /model list.");
+                continue;
+            }
+            if (open_picker) {
                 var current: usize = 0;
                 if (!automatic) for (1..menu.count + 1) |number| {
                     const choice = menu.get(number).?;
@@ -272,7 +311,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                         continue;
                     }
                     route = core.Route.init(init.environ_map, @tagName(choice.provider), try a.dupe(u8, choice.model)) catch |err| {
-                        try out.print("error: {s}\n", .{@errorName(err)});
+                        try ui.outputf("error: {s}\n", .{@errorName(err)});
                         continue;
                     };
                     route.mode = mode;
@@ -288,7 +327,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         if (std.mem.eql(u8, line, "/status") or std.mem.startsWith(u8, line, "/status ")) {
             const selected = if (line.len > 8) core.Status.parseMode(std.mem.trim(u8, line[8..], " ")) else null;
             const next = selected orelse {
-                try out.print("usage: /status inline|pinned|title|off (current: {s})\n", .{core.Status.modeName(status.mode)});
+                try ui.outputf("usage: /status inline|pinned|title|off (current: {s})\n", .{core.Status.modeName(status.mode)});
                 continue;
             };
             if (status.mode == .title and next != .title) try ui.titleStack(false);
@@ -300,7 +339,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         }
         if (std.mem.startsWith(u8, line, "/verbose")) {
             if (std.mem.eql(u8, line, "/verbose on")) ui.verbose = true else if (std.mem.eql(u8, line, "/verbose off")) ui.verbose = false else {
-                try out.writeAll("usage: /verbose on|off\n");
+                try ui.output("usage: /verbose on|off\n");
                 continue;
             }
             try ui.note(if (ui.verbose) "Full tool output enabled for future calls." else "Compact tool output enabled.");
@@ -311,7 +350,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             const first_tok = parts.next() orelse continue;
             const second_tok = parts.next();
             if (parts.next() != null) {
-                try out.writeAll("too many model arguments\n");
+                try ui.output("too many model arguments\n");
                 continue;
             }
             if (std.mem.eql(u8, first_tok, "auto") and second_tok == null) {
@@ -346,13 +385,13 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
             } else if (std.fmt.parseInt(usize, first_tok, 10) catch null) |num| {
                 if (menu.count == 0) _ = try menu.populateAndFormat(a, init.io, init.environ_map, route, true);
                 const choice = menu.get(num) orelse {
-                    try out.writeAll("Invalid model number. Run /model to list available models.\n");
+                    try ui.output("Invalid model number. Run /model to list available models.\n");
                     continue;
                 };
                 target_provider = @tagName(choice.provider);
                 target_model = choice.model;
             } else if (std.meta.stringToEnum(core.Provider, first_tok) != null) {
-                try out.writeAll("usage: /model [list] | /model <number> | /model auto | /model [PROVIDER] MODEL\n");
+                try ui.output("usage: /model [list] | /model <number> | /model auto | /model [PROVIDER] MODEL\n");
                 continue;
             } else {
                 const inferred = core.Provider.infer(first_tok, if (mode == .free) .openrouter else route.provider);
@@ -363,7 +402,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 continue;
             }
             route = core.Route.init(init.environ_map, target_provider, try a.dupe(u8, target_model)) catch |err| {
-                try out.print("error: {s}\n", .{@errorName(err)});
+                try ui.outputf("error: {s}\n", .{@errorName(err)});
                 continue;
             };
             route.mode = mode;
@@ -376,11 +415,11 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         } else if (std.mem.startsWith(u8, line, "/skill ")) {
             const body = agent.context.loadSkill(line[7..]) catch |err| {
                 if (err == error.Canceled) return err;
-                try out.print("error: {s}\n", .{@errorName(err)});
+                try ui.outputf("error: {s}\n", .{@errorName(err)});
                 continue;
             };
             try agent.history.append(arena.allocator(), .{ .role = "user", .content = .{ .string = body } });
-            try out.writeAll("Skill loaded for this conversation.\n");
+            try ui.note("Skill loaded for this conversation.");
             continue;
         } else if (!std.mem.eql(u8, line, "/c")) {
             var active_prompt = line;
@@ -405,7 +444,7 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                     if (varg.len == 0 or std.mem.eql(u8, varg, "record") or std.mem.startsWith(u8, varg, "record ")) {
                         const sec_str = if (std.mem.startsWith(u8, varg, "record")) std.mem.trim(u8, varg[6..], " \t") else "";
                         const secs = if (sec_str.len == 0) 5 else std.fmt.parseInt(usize, sec_str, 10) catch {
-                            try out.writeAll("usage: /voice [seconds|file.wav] | /voice record [seconds] | /voice model [MODEL]\n");
+                            try ui.output("usage: /voice [seconds|file.wav] | /voice record [seconds] | /voice model [MODEL]\n");
                             continue;
                         };
                         break :blk core.voice.recordAudio(agent.context, init.environ_map, secs) catch |err| {
@@ -432,19 +471,20 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
                 try ui.note(try std.fmt.allocPrint(a, "Voice: {s}", .{transcript}));
                 active_prompt = transcript;
             } else if (line[0] == '/') {
-                try out.writeAll("Unknown command. Use /help for available commands.\n");
+                try ui.output("Unknown command. Use /help for available commands.\n");
                 continue;
             }
+            try ui.userPrompt(active_prompt);
             agent.respond(active_prompt, ui) catch |err| {
                 if (err == error.Canceled) return err;
                 try ui.errorMessage(err);
                 if (agent.retainCompletedWork(arena.allocator()) catch false) {
                     if (agent.resetArena(&arena)) |_| {
-                        try out.writeAll("  completed work retained in summary. Inspect tool effects, then enter continue to resume.\n");
+                        try ui.note("Completed work retained in summary. Inspect tool effects, then enter continue to resume.");
                         continue;
                     } else |_| {}
                 }
-                try out.writeAll("  conversation cleared. Inspect completed tool effects before retrying.\n");
+                try ui.note("Conversation cleared. Inspect completed tool effects before retrying.");
                 agent.history.clearRetainingCapacity();
                 // Reinitialize below so failed tool turns cannot poison later messages.
             };
@@ -453,12 +493,13 @@ pub fn run(init: std.process.Init, a: std.mem.Allocator, initial_ui: core.Ui, se
         }
         _ = arena.reset(.free_all);
         todo.len = 0;
+        try ui.setPlan("(empty todo list)");
         route.mode = mode;
         agent = try core.Agent.init(.{ .a = arena.allocator(), .io = init.io, .dir = .cwd(), .todo = &todo, .secrets = secrets, .read_only = read_only }, init.environ_map, route);
         agent.automatic = automatic;
         agent.dry_run = dry_run;
         agent.rate_limiter = &limiter;
-        try out.writeAll("Conversation cleared.\n");
+        try ui.note("Conversation cleared.");
     }
 }
 

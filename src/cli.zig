@@ -17,13 +17,14 @@ pub const help =
     \\--free                    Only current zero-price OpenRouter tool models
     \\REPL commands:
     \\  /help                  Show this help
+    \\  /view chat|activity|changes|plan  Switch workspace view (Tab/Shift-Tab also switches)
     \\  /providers [...]       List, switch, or configure providers & API keys (/providers <N|name> [key])
     \\  /setup [...]           Configure provider API keys and settings (saved to config.env)
     \\  /secrets [...]         Manage zero-leak secrets (injected in bash, scrubbed from chat)
     \\  /voice [sec|file]      Record or transcribe audio via cheap OpenRouter voice models
     \\  /init [force]          Bootstrap OMNICODE.md and verify skill
     \\  /review [focus]        Run adversarial multi-agent code review
-    \\  /model                 Choose a model with ↑/↓ and Enter (Esc cancels)
+    \\  /model                 Search provider tabs and models (←/→ or Tab, ↑/↓, Enter)
     \\  /model list            Show current routing and numbered list of available models
     \\  /model compare         Compare live OpenRouter price and throughput order before switching
     \\  /model <N|MODEL>       Switch to model #N or MODEL (preserves conversation)

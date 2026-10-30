@@ -184,7 +184,8 @@ REPL commands:
 | `/voice model [MODEL]` | View or pin `VOICE_MODEL` for voice transcription |
 | `/init [force]` | Generate `OMNICODE.md` and `.omnicode/skills/verify/SKILL.md`, then reload system instructions |
 | `/review [focus]` | Run the two-critic adversarial code review (Correctness/Security + Anti-Slop/Simplicity) on workspace changes |
-| `/model` or `/model list` | Show current routing mode and a numbered model list; direct providers are queried for models when their API exposes `/models` |
+| `/model` | Open provider tabs and a searchable model list; switch tabs with ←/→ or Tab, move with ↑/↓ or PgUp/PgDn, Enter selects |
+| `/model list` | Show the current routing mode and a numbered model list; direct providers are queried for models when their API exposes `/models` |
 | `/model <N>` | Switch directly to model `#N` from the `/model` list (preserves conversation) |
 | `/model <MODEL>` | Pin `<MODEL>` on the current or inferred provider (preserves conversation) |
 | `/model <PROVIDER> <MODEL>` | Switch to `<PROVIDER>` and pin `<MODEL>` (preserves conversation) |
@@ -199,6 +200,7 @@ REPL commands:
 | `/context` | Show conversation message, byte, and token budget |
 | `/compact [focus]` | Summarize older exchanges on the fast route, keeping the original goal and recent tool pairs |
 | `/todo` | Show the current session checklist |
+| `/view chat|activity|changes|plan` | Switch workspace feed; Tab and Shift-Tab also switch |
 | `/save [NAME]` | Save session history and checklist to `.omnicode/sessions/<NAME>.json` (default: `latest`) |
 | `/resume [NAME]` | Load a saved session from `.omnicode/sessions/<NAME>.json` (default: `latest`) |
 | `/details` | Recover the last tool result, up to 64 KiB; next tool call replaces it |
@@ -328,8 +330,15 @@ to `COLUMNS`. `/status inline` prints the status line directly above each prompt
 stack), `/status off` hides it, and `OMNICODE_STATUS=pinned|inline|title|off` sets
 the startup mode. Plain output never prints it.
 
-The interface keeps normal terminal scrolling and copy/paste. Styled terminal
-responses emphasize Markdown headings and dim backtick fence markers; fenced
+The interactive REPL opens a four-view workspace: Chat keeps the conversation,
+Activity collects routing, tool, and session events, Changes lists files written
+or edited with agent write/edit tools, and Plan keeps the current checklist.
+Press Tab or Shift-Tab to switch views, PgUp/PgDn to scroll the selected feed, or use
+/view chat|activity|changes|plan. The prompt and model status stay available
+in every view. These views are in memory and keep the latest 96 lines each.
+Pipes, dumb terminals, and non-interactive runs keep the plain-text interface.
+
+Styled terminal responses emphasize Markdown headings and dim backtick fence markers; fenced
 code stays literal. Plain output preserves Markdown source.
 
 When both input and output are interactive, a small raw-mode composer supports
@@ -342,6 +351,16 @@ restored on return, errors, and EOF, before model or tool work. Pipes, dumb
 terminals, and `NO_COLOR` use canonical input. Arbitrary cursor movement and a
 full-screen editor are not implemented; wide-character and wrapped-line backspace
 display is limited. Codex and fx references are recorded in [ROADMAP.md](ROADMAP.md).
+
+In an interactive terminal, `/model` opens a temporary picker with an `All`
+tab and one tab for each provider in the model list. The current provider is
+selected when available. Switch provider tabs with ←/→ or Tab; the active model
+starts selected with a contrasting background. Typing filters provider and model
+IDs case-insensitively, including queries such as `openai gpt` or
+`anthropic/sonnet`; filtering applies across All or within the selected provider
+tab. Use ↑/↓ to move, PgUp/PgDn to scroll, Backspace to edit the search, Ctrl-U
+to clear it, Enter to switch, or Esc to return to the workspace.
+`/model list` keeps the numbered text view for non-interactive use.
 
 Use `omnicode --read-only "inspect this project"` to restrict model tools to
 `read`, `glob`, `grep`, and `skill`. The restriction is checked at execution, so
